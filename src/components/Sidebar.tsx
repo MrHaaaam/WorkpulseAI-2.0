@@ -16,7 +16,7 @@ export function Sidebar({ active, onNavigate, role = 'manager' }: SidebarProps) 
       ? [
           { key: 'overview', label: 'Overview', icon: LayoutDashboard },
           { key: 'employees', label: 'Employee Directory', icon: Users },
-          { key: 'payroll', label: 'Payroll Approvals', icon: ReceiptText },
+
           { key: 'analytics', label: 'Analytics', icon: BarChart2 },
           { key: 'admin', label: 'Admin Settings', icon: Settings },
         ]

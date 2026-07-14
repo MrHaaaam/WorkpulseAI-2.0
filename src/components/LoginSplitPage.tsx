@@ -1,4 +1,6 @@
 import { useState } from 'react'
+import { Fingerprint } from 'lucide-react'
+
 
 // Perfectly centered Biometric Eye / Face Scan Icon
 function BiometricEyeIcon(props: { className?: string }) {
@@ -109,9 +111,7 @@ export default function LoginSplitPage() {
             <div className="z-10 w-full max-w-sm flex-shrink-0 transform-gpu transition-[opacity,transform] duration-400 ease-out">
           <div className="mb-10 flex items-center justify-center gap-2.5">
             <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-indigo-600 text-white">
-              <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-                <path d="M12 2L6 13h6l-2 9 10-11h-6l2-10z" fill="white" />
-              </svg>
+              <Fingerprint className="h-4 w-4" />
             </div>
             <span className="text-xl font-bold tracking-tight whitespace-nowrap">
               Workpulse<span className="text-indigo-600">AI</span>

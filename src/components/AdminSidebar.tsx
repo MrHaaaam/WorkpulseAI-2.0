@@ -1,7 +1,8 @@
 import { LayoutDashboard, Users, ReceiptText, Settings, LogOut, ChevronRight, BarChart2 } from "lucide-react";
 import { cn } from "../lib/utils";
 import { Badge } from "./ui/Badge";
-import { ViewKey } from "./Sidebar";
+import { type ViewKey } from "./Sidebar";
+
 
 interface SidebarProps {
   active: ViewKey;

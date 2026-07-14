@@ -1,15 +1,19 @@
 import { useState } from 'react';
-import { Sidebar, type ViewKey } from '../components/Sidebar';
+import { type ViewKey } from '../components/Sidebar';
+
 import { ManagerSidebar } from '../components/ManagerSidebar';
 import { AdminSidebar } from '../components/AdminSidebar';
 import { OverviewView } from '../views/OverviewView';
+import { AdminOverviewView } from '../views/AdminOverviewView';
 import { EmployeeDirectoryView } from '../views/EmployeeDirectoryView';
+
 import { BiometricView } from '../views/BiometricView';
 import { PayrollView } from '../views/PayrollView';
 import { SettingsView } from '../views/SettingsView';
 import { AnalyticsView } from '../views/AnalyticsView';
 import { LeaveRequestsView } from '../views/LeaveRequestsView';
 import { AdminView } from '../views/AdminView';
+import { AdminPayrollApprovalsView } from '../views/AdminPayrollApprovalsView';
 
 export function AppRoutes() {
   // Parse `?view=` and `?role=` from the URL and keep them in component state.
@@ -23,8 +27,9 @@ export function AppRoutes() {
   const [role] = useState<'manager' | 'admin'>(initialRole);
 
   const viewMap: Record<ViewKey, React.ReactNode> = {
-    overview: <OverviewView />,
+    overview: role === 'admin' ? <AdminOverviewView /> : <OverviewView />,
     employees: <EmployeeDirectoryView />,
+
     biometric: <BiometricView />,
     leave: <LeaveRequestsView />,
     payroll: <PayrollView />,
@@ -32,6 +37,14 @@ export function AppRoutes() {
     admin: <AdminView />,
     settings: <SettingsView />,
   };
+
+  // For admin, only replace the `payroll` view with the approvals page.
+  // Other tabs should still render their own admin pages.
+  const effectiveViewMap: Record<ViewKey, React.ReactNode> = {
+    ...viewMap,
+    payroll: role === 'admin' ? <AdminPayrollApprovalsView /> : <PayrollView />,
+  };
+
 
 
   return (
@@ -41,7 +54,8 @@ export function AppRoutes() {
       ) : (
         <ManagerSidebar active={active} onNavigate={setActive} />
       )}
-      <main className="flex-1 overflow-y-auto bg-slate-50 p-6">{viewMap[active]}</main>
+      <main className="flex-1 overflow-y-auto bg-slate-50 p-6">{effectiveViewMap[active]}</main>
+
     </div>
   );
 }

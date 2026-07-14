@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Users, UserCheck, Clock, Fingerprint, Calendar, TrendingUp, TrendingDown } from "lucide-react";
+import { Users, UserCheck, Clock, Fingerprint, Calendar, TrendingUp, TrendingDown, Activity } from "lucide-react";
 import {
   ResponsiveContainer,
   AreaChart,
@@ -41,6 +41,15 @@ const pieData = [
   { name: "Late", value: 4, color: "#f59e0b" },
   { name: "Absent", value: 1, color: "#ef4444" },
   { name: "On Leave", value: 1, color: "#6366f1" },
+];
+
+// Mock data for recent activities (You can move this to your data lib later)
+const recentActivities = [
+  { id: 1, user: "Sarah Jenkins", role: "Staff", action: "Clocked In", time: "08:15 AM", date: "Today", status: "Late" },
+  { id: 2, user: "Marcus Ray", role: "Manager", action: "Approved Leave Request", time: "09:30 AM", date: "Today", status: "Success" },
+  { id: 3, user: "Elena Rodriguez", role: "Staff", action: "Clocked In", time: "07:55 AM", date: "Today", status: "On Time" },
+  { id: 4, user: "David Chen", role: "Admin", action: "Updated Biometric Policy", time: "04:20 PM", date: "Yesterday", status: "Success" },
+  { id: 5, user: "James Wilson", role: "Staff", action: "Biometric Registration", time: "11:00 AM", date: "Yesterday", status: "Pending" },
 ];
 
 export function OverviewView() {
@@ -187,34 +196,100 @@ export function OverviewView() {
         </Card>
       </div>
 
-      {/* Bar Chart */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Attendance Comparison</CardTitle>
-          <CardDescription>Bar chart comparison — {viewMode} view</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <ResponsiveContainer width="100%" height={280}>
-            <BarChart data={data} margin={{ top: 5, right: 10, left: -20, bottom: 0 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
-              <XAxis dataKey="label" tick={{ fontSize: 12, fill: "#94a3b8" }} axisLine={false} tickLine={false} />
-              <YAxis tick={{ fontSize: 12, fill: "#94a3b8" }} axisLine={false} tickLine={false} />
-              <Tooltip
-                contentStyle={{
-                  borderRadius: "10px",
-                  border: "1px solid #e2e8f0",
-                  fontSize: "13px",
-                  boxShadow: "0 4px 12px rgba(0,0,0,0.08)",
-                }}
-              />
-              <Legend wrapperStyle={{ fontSize: "13px" }} />
-              <Bar dataKey="present" name="Present" fill="#10b981" radius={[6, 6, 0, 0]} />
-              <Bar dataKey="late" name="Late" fill="#f59e0b" radius={[6, 6, 0, 0]} />
-              <Bar dataKey="absent" name="Absent" fill="#ef4444" radius={[6, 6, 0, 0]} />
-            </BarChart>
-          </ResponsiveContainer>
-        </CardContent>
-      </Card>
+      {/* Grid for Bottom Cards */}
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+        {/* Bar Chart */}
+        <Card>
+          <CardHeader>
+            <CardTitle>Attendance Comparison</CardTitle>
+            <CardDescription>Bar chart comparison — {viewMode} view</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <ResponsiveContainer width="100%" height={280}>
+              <BarChart data={data} margin={{ top: 5, right: 10, left: -20, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+                <XAxis dataKey="label" tick={{ fontSize: 12, fill: "#94a3b8" }} axisLine={false} tickLine={false} />
+                <YAxis tick={{ fontSize: 12, fill: "#94a3b8" }} axisLine={false} tickLine={false} />
+                <Tooltip
+                  contentStyle={{
+                    borderRadius: "10px",
+                    border: "1px solid #e2e8f0",
+                    fontSize: "13px",
+                    boxShadow: "0 4px 12px rgba(0,0,0,0.08)",
+                  }}
+                />
+                <Legend wrapperStyle={{ fontSize: "13px" }} />
+                <Bar dataKey="present" name="Present" fill="#10b981" radius={[6, 6, 0, 0]} />
+                <Bar dataKey="late" name="Late" fill="#f59e0b" radius={[6, 6, 0, 0]} />
+                <Bar dataKey="absent" name="Absent" fill="#ef4444" radius={[6, 6, 0, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          </CardContent>
+        </Card>
+
+        {/* Recent Activities Table */}
+        <Card>
+          <CardHeader>
+            <div className="flex items-center justify-between">
+              <div>
+                <CardTitle className="flex items-center gap-2">
+                  <Activity className="h-5 w-5 text-slate-500" />
+                  Recent Activities
+                </CardTitle>
+                <CardDescription>Latest actions from staff, managers, and admins</CardDescription>
+              </div>
+            </div>
+          </CardHeader>
+          <CardContent>
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-sm text-slate-600">
+                <thead className="border-b border-slate-200 bg-slate-50/50 text-xs uppercase text-slate-500">
+                  <tr>
+                    <th className="px-4 py-3 font-medium">User</th>
+                    <th className="px-4 py-3 font-medium">Role</th>
+                    <th className="px-4 py-3 font-medium">Action</th>
+                    <th className="px-4 py-3 font-medium">Time</th>
+                    <th className="px-4 py-3 font-medium">Status</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {recentActivities.map((activity) => (
+                    <tr key={activity.id} className="hover:bg-slate-50/50">
+                      <td className="whitespace-nowrap px-4 py-3 font-medium text-slate-900">
+                        {activity.user}
+                      </td>
+                      <td className="px-4 py-3">
+                        <span className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${
+                          activity.role === 'Admin' ? 'bg-violet-100 text-violet-700' :
+                          activity.role === 'Manager' ? 'bg-blue-100 text-blue-700' :
+                          'bg-slate-100 text-slate-700'
+                        }`}>
+                          {activity.role}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3">{activity.action}</td>
+                      <td className="whitespace-nowrap px-4 py-3 text-slate-500">
+                        {activity.time} <span className="text-xs">({activity.date})</span>
+                      </td>
+                      <td className="px-4 py-3">
+                        <span className={`inline-flex items-center rounded-full px-2 py-1 text-xs font-medium ${
+                          activity.status === 'Success' || activity.status === 'On Time' 
+                            ? 'text-emerald-700 bg-emerald-50' 
+                            : activity.status === 'Late' 
+                            ? 'text-amber-700 bg-amber-50' 
+                            : 'text-slate-600 bg-slate-100'
+                        }`}>
+                          {activity.status}
+                        </span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
     </div>
   );
 }
