@@ -89,7 +89,9 @@ export const payrollRequestsStore = {
   },
   subscribe(fn: Subscriber) {
     this.subs.add(fn);
-    return () => this.subs.delete(fn);
+    return () => {
+      this.subs.delete(fn);
+    };
   },
   notify() {
     this.subs.forEach((s) => s());

@@ -1,7 +1,7 @@
 import { Fingerprint, LayoutDashboard, Users, ScanLine, ReceiptText, Settings, LogOut, ChevronRight, BarChart2, Calendar } from "lucide-react";
 import { cn } from "../lib/utils";
 import { Badge } from "./ui/Badge";
-import { ViewKey } from "./Sidebar";
+import type { ViewKey } from "./Sidebar";
 
 interface SidebarProps {
   active: ViewKey;

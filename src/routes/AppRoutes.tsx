@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Sidebar, type ViewKey } from '../components/Sidebar';
+import { type ViewKey } from '../components/Sidebar';
 import { ManagerSidebar } from '../components/ManagerSidebar';
 import { AdminSidebar } from '../components/AdminSidebar';
 import { OverviewView } from '../views/OverviewView';

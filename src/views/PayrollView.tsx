@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { Search, ReceiptText, Calendar } from "lucide-react";
+import { Search, ReceiptText, Calendar, Download } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "../components/ui/Card";
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from "../components/ui/Table";
 import { Input } from "../components/ui/Input";
@@ -148,9 +148,9 @@ export function PayrollView() {
                     {(() => {
                       const req = requests.find((r) => r.employeeId === e.id);
                       if (!req) return <span className="text-sm text-slate-400">—</span>;
-                      if (req.status === "processing") return <Badge variant="secondary">Processing</Badge>;
+                      if (req.status === "processing") return <Badge variant="warning">Processing</Badge>;
                       if (req.status === "approved") return <Badge variant="success">Approved</Badge>;
-                      return <Badge variant="destructive">Rejected</Badge>;
+                      return <Badge variant="danger">Rejected</Badge>;
                     })()}
                   </TableCell>
                   <TableCell className="text-right">
