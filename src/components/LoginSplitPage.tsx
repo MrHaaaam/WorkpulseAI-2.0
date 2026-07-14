@@ -134,18 +134,44 @@ export default function LoginSplitPage() {
             <div className={`transition-[max-height,opacity,transform] duration-500 ease-out ${active ? 'pointer-events-auto max-h-[36rem] translate-y-0 opacity-100 overflow-visible' : 'pointer-events-none max-h-0 translate-y-2 overflow-hidden opacity-0'}`}>
               <p className="mb-6 text-center text-xs font-medium tracking-wide uppercase text-slate-400">Secure Access Authentication</p>
 
-              <button
-                type="button"
-                disabled={loading}
-                onClick={() => {
-                  setLoading(true)
-                  setTimeout(() => setLoading(false), 1200)
-                }}
-                className="mb-5 flex w-full items-center justify-center gap-3 rounded-xl bg-indigo-600 px-5 py-3.5 font-semibold text-white shadow-lg shadow-indigo-200 transition hover:bg-indigo-700 disabled:opacity-70 cursor-pointer will-change-[transform]"
-              >
-                <BiometricEyeIcon className="h-5 w-5" />
-                {loading ? 'Verifying Identity...' : 'Touch Biometrics Sensor'}
-              </button>
+              <div className="mb-5 flex w-full items-center gap-3">
+                <button
+                  type="button"
+                  disabled={loading}
+                  onClick={() => {
+                    setLoading(true)
+                    setTimeout(() => setLoading(false), 1200)
+                  }}
+                  className="flex-1 flex items-center justify-center gap-3 rounded-xl bg-indigo-600 px-5 py-3.5 font-semibold text-white shadow-lg shadow-indigo-200 transition hover:bg-indigo-700 disabled:opacity-70 cursor-pointer will-change-[transform]"
+                >
+                  <BiometricEyeIcon className="h-5 w-5" />
+                  {loading ? 'Verifying Identity...' : 'Touch Biometrics Sensor'}
+                </button>
+
+                {/* Temporary bypass for when no database/auth is wired yet */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    // Simulate manager access by opening the app overview shell
+                    window.location.href = `/overview?view=overview&role=manager`;
+                  }}
+                  className="flex-shrink-0 rounded-xl border border-[#8642ED]/20 bg-white px-4 py-3.5 text-sm font-semibold text-[#8642ED] shadow-sm hover:bg-[#8642ED]/10 transition"
+                >
+                  Manager
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    // Open app with admin view
+                    window.location.href = `/overview?view=admin&role=admin`;
+                  }}
+                  className="ml-2 flex-shrink-0 rounded-xl border border-slate-200 bg-white px-4 py-3.5 text-sm font-semibold text-slate-700 shadow-sm hover:bg-slate-50 transition"
+                >
+                  Admin
+                </button>
+              </div>
+
 
               <div className="space-y-3.5 w-full">
                 <input
