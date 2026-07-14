@@ -1,5 +1,3 @@
-import React from 'react';
-
 export function AnalyticsView() {
   return (
     <div className="p-6">

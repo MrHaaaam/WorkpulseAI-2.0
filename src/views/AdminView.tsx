@@ -1,5 +1,5 @@
 import { useMemo, useState, useEffect } from "react";
-import { Users, Settings, ShieldCheck, X, Check } from "lucide-react";
+import { X, Check } from "lucide-react";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "../components/ui/Card";
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from "../components/ui/Table";
 import { Button } from "../components/ui/Button";
@@ -171,7 +171,7 @@ export function AdminView() {
                     <TableCell>
                       {m.status === "active" && <Badge variant="success">Active</Badge>}
                       {m.status === "inactive" && <Badge variant="neutral">Inactive</Badge>}
-                      {m.banned && <Badge variant="destructive">Banned</Badge>}
+                      {m.banned && <Badge variant="danger">Banned</Badge>}
                     </TableCell>
                     <TableCell className="text-right">
                       <Button size="sm" variant={m.banned ? "outline" : undefined} onClick={() => toggleBanManager(m.id)}>
@@ -221,9 +221,9 @@ export function AdminView() {
                     </TableCell>
                     <TableCell className="font-medium text-slate-900">{formatCurrency(p.amount)}</TableCell>
                     <TableCell>
-                      {p.status === "processing" && <Badge variant="secondary">Processing</Badge>}
+                      {p.status === "processing" && <Badge variant="warning">Processing</Badge>}
                       {p.status === "approved" && <Badge variant="success">Approved</Badge>}
-                      {p.status === "rejected" && <Badge variant="destructive">Rejected</Badge>}
+                      {p.status === "rejected" && <Badge variant="danger">Rejected</Badge>}
                     </TableCell>
                     <TableCell className="text-right">
                       {p.status === "processing" && (
