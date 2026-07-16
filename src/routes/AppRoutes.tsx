@@ -14,6 +14,9 @@ import { AnalyticsView } from '../views/AnalyticsView';
 import { LeaveRequestsView } from '../views/LeaveRequestsView';
 import { AdminView } from '../views/AdminView';
 import { AdminPayrollApprovalsView } from '../views/AdminPayrollApprovalsView';
+import AttendanceView from '../views/AttendanceView';
+
+
 
 export function AppRoutes() {
   // Parse `?view=` and `?role=` from the URL and keep them in component state.
@@ -28,6 +31,7 @@ export function AppRoutes() {
 
   const viewMap: Record<ViewKey, React.ReactNode> = {
     overview: role === 'admin' ? <AdminOverviewView /> : <OverviewView />,
+    attendance: <AttendanceView role={role} />,
     employees: <EmployeeDirectoryView />,
 
     biometric: <BiometricView />,
@@ -37,6 +41,7 @@ export function AppRoutes() {
     admin: <AdminView />,
     settings: <SettingsView />,
   };
+
 
   // For admin, only replace the `payroll` view with the approvals page.
   // Other tabs should still render their own admin pages.

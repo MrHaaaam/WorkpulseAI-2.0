@@ -1,8 +1,18 @@
-import { Fingerprint, LayoutDashboard, Users, ScanLine, ReceiptText, Settings, LogOut, ChevronRight, BarChart2, Calendar } from "lucide-react";
+import { 
+  Fingerprint, 
+  LayoutDashboard, 
+  Users, 
+  ScanLine, 
+  ReceiptText, 
+  Settings, 
+  LogOut, 
+  ChevronRight, 
+  BarChart2, 
+  Calendar 
+} from "lucide-react";
 import { cn } from "../lib/utils";
 import { Badge } from "./ui/Badge";
-import { type ViewKey } from "./Sidebar";
-
+import { type ViewKey } from "./Sidebar"; // <-- This now imports the updated type with "attendance"
 
 interface SidebarProps {
   active: ViewKey;
@@ -12,6 +22,7 @@ interface SidebarProps {
 export function ManagerSidebar({ active, onNavigate }: SidebarProps) {
   const navItems: { key: ViewKey; label: string; icon: React.ElementType }[] = [
     { key: 'overview', label: 'Overview', icon: LayoutDashboard },
+    { key: 'attendance', label: 'Attendance', icon: Calendar },
     { key: 'employees', label: 'Employee Directory', icon: Users },
     { key: 'leave', label: 'Leave Requests', icon: Calendar },
     { key: 'biometric', label: 'Biometric Setup', icon: ScanLine },
@@ -22,6 +33,7 @@ export function ManagerSidebar({ active, onNavigate }: SidebarProps) {
 
   return (
     <aside className="flex h-screen w-64 flex-col border-r border-slate-200 bg-white">
+      {/* Brand Header */}
       <div className="flex items-center gap-2.5 border-b border-slate-200 px-4 py-4">
         <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-[#8642ED] shadow-lg shadow-[#8642ED]/30">
           <Fingerprint className="h-5 w-5 text-white" />
@@ -36,6 +48,7 @@ export function ManagerSidebar({ active, onNavigate }: SidebarProps) {
         </div>
       </div>
 
+      {/* Navigation Menu */}
       <nav className="flex-1 space-y-1 overflow-y-auto p-4 scrollbar-thin">
         <p className="mb-2 px-3 text-xs font-semibold uppercase tracking-wider text-slate-400">Menu</p>
         {navItems.map((item) => {
@@ -58,9 +71,10 @@ export function ManagerSidebar({ active, onNavigate }: SidebarProps) {
         })}
       </nav>
 
+      {/* Profile Footer */}
       <div className="border-t border-slate-200 p-4">
         <div className="flex items-center gap-3 rounded-xl bg-slate-50 p-3">
-          <div className="flex h-10 w-10 items-center justify-center rounded-full bg-gradient-to-br from-[#8642ED] to-[#8642ED] text-sm font-bold text-white">M</div>
+          <div className="flex h-10 w-10 items-center justify-center rounded-full bg-gradient-to-br from-[#8642ED] to-[#8642ED] text-sm font-bold text-white select-none">M</div>
           <div className="min-w-0 flex-1">
             <p className="truncate text-sm font-semibold text-slate-900">Manager User</p>
             <div className="flex items-center gap-1.5">

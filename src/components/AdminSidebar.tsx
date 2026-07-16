@@ -1,8 +1,16 @@
-import { LayoutDashboard, Users, ReceiptText, Settings, LogOut, ChevronRight, BarChart2 } from "lucide-react";
+import { 
+  LayoutDashboard, 
+  Users, 
+  ReceiptText, 
+  Settings, 
+  LogOut, 
+  ChevronRight, 
+  BarChart2, 
+  Calendar // <-- Added this missing import!
+} from "lucide-react";
 import { cn } from "../lib/utils";
 import { Badge } from "./ui/Badge";
 import { type ViewKey } from "./Sidebar";
-
 
 interface SidebarProps {
   active: ViewKey;
@@ -12,6 +20,7 @@ interface SidebarProps {
 export function AdminSidebar({ active, onNavigate }: SidebarProps) {
   const navItems: { key: ViewKey; label: string; icon: React.ElementType }[] = [
     { key: 'overview', label: 'Overview', icon: LayoutDashboard },
+    { key: 'attendance', label: 'Attendance', icon: Calendar },
     { key: 'employees', label: 'Employee Directory', icon: Users },
     { key: 'payroll', label: 'Payroll Approvals', icon: ReceiptText },
     { key: 'analytics', label: 'Analytics', icon: BarChart2 },
@@ -22,7 +31,9 @@ export function AdminSidebar({ active, onNavigate }: SidebarProps) {
     <aside className="flex h-screen w-64 flex-col border-r border-slate-200 bg-white">
       <div className="flex items-center gap-2.5 border-b border-slate-200 px-4 py-4">
         <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-[#8642ED] shadow-lg shadow-[#8642ED]/30">
-          <svg className="h-5 w-5 text-white" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M12 2L6 13h6l-2 9 10-11h-6l2-10z" fill="white"/></svg>
+          <svg className="h-5 w-5 text-white" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <path d="M12 2L6 13h6l-2 9 10-11h-6l2-10z" fill="white"/>
+          </svg>
         </div>
         <div className="min-w-0">
           <h2 className="text-sm font-bold leading-tight tracking-tight text-slate-900">
