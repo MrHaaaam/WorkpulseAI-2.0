@@ -36,6 +36,10 @@ app.get('/api/health', (req, res) => {
   res.json({ ok: true });
 });
 
+// API routes backed by MongoDB
+import apiRouter from './routes/api.js';
+app.use('/api', apiRouter);
+
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
   console.log(`🚀 Server is running on port ${PORT}`);

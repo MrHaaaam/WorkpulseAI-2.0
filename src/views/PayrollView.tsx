@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { Search, ReceiptText, Calendar, Download } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "../components/ui/Card";
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from "../components/ui/Table";
@@ -6,7 +6,22 @@ import { Input } from "../components/ui/Input";
 import { Button } from "../components/ui/Button";
 import { Badge } from "../components/ui/Badge";
 import { Dialog, DialogHeader, DialogClose } from "../components/ui/Dialog";
-import { employees, formatCurrency, payrollRequestsStore, type Employee } from "../lib/data";
+import { formatCurrency, type Employee } from "../lib/data";
+
+// 1. ADDED: Typed interfaces for the incoming database records
+export interface PayrollRequest {
+  id: string;
+  employeeId: string;
+  employeeName: string;
+  amount: number;
+  status: "processing" | "approved" | "rejected";
+}
+
+interface PayrollViewProps {
+  employees: Employee[];
+  requests: PayrollRequest[];
+  onProcessPayslip?: (employee: Employee) => void;
+}
 
 interface PayslipData {
   grossSalary: number;
@@ -29,20 +44,12 @@ function computePayslip(emp: Employee): PayslipData {
   return { grossSalary: gross, deductions: { tax, philhealth, sss, pagibig, latenessPenalty } };
 }
 
-export function PayrollView() {
+// 2. UPDATED: Component now accepts isolated data hooks via props instead of static global stores
+export function PayrollView({ employees = [], requests = [], onProcessPayslip }: PayrollViewProps) {
   const [search, setSearch] = useState("");
   const [roleFilter, setRoleFilter] = useState<"All" | "employee" | "extra">("All");
   const [statusFilter, setStatusFilter] = useState<"All" | "active" | "on-leave" | "inactive">("All");
   const [selected, setSelected] = useState<Employee | null>(null);
-  const [requests, setRequests] = useState(() => payrollRequestsStore.get());
-
-  useEffect(() => {
-    const unsub = payrollRequestsStore.subscribe(() => setRequests(payrollRequestsStore.get()));
-    return () => {
-      unsub();
-    };
-  }, []);
-
 
   const filtered = employees.filter((e) => {
     const matchesSearch = e.name.toLowerCase().includes(search.toLowerCase()) || e.id.toLowerCase().includes(search.toLowerCase());
@@ -74,7 +81,7 @@ export function PayrollView() {
             {["All", "employee", "extra"].map((r) => (
               <button
                 key={r}
-                onClick={() => setRoleFilter(r as any)}
+onClick={() => setRoleFilter(r as "All" | "employee" | "extra")}
                 className={`whitespace-nowrap rounded-lg px-3 py-2 text-sm font-medium transition-colors ${
                   roleFilter === r
                     ? "bg-[#8642ED] text-white"
@@ -94,7 +101,7 @@ export function PayrollView() {
             ].map(([val, label]) => (
               <button
                 key={String(val)}
-                onClick={() => setStatusFilter(val as any)}
+onClick={() => setStatusFilter(val as "All" | "active" | "on-leave" | "inactive")}
                 className={`whitespace-nowrap rounded-lg px-3 py-2 text-sm font-medium transition-colors ${
                   statusFilter === val
                     ? "bg-[#8642ED] text-white"
@@ -154,7 +161,6 @@ export function PayrollView() {
                       if (req.status === "processing") return <Badge variant="warning">Processing</Badge>;
                       if (req.status === "approved") return <Badge variant="success">Approved</Badge>;
                       return <Badge variant="danger">Rejected</Badge>;
-
                     })()}
                   </TableCell>
                   <TableCell className="text-right">
@@ -162,9 +168,9 @@ export function PayrollView() {
                       const req = requests.find((r) => r.employeeId === e.id);
                       if (!req) {
                         return (
+                          // 3. UPDATED: Replaced local store append with a clean backend event hook
                           <Button size="sm" onClick={() => {
-                            const id = `PR-${Date.now()}`;
-                            payrollRequestsStore.add({ id, employeeId: e.id, employeeName: e.name, amount: e.grossSalary, status: 'processing' });
+                            if (onProcessPayslip) onProcessPayslip(e);
                             setSelected(e);
                           }}>
                             <ReceiptText className="h-3.5 w-3.5" />
@@ -175,7 +181,6 @@ export function PayrollView() {
                       if (req.status === 'processing') {
                         return <Button size="sm" variant="outline" disabled>Processing</Button>;
                       }
-                      // approved or denied: show status only
                       return null;
                     })()}
                   </TableCell>
@@ -233,7 +238,7 @@ function PayslipModal({ employee, onClose }: { employee: Employee | null; onClos
 
       <div className="px-6 pb-6 space-y-5">
         {/* Employee Info */}
-            <div className="flex items-center gap-4 rounded-xl bg-slate-50 p-4">
+        <div className="flex items-center gap-4 rounded-xl bg-slate-50 p-4">
           <div className="flex h-12 w-12 items-center justify-center rounded-full bg-gradient-to-br from-[#8642ED] to-[#8642ED] text-sm font-bold text-white">
             {employee.name.split(" ").map((n) => n[0]).join("")}
           </div>

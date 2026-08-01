@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState } from "react";
 import { 
   Users, 
   UserCheck, 
@@ -31,24 +31,32 @@ import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "../co
 import { Tabs } from "../components/ui/Tabs";
 import { Badge } from "../components/ui/Badge";
 import { Button } from "../components/ui/Button";
-import { employees, payrollRequestsStore, attendanceData } from "../lib/data";
 
 type ViewMode = "daily" | "weekly" | "monthly";
 
-const pieData = [
-  { name: "Present", value: 10, color: "#10b981" },
-  { name: "Late", value: 4, color: "#f59e0b" },
-  { name: "Absent", value: 1, color: "#ef4444" },
-  { name: "On Leave", value: 1, color: "#6366f1" },
-];
+// Explicit Types matching your database integration models
+export interface TrendMetrics {
+  label: string;
+  present: number;
+  late: number;
+  absent: number;
+}
 
-const recentActivities = [
-  { id: 1, user: "Sarah Jenkins", role: "Staff", action: "Clocked In", time: "08:15 AM", date: "Today", status: "Late" },
-  { id: 2, user: "Marcus Ray", role: "Manager", action: "Approved Leave Request", time: "09:30 AM", date: "Today", status: "Success" },
-  { id: 3, user: "Elena Rodriguez", role: "Staff", action: "Clocked In", time: "07:55 AM", date: "Today", status: "On Time" },
-  { id: 4, user: "David Chen", role: "Admin", action: "Updated Biometric Policy", time: "04:20 PM", date: "Yesterday", status: "Success" },
-  { id: 5, user: "James Wilson", role: "Staff", action: "Biometric Registration", time: "11:00 AM", date: "Yesterday", status: "Pending" },
-];
+export interface BreakdownItem {
+  name: string;
+  value: number;
+  color: string;
+}
+
+export interface AuditLogItem {
+  id: string | number;
+  user: string;
+  role: "Admin" | "Manager" | "Staff" | string;
+  action: string;
+  time: string;
+  date: string;
+  status: "Success" | "On Time" | "Late" | "Pending" | string;
+}
 
 // Unified UI Color Configurations
 const cardColorStyles = {
@@ -61,26 +69,32 @@ const cardColorStyles = {
 /* ==========================================
    1. ADMIN OVERVIEW VIEW
    ========================================== */
-export function AdminOverviewView() {
+interface AdminOverviewProps {
+  attendanceTrends: Record<ViewMode, TrendMetrics[]>;
+  liveBreakdown: BreakdownItem[];
+  auditTrail: AuditLogItem[];
+  metrics: {
+    totalStaff: number;
+    activeWorkforce: number;
+    pendingPayrollCount: number;
+    biometricKeysActive: number;
+  };
+}
+
+export function AdminOverviewView({ 
+  attendanceTrends, 
+  liveBreakdown = [], 
+  auditTrail = [], 
+  metrics 
+}: AdminOverviewProps) {
   const [viewMode, setViewMode] = useState<ViewMode>("weekly");
-  const data = attendanceData[viewMode];
-
-  const totals = useMemo(() => {
-    const total = employees.length;
-    const active = employees.filter((e) => e.status === "active").length;
-    const onLeave = employees.filter((e) => e.status === "on-leave").length;
-    return { total, active, onLeave };
-  }, []);
-
-  const pendingPayroll = useMemo(() => {
-    return payrollRequestsStore.get().filter(p => p.status === "processing");
-  }, []);
+  const chartData = attendanceTrends?.[viewMode] || [];
 
   const adminMetrics = [
-    { label: "Total Registered Staff", value: totals.total.toString(), change: "+2", trend: "up", icon: Users, ...cardColorStyles.purple },
-    { label: "Active Workforce", value: totals.active.toString(), change: "+1", trend: "up", icon: UserCheck, ...cardColorStyles.emerald },
-    { label: "Pending Payroll Sign-offs", value: pendingPayroll.length.toString(), change: "Action Req.", trend: "down", icon: Clock, ...cardColorStyles.amber },
-    { label: "Biometric Keys Active", value: "18", change: "+3", trend: "up", icon: Fingerprint, ...cardColorStyles.violet },
+    { label: "Total Registered Staff", value: metrics.totalStaff.toString(), change: "+2", trend: "up", icon: Users, ...cardColorStyles.purple },
+    { label: "Active Workforce", value: metrics.activeWorkforce.toString(), change: "+1", trend: "up", icon: UserCheck, ...cardColorStyles.emerald },
+    { label: "Pending Payroll Sign-offs", value: metrics.pendingPayrollCount.toString(), change: "Action Req.", trend: "down", icon: Clock, ...cardColorStyles.amber },
+    { label: "Biometric Keys Active", value: metrics.biometricKeysActive.toString(), change: "+3", trend: "up", icon: Fingerprint, ...cardColorStyles.violet },
   ];
 
   return (
@@ -145,7 +159,7 @@ export function AdminOverviewView() {
           </CardHeader>
           <CardContent>
             <ResponsiveContainer width="100%" height={300}>
-              <AreaChart data={data} margin={{ top: 5, right: 10, left: -20, bottom: 0 }}>
+              <AreaChart data={chartData} margin={{ top: 5, right: 10, left: -20, bottom: 0 }}>
                 <defs>
                   <linearGradient id="colorPresent" x1="0" y1="0" x2="0" y2="1">
                     <stop offset="5%" stopColor="#10b981" stopOpacity={0.3} />
@@ -189,7 +203,7 @@ export function AdminOverviewView() {
             <ResponsiveContainer width="100%" height={300}>
               <PieChart>
                 <Pie
-                  data={pieData}
+                  data={liveBreakdown}
                   cx="50%"
                   cy="45%"
                   innerRadius={55}
@@ -197,8 +211,8 @@ export function AdminOverviewView() {
                   paddingAngle={3}
                   dataKey="value"
                 >
-                  {pieData.map((entry) => (
-                    <Cell key={entry.name} fill={entry.color} />
+                  {liveBreakdown.map((entry, index) => (
+                    <Cell key={`cell-${index}`} fill={entry.color || "#cbd5e1"} />
                   ))}
                 </Pie>
                 <Tooltip
@@ -224,7 +238,7 @@ export function AdminOverviewView() {
           </CardHeader>
           <CardContent>
             <ResponsiveContainer width="100%" height={280}>
-              <BarChart data={data} margin={{ top: 5, right: 10, left: -20, bottom: 0 }}>
+              <BarChart data={chartData} margin={{ top: 5, right: 10, left: -20, bottom: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
                 <XAxis dataKey="label" tick={{ fontSize: 12, fill: "#94a3b8" }} axisLine={false} tickLine={false} />
                 <YAxis tick={{ fontSize: 12, fill: "#94a3b8" }} axisLine={false} tickLine={false} />
@@ -261,7 +275,7 @@ export function AdminOverviewView() {
                   </div>
                   <div>
                     <h4 className="text-xs font-semibold text-amber-900">Payroll Approvals</h4>
-                    <p className="text-[11px] text-amber-700">{pendingPayroll.length} pending final admin sign-offs</p>
+                    <p className="text-[11px] text-amber-700">{metrics.pendingPayrollCount} pending final admin sign-offs</p>
                   </div>
                 </div>
                 <Button size="sm" className="h-7 bg-amber-500 hover:bg-amber-600 text-white border-0 text-xs">Review</Button>
@@ -338,7 +352,7 @@ export function AdminOverviewView() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {recentActivities.map((activity) => (
+                {auditTrail.map((activity) => (
                   <tr key={activity.id} className="hover:bg-slate-50/50">
                     <td className="whitespace-nowrap px-4 py-3 font-medium text-slate-900">{activity.user}</td>
                     <td className="px-4 py-3">
@@ -374,18 +388,34 @@ export function AdminOverviewView() {
 
 
 /* ==========================================
-   2. MANAGER OVERVIEW VIEW (OverviewView)
+   2. MANAGER OVERVIEW VIEW
    ========================================== */
-export function OverviewView() {
-  const [viewMode, setViewMode] = useState<ViewMode>("weekly");
-  const data = attendanceData[viewMode];
+interface OverviewViewProps {
+  attendanceTrends: Record<ViewMode, TrendMetrics[]>;
+  liveBreakdown: BreakdownItem[];
+  recentActivities: AuditLogItem[];
+  metrics: {
+    totalActiveStaff: number;
+    presentToday: number;
+    lateClockIns: number;
+    registeredBiometricKeys: number;
+  };
+}
 
-  // Identical unified card design styling logic used above
+export function OverviewView({ 
+  attendanceTrends, 
+  liveBreakdown = [], 
+  recentActivities = [], 
+  metrics 
+}: OverviewViewProps) {
+  const [viewMode, setViewMode] = useState<ViewMode>("weekly");
+  const chartData = attendanceTrends?.[viewMode] || [];
+
   const managerMetrics = [
-    { label: "Total Active Staff", value: "12", change: "+2", trend: "up", icon: Users, ...cardColorStyles.purple },
-    { label: "Present Today", value: "10", change: "+1", trend: "up", icon: UserCheck, ...cardColorStyles.emerald },
-    { label: "Late Clock-ins", value: "4", change: "+2", trend: "down", icon: Clock, ...cardColorStyles.amber },
-    { label: "Registered Biometric Keys", value: "18", change: "+3", trend: "up", icon: Fingerprint, ...cardColorStyles.violet },
+    { label: "Total Active Staff", value: metrics.totalActiveStaff.toString(), change: "+2", trend: "up", icon: Users, ...cardColorStyles.purple },
+    { label: "Present Today", value: metrics.presentToday.toString(), change: "+1", trend: "up", icon: UserCheck, ...cardColorStyles.emerald },
+    { label: "Late Clock-ins", value: metrics.lateClockIns.toString(), change: "+2", trend: "down", icon: Clock, ...cardColorStyles.amber },
+    { label: "Registered Biometric Keys", value: metrics.registeredBiometricKeys.toString(), change: "+3", trend: "up", icon: Fingerprint, ...cardColorStyles.violet },
   ];
 
   return (
@@ -402,7 +432,7 @@ export function OverviewView() {
             <input
               type="text"
               defaultValue="Jul 01 – Jul 13, 2026"
-              className="text-sm font-medium text-slate-700 outline-none"
+              className="text-sm font-medium text-slate-700 outline-none bg-transparent"
               readOnly
             />
           </div>
@@ -418,7 +448,7 @@ export function OverviewView() {
         </div>
       </div>
 
-      {/* Metric Cards - Identical rendering logic to Admin */}
+      {/* Metric Cards */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
         {managerMetrics.map((m) => {
           const Icon = m.icon;
@@ -451,7 +481,7 @@ export function OverviewView() {
           </CardHeader>
           <CardContent>
             <ResponsiveContainer width="100%" height={300}>
-              <AreaChart data={data} margin={{ top: 5, right: 10, left: -20, bottom: 0 }}>
+              <AreaChart data={chartData} margin={{ top: 5, right: 10, left: -20, bottom: 0 }}>
                 <defs>
                   <linearGradient id="colorPresent" x1="0" y1="0" x2="0" y2="1">
                     <stop offset="5%" stopColor="#10b981" stopOpacity={0.3} />
@@ -495,7 +525,7 @@ export function OverviewView() {
             <ResponsiveContainer width="100%" height={300}>
               <PieChart>
                 <Pie
-                  data={pieData}
+                  data={liveBreakdown}
                   cx="50%"
                   cy="45%"
                   innerRadius={55}
@@ -503,8 +533,8 @@ export function OverviewView() {
                   paddingAngle={3}
                   dataKey="value"
                 >
-                  {pieData.map((entry) => (
-                    <Cell key={entry.name} fill={entry.color} />
+                  {liveBreakdown.map((entry, index) => (
+                    <Cell key={`cell-mgr-${index}`} fill={entry.color || "#cbd5e1"} />
                   ))}
                 </Pie>
                 <Tooltip
@@ -529,7 +559,7 @@ export function OverviewView() {
           </CardHeader>
           <CardContent>
             <ResponsiveContainer width="100%" height={280}>
-              <BarChart data={data} margin={{ top: 5, right: 10, left: -20, bottom: 0 }}>
+              <BarChart data={chartData} margin={{ top: 5, right: 10, left: -20, bottom: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
                 <XAxis dataKey="label" tick={{ fontSize: 12, fill: "#94a3b8" }} axisLine={false} tickLine={false} />
                 <YAxis tick={{ fontSize: 12, fill: "#94a3b8" }} axisLine={false} tickLine={false} />
@@ -585,12 +615,12 @@ export function OverviewView() {
                           'bg-slate-100 text-slate-700'
                         }`}>{activity.role}</span>
                       </td>
-                      <td className="px-4 py-3">{activity.action}</td>
-                      <td className="whitespace-nowrap px-4 py-3 text-slate-500">
-                        {activity.time} <span className="text-xs">({activity.date})</span>
+                      <td className="px-4 py-3 text-slate-700">{activity.action}</td>
+                      <td className="whitespace-nowrap px-4 py-3 text-slate-500 text-xs">
+                        {activity.time} <span className="text-slate-400">({activity.date})</span>
                       </td>
                       <td className="px-4 py-3">
-                        <span className={`inline-flex items-center rounded-full px-2 py-1 text-xs font-medium ${
+                        <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${
                           activity.status === 'Success' || activity.status === 'On Time' 
                             ? 'text-emerald-700 bg-emerald-50' 
                             : activity.status === 'Late' 
