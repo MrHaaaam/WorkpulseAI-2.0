@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Fingerprint } from 'lucide-react'
 
 
@@ -87,6 +87,54 @@ export default function LoginSplitPage() {
 
   // NEW: State to track password visibility
   const [showPassword, setShowPassword] = useState(false)
+  const [email, setEmail] = useState('')
+  const [password, setPassword] = useState('')
+  const [captchaId, setCaptchaId] = useState('')
+  const [captchaChallenge, setCaptchaChallenge] = useState('')
+  const [captchaAnswer, setCaptchaAnswer] = useState('')
+  const [verificationId, setVerificationId] = useState('')
+  const [otp, setOtp] = useState('')
+  const [error, setError] = useState('')
+
+  async function loadCaptcha() {
+    try {
+      const response = await fetch('http://localhost:5000/api/auth/captcha')
+      const data = await response.json()
+      if (!response.ok) throw new Error(data.error || 'Unable to load CAPTCHA')
+      setCaptchaId(data.captchaId)
+      setCaptchaChallenge(data.challenge)
+      setCaptchaAnswer('')
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'Unable to reach the login server')
+    }
+  }
+
+  useEffect(() => { if (active && !captchaId && !verificationId) void loadCaptcha() }, [active, captchaId, verificationId])
+
+  async function submitLogin() {
+    setLoading(true); setError('')
+    try {
+      const response = await fetch('http://localhost:5000/api/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email, password, captchaId, captchaAnswer }) })
+      const data = await response.json()
+      if (!response.ok) throw new Error(data.error || 'Login failed')
+      setVerificationId(data.verificationId)
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'Login failed')
+      setCaptchaId(''); void loadCaptcha()
+    } finally { setLoading(false) }
+  }
+
+  async function submitOtp() {
+    setLoading(true); setError('')
+    try {
+      const response = await fetch('http://localhost:5000/api/auth/verify-otp', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ verificationId, otp }) })
+      const data = await response.json()
+      if (!response.ok) throw new Error(data.error || 'OTP verification failed')
+      sessionStorage.setItem('workpulse_token', data.token)
+      window.location.href = '/overview?view=overview'
+    } catch (reason) { setError(reason instanceof Error ? reason.message : 'OTP verification failed') }
+    finally { setLoading(false) }
+  }
 
   return (
     <div className="flex min-h-screen w-full flex-col bg-white font-sans text-slate-900 md:flex-row overflow-hidden select-none">
@@ -138,46 +186,25 @@ export default function LoginSplitPage() {
                 <button
                   type="button"
                   disabled={loading}
-                  onClick={() => {
-                    setLoading(true)
-                    setTimeout(() => setLoading(false), 1200)
-                  }}
+                  onClick={verificationId ? submitOtp : submitLogin}
                   className="flex-1 flex items-center justify-center gap-3 rounded-xl bg-indigo-600 px-5 py-3.5 font-semibold text-white shadow-lg shadow-indigo-200 transition hover:bg-indigo-700 disabled:opacity-70 cursor-pointer will-change-[transform]"
                 >
                   <BiometricEyeIcon className="h-5 w-5" />
-                  {loading ? 'Verifying Identity...' : 'Touch Biometrics Sensor'}
-                </button>
-
-                {/* Temporary bypass for when no database/auth is wired yet */}
-                <button
-                  type="button"
-                  onClick={() => {
-                    // Simulate manager access by opening the app overview shell
-                    window.location.href = `/overview?view=overview&role=manager`;
-                  }}
-                  className="flex-shrink-0 rounded-xl border border-[#8642ED]/20 bg-white px-4 py-3.5 text-sm font-semibold text-[#8642ED] shadow-sm hover:bg-[#8642ED]/10 transition"
-                >
-                  Manager
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => {
-                    // Open app with admin view
-                    window.location.href = `/overview?view=admin&role=admin`;
-                  }}
-                  className="ml-2 flex-shrink-0 rounded-xl border border-slate-200 bg-white px-4 py-3.5 text-sm font-semibold text-slate-700 shadow-sm hover:bg-slate-50 transition"
-                >
-                  Admin
+                  {loading ? 'Verifying...' : verificationId ? 'Verify OTP' : 'Sign In & Send OTP'}
                 </button>
               </div>
 
 
               <div className="space-y-3.5 w-full">
+                {verificationId ? (
+                  <><div className="rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-700">A 6-digit OTP was sent to your registered email.</div><input className="w-full rounded-xl border border-slate-200 bg-slate-50/50 px-4 py-3.5 text-center text-lg tracking-[0.4em]" inputMode="numeric" maxLength={6} placeholder="000000" value={otp} onChange={(event) => setOtp(event.target.value.replace(/\D/g, ''))} /></>
+                ) : <>
                 <input
                   className="w-full rounded-xl border border-slate-200 bg-slate-50/50 px-4 py-3.5 text-sm text-slate-900 placeholder:text-slate-400 focus:border-indigo-500 focus:bg-white focus:outline-none focus:ring-4 focus:ring-indigo-500/10 transition-all flex-shrink-0"
                   placeholder="Username or Corporate Email"
                   type="email"
+                  value={email}
+                  onChange={(event) => setEmail(event.target.value)}
                 />
 
                 {/* PASSWORD FIELD WITH EYE TOGGLE */}
@@ -186,6 +213,8 @@ export default function LoginSplitPage() {
                     className="w-full rounded-xl border border-slate-200 bg-slate-50/50 px-4 py-3.5 pr-12 text-sm text-slate-900 placeholder:text-slate-400 focus:border-indigo-500 focus:bg-white focus:outline-none focus:ring-4 focus:ring-indigo-500/10 transition-all"
                     placeholder="Security Password"
                     type={showPassword ? 'text' : 'password'}
+                    value={password}
+                    onChange={(event) => setPassword(event.target.value)}
                   />
                   <button
                     type="button"
@@ -196,7 +225,11 @@ export default function LoginSplitPage() {
                     {showPassword ? <EyeOffIcon className="h-5 w-5" /> : <EyeIcon className="h-5 w-5" />}
                   </button>
                 </div>
+                <div className="flex items-center gap-2"><div className="flex h-12 min-w-28 items-center justify-center rounded-xl bg-slate-900 px-4 font-mono text-lg font-bold text-white">{captchaChallenge || 'Loading...'}</div><input className="h-12 min-w-0 flex-1 rounded-xl border border-slate-200 px-4 text-sm" inputMode="numeric" placeholder="Answer" value={captchaAnswer} onChange={(event) => setCaptchaAnswer(event.target.value)} /><button type="button" onClick={loadCaptcha} className="h-12 rounded-xl border border-slate-200 px-3 text-xs font-semibold text-indigo-600">New</button></div>
+                </>}
               </div>
+
+              {error && <p className="mt-3 rounded-lg border border-rose-200 bg-rose-50 p-2 text-center text-xs text-rose-700">{error}</p>}
 
               <div className="mt-5 flex items-center justify-between text-sm w-full">
                 <label className="inline-flex items-center gap-2 text-slate-600 cursor-pointer text-xs font-medium whitespace-nowrap">

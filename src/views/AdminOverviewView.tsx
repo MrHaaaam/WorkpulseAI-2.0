@@ -274,11 +274,11 @@ export function AdminOverviewView({
                     <ReceiptText className="h-4 w-4" />
                   </div>
                   <div>
-                    <h4 className="text-xs font-semibold text-amber-900">Payroll Approvals</h4>
-                    <p className="text-[11px] text-amber-700">{metrics.pendingPayrollCount} pending final admin sign-offs</p>
+                    <h4 className="text-xs font-semibold text-amber-900">Payroll Processing</h4>
+                    <p className="text-[11px] text-amber-700">{metrics.pendingPayrollCount} payroll records currently processing</p>
                   </div>
                 </div>
-                <Button size="sm" className="h-7 bg-amber-500 hover:bg-amber-600 text-white border-0 text-xs">Review</Button>
+                <Button size="sm" className="h-7 bg-amber-500 hover:bg-amber-600 text-white border-0 text-xs">View</Button>
               </div>
 
               <div className="flex items-center justify-between rounded-lg border border-slate-200 bg-slate-50 p-3">

@@ -1,19 +1,13 @@
 import { useState } from "react";
-import { X, Check, ShieldCheck } from "lucide-react";
+import { Archive, Check, KeyRound, RotateCcw, ShieldCheck, X } from "lucide-react";
 
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "../components/ui/Card";
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from "../components/ui/Table";
 import { Button } from "../components/ui/Button";
 import { Badge } from "../components/ui/Badge";
+import { Dialog, DialogClose, DialogHeader } from "../components/ui/Dialog";
+import { Input } from "../components/ui/Input";
 import { employees, type Employee } from "../lib/data";
-
-interface ManagerUser {
-  id: string;
-  name: string;
-  role: "manager" | string;
-  status: "active" | "inactive";
-  banned?: boolean;
-}
 
 const hoverScrollbarClasses = 
   "max-h-[400px] overflow-y-auto pr-2 " +
@@ -22,20 +16,59 @@ const hoverScrollbarClasses =
   "hover:[&::-webkit-scrollbar-thumb]:bg-slate-300 [&::-webkit-scrollbar-thumb]:rounded-full transition-colors duration-300";
 
 export function AdminView() {
-  const [localEmployees, setLocalEmployees] = useState(() => employees.map((e) => ({ ...e, banned: false })) as (Employee & { banned?: boolean })[]);
-  
-  const [managers, setManagers] = useState<ManagerUser[]>([
-    { id: "MAN-001", name: "Ramon Lopez", role: "manager", status: "active", banned: false },
-    { id: "MAN-002", name: "Evelyn Cruz", role: "manager", status: "active", banned: false },
-  ]);
+  const [localEmployees, setLocalEmployees] = useState(() => [
+    ...employees.map((employee) => ({ ...employee, banned: false })),
+    { id: "EMP-013", name: "Ramon Lopez", role: "manager", casualLeave: { used: 0, total: 10 }, sickLeave: { used: 0, total: 10 }, biometricStatus: "enrolled" as const, grossSalary: 0, status: "active" as const, banned: false },
+    { id: "EMP-014", name: "Evelyn Cruz", role: "manager", casualLeave: { used: 0, total: 10 }, sickLeave: { used: 0, total: 10 }, biometricStatus: "enrolled" as const, grossSalary: 0, status: "active" as const, banned: false },
+  ] as (Employee & { banned?: boolean })[]);
+  const [archivedAccounts, setArchivedAccounts] = useState<{ id: string; name: string; type: "Employee"; record: Employee & { banned?: boolean } }[]>([]);
+  const [adminUnlocked, setAdminUnlocked] = useState(false);
+  const [passwordPromptOpen, setPasswordPromptOpen] = useState(false);
+  const [archiveOpen, setArchiveOpen] = useState(false);
+  const [password, setPassword] = useState("");
+  const [passwordError, setPasswordError] = useState("");
 
   function toggleBanEmployee(id: string) {
     setLocalEmployees((prev) => prev.map((e) => (e.id === id ? { ...e, banned: !(e as any).banned } : e)));
   }
 
-  function toggleBanManager(id: string) {
-    setManagers((prev) => prev.map((m) => (m.id === id ? { ...m, banned: !m.banned } : m)));
+  function archiveEmployee(id: string) {
+    const employee = localEmployees.find((item) => item.id === id);
+    if (!employee) return;
+    setArchivedAccounts((current) => [...current, { id: employee.id, name: employee.name, type: "Employee", record: employee }]);
+    setLocalEmployees((current) => current.filter((item) => item.id !== id));
   }
+
+  async function unlockAdminControls(event: React.FormEvent) {
+    event.preventDefault();
+    if (!password) { setPasswordError("Enter your admin password."); return; }
+    try {
+      const token = sessionStorage.getItem('workpulse_token');
+      const response = await fetch('http://localhost:5000/api/auth/verify-password', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token ?? ''}` }, body: JSON.stringify({ password }) });
+      const contentType = response.headers.get('content-type') ?? '';
+      const data = contentType.includes('application/json') ? await response.json() : null;
+      if (!response.ok) throw new Error(data?.error || `Password verification failed (server returned ${response.status})`);
+      setPasswordPromptOpen(false);
+      setAdminUnlocked(true);
+      setPasswordError("");
+      setPassword("");
+    } catch (reason) {
+      setPasswordError(reason instanceof Error ? reason.message : 'Password verification failed');
+    }
+  }
+
+  function restoreAccount(id: string) {
+    const account = archivedAccounts.find((item) => item.id === id);
+    if (!account) return;
+    setLocalEmployees((current) => [...current, { ...account.record, banned: false }]);
+    setArchivedAccounts((current) => current.filter((item) => item.id !== id));
+  }
+
+  if (!adminUnlocked) return (
+    <div className="flex min-h-[70vh] items-center justify-center"><Card className="w-full max-w-md"><CardContent className="flex flex-col items-center p-8 text-center"><div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-[#8642ED]/10"><KeyRound className="h-7 w-7 text-[#8642ED]" /></div><h2 className="mt-4 text-xl font-bold text-slate-900">Admin Controls Locked</h2><p className="mt-1 text-sm text-slate-500">Password verification is required before accessing any administrative controls.</p><Button className="mt-5" onClick={() => { setPassword(""); setPasswordError(""); setPasswordPromptOpen(true); }}>Enter Password</Button></CardContent></Card>
+      <Dialog open={passwordPromptOpen} onClose={() => setPasswordPromptOpen(false)} className="max-w-sm"><DialogHeader><div><h3 className="flex items-center gap-2 text-base font-bold text-slate-900"><KeyRound className="h-4 w-4 text-[#8642ED]" /> Admin Password</h3><p className="mt-1 text-xs text-slate-500">Verify your current account password to continue.</p></div><DialogClose onClose={() => setPasswordPromptOpen(false)} /></DialogHeader><form onSubmit={unlockAdminControls} className="space-y-3 px-6 pb-6 pt-3"><Input type="password" autoFocus value={password} onChange={(event) => { setPassword(event.target.value); setPasswordError(""); }} placeholder="Enter admin password" />{passwordError && <p className="text-xs text-rose-600">{passwordError}</p>}<div className="flex justify-end gap-2"><Button type="button" size="sm" variant="outline" onClick={() => setPasswordPromptOpen(false)}>Cancel</Button><Button type="submit" size="sm">Unlock</Button></div></form></Dialog>
+    </div>
+  );
 
   return (
     <div className="space-y-6">
@@ -47,15 +80,16 @@ export function AdminView() {
             <h2 className="text-2xl font-bold text-slate-900">Admin Control Panel</h2>
             <p className="text-sm text-slate-500">Manage user access, bans, and global system configuration</p>
           </div>
+          <div className="flex gap-2"><Button variant="outline" onClick={() => setArchiveOpen(true)}><Archive className="h-4 w-4" /> Archive</Button><Button variant="outline" onClick={() => { setArchiveOpen(false); setAdminUnlocked(false); }}><KeyRound className="h-4 w-4" /> Lock</Button></div>
         </div>
       </div>
 
-      <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
+      <div className="grid grid-cols-1 gap-6">
         {/* Ban / Unban Employees Table */}
         <Card>
           <CardHeader>
             <CardTitle>Employee Access</CardTitle>
-            <CardDescription>Ban or unban standard employee accounts</CardDescription>
+            <CardDescription>Manage all employee accounts, including employees assigned as managers</CardDescription>
           </CardHeader>
           <CardContent>
             <div className={hoverScrollbarClasses}>
@@ -63,6 +97,7 @@ export function AdminView() {
                 <TableHeader className="sticky top-0 bg-white z-10 shadow-sm">
                   <TableRow>
                     <TableHead>Employee</TableHead>
+                    <TableHead>Role</TableHead>
                     <TableHead>Status</TableHead>
                     <TableHead className="text-right">Action</TableHead>
                   </TableRow>
@@ -74,6 +109,7 @@ export function AdminView() {
                         <div className="font-medium text-slate-900">{e.name}</div>
                         <div className="text-xs text-slate-500">{e.id}</div>
                       </TableCell>
+                      <TableCell className="capitalize text-slate-600">{e.role}</TableCell>
                       <TableCell>
                         {(e as any).banned ? (
                           <Badge variant="danger">Banned</Badge>
@@ -81,7 +117,7 @@ export function AdminView() {
                           <Badge variant="success">Active</Badge>
                         )}
                       </TableCell>
-                      <TableCell className="text-right">
+                      <TableCell className="flex justify-end gap-2">
                         <Button size="sm" variant={(e as any).banned ? "outline" : undefined} onClick={() => toggleBanEmployee(e.id)}>
                           {(e as any).banned ? (
                             <><Check className="mr-1.5 h-3.5 w-3.5" />Unban</>
@@ -89,53 +125,7 @@ export function AdminView() {
                             <><X className="mr-1.5 h-3.5 w-3.5" />Ban</>
                           )}
                         </Button>
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </div>
-          </CardContent>
-        </Card>
-
-        {/* Ban / Unban Managers Table */}
-        <Card>
-          <CardHeader>
-            <CardTitle>Manager Access</CardTitle>
-            <CardDescription>Ban or unban management accounts</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className={hoverScrollbarClasses}>
-              <Table>
-                <TableHeader className="sticky top-0 bg-white z-10 shadow-sm">
-                  <TableRow>
-                    <TableHead>Manager</TableHead>
-                    <TableHead>Status</TableHead>
-                    <TableHead className="text-right">Action</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {managers.map((m) => (
-                    <TableRow key={m.id} className="group hover:bg-slate-50/70">
-                      <TableCell>
-                        <div className="font-medium text-slate-900">{m.name}</div>
-                        <div className="text-xs text-slate-500">{m.id}</div>
-                      </TableCell>
-                      <TableCell>
-                        {m.banned ? (
-                          <Badge variant="danger">Banned</Badge>
-                        ) : (
-                          <Badge variant="success">Active</Badge>
-                        )}
-                      </TableCell>
-                      <TableCell className="text-right">
-                        <Button size="sm" variant={m.banned ? "outline" : undefined} onClick={() => toggleBanManager(m.id)}>
-                          {m.banned ? (
-                            <><Check className="mr-1.5 h-3.5 w-3.5" />Unban</>
-                          ) : (
-                            <><X className="mr-1.5 h-3.5 w-3.5" />Ban</>
-                          )}
-                        </Button>
+                        <Button size="sm" variant="outline" onClick={() => archiveEmployee(e.id)}><Archive className="h-3.5 w-3.5" /> Archive</Button>
                       </TableCell>
                     </TableRow>
                   ))}
@@ -188,6 +178,16 @@ export function AdminView() {
           </CardContent>
         </Card>
       </div>
+
+      {archiveOpen && (
+        <Card className="border-violet-200">
+          <CardHeader><div className="flex items-start justify-between"><div><CardTitle className="flex items-center gap-2"><Archive className="h-5 w-5 text-[#8642ED]" /> Archive</CardTitle><CardDescription>Protected archived accounts. Restore records when needed.</CardDescription></div><Button size="sm" variant="outline" onClick={() => setArchiveOpen(false)}>Close &amp; Lock</Button></div></CardHeader>
+          <CardContent className="p-0"><Table><TableHeader><TableRow><TableHead>Account</TableHead><TableHead>Type</TableHead><TableHead className="text-right">Action</TableHead></TableRow></TableHeader><TableBody>
+            {archivedAccounts.map((account) => <TableRow key={account.id}><TableCell><div className="font-medium text-slate-900">{account.name}</div><div className="text-xs text-slate-400">{account.id}</div></TableCell><TableCell><Badge variant="neutral">{account.type}</Badge></TableCell><TableCell className="text-right"><Button size="sm" variant="outline" onClick={() => restoreAccount(account.id)}><RotateCcw className="h-3.5 w-3.5" /> Restore</Button></TableCell></TableRow>)}
+          </TableBody></Table>{archivedAccounts.length === 0 && <div className="py-10 text-center text-sm text-slate-400">The archive is empty.</div>}</CardContent>
+        </Card>
+      )}
+
     </div>
   );
 }

@@ -6,13 +6,15 @@
   "main": "src/server.js",
   "scripts": {
     "dev": "node --watch src/server.js",
-    "start": "node src/server.js"
+    "start": "node src/server.js",
+    "seed:admin": "node seed-admin.js"
   },
   "dependencies": {
     "cors": "^2.8.5",
     "dotenv": "^17.4.2",
     "express": "^4.19.2",
     "mongodb": "^7.5.0",
-    "mongoose": "^9.7.4"
+    "mongoose": "^9.7.4",
+    "nodemailer": "^9.0.3"
   }
 }

@@ -1,19 +1,13 @@
 import { useState, useEffect, useMemo } from 'react';
-import { type ViewKey } from '../components/Sidebar';
-
-import { ManagerSidebar } from '../components/ManagerSidebar';
-import { AdminSidebar } from '../components/AdminSidebar';
-import { OverviewView } from '../views/OverviewView';
+import { AdminSidebar, type ViewKey } from '../components/AdminSidebar';
 import { AdminOverviewView } from '../views/AdminOverviewView';
 import { EmployeeDirectoryView } from '../views/EmployeeDirectoryView';
 
-import { BiometricView } from '../views/BiometricView';
 import { PayrollView } from '../views/PayrollView';
 import { SettingsView } from '../views/SettingsView';
-import { AnalyticsView } from '../views/AnalyticsView';
+import { AIInsightsView } from '../views/AIInsightsView';
 import { LeaveRequestsView } from '../views/LeaveRequestsView';
 import { AdminView } from '../views/AdminView';
-import { AdminPayrollApprovalsView } from '../views/AdminPayrollApprovalsView';
 import { AttendanceView } from '../views/AttendanceView';
 
 // Import your data stores to pass down to the decoupled overview views
@@ -39,9 +33,6 @@ const sharedRecentActivities = [
 export function AppRoutes() {
   const params = typeof window !== 'undefined' ? new URLSearchParams(window.location.search) : new URLSearchParams();
   const paramView = params.get('view') as ViewKey;
-  const initialRole: 'manager' | 'admin' = params.get('role') === 'admin' ? 'admin' : 'manager';
-
-  const [role] = useState<'manager' | 'admin'>(initialRole);
 
   // 1. Compute state metrics for the Admin View
   const adminMetricsData = useMemo(() => {
@@ -57,50 +48,25 @@ export function AppRoutes() {
     };
   }, []);
 
-  // 2. Compute state metrics tailored for the Manager View
-  const managerMetricsData = useMemo(() => {
-    const totalActiveStaff = employees.filter((e) => e.status === "active").length;
-    
-    return {
-      totalActiveStaff,
-      presentToday: 10, // Matching pie data fallbacks
-      lateClockIns: 4,
-      registeredBiometricKeys: 15,
-    };
-  }, []);
-
-  // 3. Consolidate views and safely feed them their computed data properties
+  // One unified workspace: administrators also have all manager capabilities.
   const viewMap: Record<ViewKey, React.ReactNode> = {
-    overview: role === 'admin' ? (
+    overview: (
       <AdminOverviewView 
         attendanceTrends={attendanceData}
         liveBreakdown={sharedPieData}
         auditTrail={sharedRecentActivities}
         metrics={adminMetricsData}
       />
-    ) : (
-      <OverviewView 
-        attendanceTrends={attendanceData}
-        liveBreakdown={sharedPieData}
-        recentActivities={sharedRecentActivities}
-        metrics={managerMetricsData}
-      />
     ),
-    attendance: <AttendanceView role={role} records={[]} />,
+    attendance: <AttendanceView role="admin" records={[]} />,
 
     employees: <EmployeeDirectoryView employees={employees as any} />,
 
-    biometric: <BiometricView />,
     leave: <LeaveRequestsView requests={[]} />,
 
-    payroll:
-      role === 'admin'
-        ? <AdminPayrollApprovalsView payrollRequests={payrollRequestsStore.get()} />
-        : <PayrollView employees={employees} requests={payrollRequestsStore.get()} />,
+    payroll: <PayrollView employees={employees} requests={payrollRequestsStore.get()} />,
 
-
-
-    analytics: <AnalyticsView />,
+    insights: <AIInsightsView />,
     admin: <AdminView />,
     settings: <SettingsView />,
   };
@@ -113,20 +79,16 @@ export function AppRoutes() {
     if (typeof window !== 'undefined') {
       const newParams = new URLSearchParams(window.location.search);
       newParams.set('view', active);
-      newParams.set('role', role);
+      newParams.delete('role');
       
       const targetUrl = `${window.location.pathname}?${newParams.toString()}`;
       window.history.replaceState(null, '', targetUrl);
     }
-  }, [active, role]);
+  }, [active]);
 
   return (
     <div className="flex h-screen w-full">
-      {role === 'admin' ? (
-        <AdminSidebar active={active} onNavigate={setActive} />
-      ) : (
-        <ManagerSidebar active={active} onNavigate={setActive} />
-      )}
+      <AdminSidebar active={active} onNavigate={setActive} />
       
       <main className="flex-1 overflow-y-auto bg-slate-50 p-6">
         {viewMap[active] || viewMap.overview}
