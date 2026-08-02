@@ -2,7 +2,7 @@ import cors from 'cors';
 import dotenv from 'dotenv';
 import express from 'express';
 import mongoose from 'mongoose';
-import apiRouter from './routes/api.js';
+import apiRouter, { enforceAutomaticClockOut, getSettings } from './routes/api.js';
 import authRouter from './routes/auth.js';
 
 dotenv.config();
@@ -40,6 +40,16 @@ async function startServer() {
   try {
     await mongoose.connect(mongoUri);
     console.log('Connected to MongoDB Atlas.');
+    const enforceAttendanceLimits = async () => {
+      try {
+        const settings = await getSettings(mongoose.connection.db);
+        await enforceAutomaticClockOut(mongoose.connection.db, settings);
+      } catch (error) {
+        console.error('Automatic clock-out check failed:', error instanceof Error ? error.message : error);
+      }
+    };
+    await enforceAttendanceLimits();
+    setInterval(enforceAttendanceLimits, 60_000);
     app.listen(port, () => console.log(`Server is running on http://localhost:${port}`));
   } catch (error) {
     console.error('MongoDB connection failed:', error instanceof Error ? error.message : error);

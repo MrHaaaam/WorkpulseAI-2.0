@@ -15,7 +15,7 @@ export async function hashSecret(secret) {
   return `${salt}:${Buffer.from(derived).toString('hex')}`;
 }
 
-async function verifySecret(secret, stored) {
+export async function verifySecret(secret, stored) {
   const [salt, key] = String(stored).split(':');
   if (!salt || !key) return false;
   const derived = Buffer.from(await scrypt(secret, salt, 64));

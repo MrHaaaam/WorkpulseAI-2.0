@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Archive, Check, KeyRound, RotateCcw, ShieldCheck, X } from "lucide-react";
 
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "../components/ui/Card";
@@ -7,7 +7,7 @@ import { Button } from "../components/ui/Button";
 import { Badge } from "../components/ui/Badge";
 import { Dialog, DialogClose, DialogHeader } from "../components/ui/Dialog";
 import { Input } from "../components/ui/Input";
-import { employees, type Employee } from "../lib/data";
+import type { Employee } from "../lib/data";
 
 const hoverScrollbarClasses = 
   "max-h-[400px] overflow-y-auto pr-2 " +
@@ -16,11 +16,7 @@ const hoverScrollbarClasses =
   "hover:[&::-webkit-scrollbar-thumb]:bg-slate-300 [&::-webkit-scrollbar-thumb]:rounded-full transition-colors duration-300";
 
 export function AdminView() {
-  const [localEmployees, setLocalEmployees] = useState(() => [
-    ...employees.map((employee) => ({ ...employee, banned: false })),
-    { id: "EMP-013", name: "Ramon Lopez", role: "manager", casualLeave: { used: 0, total: 10 }, sickLeave: { used: 0, total: 10 }, biometricStatus: "enrolled" as const, grossSalary: 0, status: "active" as const, banned: false },
-    { id: "EMP-014", name: "Evelyn Cruz", role: "manager", casualLeave: { used: 0, total: 10 }, sickLeave: { used: 0, total: 10 }, biometricStatus: "enrolled" as const, grossSalary: 0, status: "active" as const, banned: false },
-  ] as (Employee & { banned?: boolean })[]);
+  const [localEmployees, setLocalEmployees] = useState<(Employee & { banned?: boolean })[]>([]);
   const [archivedAccounts, setArchivedAccounts] = useState<{ id: string; name: string; type: "Employee"; record: Employee & { banned?: boolean } }[]>([]);
   const [adminUnlocked, setAdminUnlocked] = useState(false);
   const [passwordPromptOpen, setPasswordPromptOpen] = useState(false);
@@ -28,15 +24,19 @@ export function AdminView() {
   const [password, setPassword] = useState("");
   const [passwordError, setPasswordError] = useState("");
 
+  useEffect(() => {
+    const token = sessionStorage.getItem('workpulse_token');
+    Promise.all([fetch('http://localhost:5000/api/employees'), fetch('http://localhost:5000/api/archived-employees', { headers: { Authorization: `Bearer ${token ?? ''}` } })]).then(async ([activeResponse, archivedResponse]) => {
+      if (activeResponse.ok) setLocalEmployees(await activeResponse.json());
+      if (archivedResponse.ok) {
+        const archived = await archivedResponse.json() as (Employee & { banned?: boolean })[];
+        setArchivedAccounts(archived.map((record) => ({ id: record.id, name: record.name, type: 'Employee' as const, record })));
+      }
+    }).catch(() => {});
+  }, []);
+
   function toggleBanEmployee(id: string) {
     setLocalEmployees((prev) => prev.map((e) => (e.id === id ? { ...e, banned: !(e as any).banned } : e)));
-  }
-
-  function archiveEmployee(id: string) {
-    const employee = localEmployees.find((item) => item.id === id);
-    if (!employee) return;
-    setArchivedAccounts((current) => [...current, { id: employee.id, name: employee.name, type: "Employee", record: employee }]);
-    setLocalEmployees((current) => current.filter((item) => item.id !== id));
   }
 
   async function unlockAdminControls(event: React.FormEvent) {
@@ -57,10 +57,14 @@ export function AdminView() {
     }
   }
 
-  function restoreAccount(id: string) {
+  async function restoreAccount(id: string) {
     const account = archivedAccounts.find((item) => item.id === id);
     if (!account) return;
-    setLocalEmployees((current) => [...current, { ...account.record, banned: false }]);
+    const token = sessionStorage.getItem('workpulse_token');
+    const response = await fetch(`http://localhost:5000/api/employees/${id}/unarchive`, { method: 'POST', headers: { Authorization: `Bearer ${token ?? ''}` } });
+    if (!response.ok) return;
+    const restored = await response.json();
+    setLocalEmployees((current) => [...current, { ...restored, banned: false }]);
     setArchivedAccounts((current) => current.filter((item) => item.id !== id));
   }
 
@@ -125,7 +129,6 @@ export function AdminView() {
                             <><X className="mr-1.5 h-3.5 w-3.5" />Ban</>
                           )}
                         </Button>
-                        <Button size="sm" variant="outline" onClick={() => archiveEmployee(e.id)}><Archive className="h-3.5 w-3.5" /> Archive</Button>
                       </TableCell>
                     </TableRow>
                   ))}

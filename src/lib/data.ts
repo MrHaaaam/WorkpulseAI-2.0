@@ -6,7 +6,14 @@ export interface Employee {
   sickLeave: { used: number; total: number };
   biometricStatus: "enrolled" | "pending" | "none";
   grossSalary: number;
+  hoursWorked?: number;
+  hourlyRate?: number;
+  carryOverAmount?: number;
   status: "active" | "on-leave" | "inactive";
+  email?: string;
+  phone?: string;
+  address?: string;
+  identifiers?: { type: string; value: string; amount: number }[];
 }
 
 export const employees: Employee[] = [

@@ -10,61 +10,70 @@ import { LeaveRequestsView } from '../views/LeaveRequestsView';
 import { AdminView } from '../views/AdminView';
 import { AttendanceView } from '../views/AttendanceView';
 
-// Import your data stores to pass down to the decoupled overview views
-import { employees, payrollRequestsStore, attendanceData } from '../lib/data';
-
-
-// Fallback/Mock structures matching your original static configurations
-const sharedPieData = [
-  { name: "Present", value: 10, color: "#10b981" },
-  { name: "Late", value: 4, color: "#f59e0b" },
-  { name: "Absent", value: 1, color: "#ef4444" },
-  { name: "On Leave", value: 1, color: "#6366f1" },
-];
-
-const sharedRecentActivities = [
-  { id: 1, user: "Sarah Jenkins", role: "Staff", action: "Clocked In", time: "08:15 AM", date: "Today", status: "Late" },
-  { id: 2, user: "Marcus Ray", role: "Manager", action: "Approved Leave Request", time: "09:30 AM", date: "Today", status: "Success" },
-  { id: 3, user: "Elena Rodriguez", role: "Staff", action: "Clocked In", time: "07:55 AM", date: "Today", status: "On Time" },
-  { id: 4, user: "David Chen", role: "Admin", action: "Updated Biometric Policy", time: "04:20 PM", date: "Yesterday", status: "Success" },
-  { id: 5, user: "James Wilson", role: "Staff", action: "Biometric Registration", time: "11:00 AM", date: "Yesterday", status: "Pending" },
-];
+type OverviewEmployee = { status: string; biometricStatus: string };
+type OverviewPayroll = { status: string };
+type OverviewAttendance = { status: string };
+const emptyAttendanceTrends = { daily: [], weekly: [], monthly: [] };
 
 export function AppRoutes() {
   const params = typeof window !== 'undefined' ? new URLSearchParams(window.location.search) : new URLSearchParams();
   const paramView = params.get('view') as ViewKey;
 
-  // 1. Compute state metrics for the Admin View
+  const [overviewEmployees, setOverviewEmployees] = useState<OverviewEmployee[]>([]);
+  const [overviewPayroll, setOverviewPayroll] = useState<OverviewPayroll[]>([]);
+  const [overviewAttendance, setOverviewAttendance] = useState<OverviewAttendance[]>([]);
+
+  useEffect(() => {
+    Promise.all([
+      fetch('http://localhost:5000/api/employees'),
+      fetch('http://localhost:5000/api/payroll-requests'),
+      fetch('http://localhost:5000/api/attendance'),
+    ]).then(async ([employeesResponse, payrollResponse, attendanceResponse]) => {
+      setOverviewEmployees(employeesResponse.ok ? await employeesResponse.json() : []);
+      setOverviewPayroll(payrollResponse.ok ? await payrollResponse.json() : []);
+      setOverviewAttendance(attendanceResponse.ok ? await attendanceResponse.json() : []);
+    }).catch(() => {
+      setOverviewEmployees([]); setOverviewPayroll([]); setOverviewAttendance([]);
+    });
+  }, []);
+
   const adminMetricsData = useMemo(() => {
-    const totalStaff = employees.length;
-    const activeWorkforce = employees.filter((e) => e.status === "active").length;
-    const pendingPayrollCount = payrollRequestsStore.get().filter(p => p.status === "processing").length;
+    const totalStaff = overviewEmployees.length;
+    const activeWorkforce = overviewEmployees.filter((employee) => employee.status === "active").length;
+    const pendingPayrollCount = overviewPayroll.filter((payroll) => payroll.status === "processing").length;
     
     return {
       totalStaff,
       activeWorkforce,
       pendingPayrollCount,
-      biometricKeysActive: 18, // Matching your original layout static number
+      biometricKeysActive: overviewEmployees.filter((employee) => employee.biometricStatus === "enrolled").length,
     };
-  }, []);
+  }, [overviewEmployees, overviewPayroll]);
+
+  const liveBreakdown = useMemo(() => [
+    { name: "Present", value: overviewAttendance.filter((record) => record.status === "Present").length, color: "#10b981" },
+    { name: "Late", value: overviewAttendance.filter((record) => record.status === "Late").length, color: "#f59e0b" },
+    { name: "Absent", value: overviewAttendance.filter((record) => record.status === "Absent").length, color: "#ef4444" },
+    { name: "On Leave", value: overviewAttendance.filter((record) => record.status === "On Leave").length, color: "#6366f1" },
+  ].filter((item) => item.value > 0), [overviewAttendance]);
 
   // One unified workspace: administrators also have all manager capabilities.
   const viewMap: Record<ViewKey, React.ReactNode> = {
     overview: (
       <AdminOverviewView 
-        attendanceTrends={attendanceData}
-        liveBreakdown={sharedPieData}
-        auditTrail={sharedRecentActivities}
+        attendanceTrends={emptyAttendanceTrends}
+        liveBreakdown={liveBreakdown}
+        auditTrail={[]}
         metrics={adminMetricsData}
       />
     ),
     attendance: <AttendanceView role="admin" records={[]} />,
 
-    employees: <EmployeeDirectoryView employees={employees as any} />,
+    employees: <EmployeeDirectoryView employees={[]} />,
 
     leave: <LeaveRequestsView requests={[]} />,
 
-    payroll: <PayrollView employees={employees} requests={payrollRequestsStore.get()} />,
+    payroll: <PayrollView employees={[]} requests={[]} />,
 
     insights: <AIInsightsView />,
     admin: <AdminView />,

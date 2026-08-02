@@ -17,7 +17,7 @@
   --heading: system-ui, 'Segoe UI', Roboto, sans-serif;
   --mono: ui-monospace, Consolas, monospace;
 
-  font: 18px/145% var(--sans);
+  font: 16px/145% var(--sans);
   letter-spacing: 0.18px;
   color-scheme: light dark;
   color: var(--text);
@@ -28,7 +28,7 @@
   -moz-osx-font-smoothing: grayscale;
 
   @media (max-width: 1024px) {
-    font-size: 16px;
+    font-size: 15px;
   }
 }
 
@@ -148,6 +148,14 @@ code {
 }
 
 @layer utilities {
+  .no-number-arrows::-webkit-inner-spin-button,
+  .no-number-arrows::-webkit-outer-spin-button {
+    margin: 0;
+    appearance: none;
+  }
+  .no-number-arrows {
+    -moz-appearance: textfield;
+  }
   .scrollbar-thin {
     scrollbar-width: thin;
     scrollbar-color: rgb(203 213 225) transparent;
@@ -182,6 +190,13 @@ code {
   0% { box-shadow: 0 0 0 0 rgba(59, 130, 246, 0.4); }
   70% { box-shadow: 0 0 0 12px rgba(59, 130, 246, 0); }
   100% { box-shadow: 0 0 0 0 rgba(59, 130, 246, 0); }
+}
+
+@media print {
+  body * { visibility: hidden !important; }
+  .print-payslip, .print-payslip * { visibility: visible !important; }
+  .print-payslip { position: absolute; inset: 0; width: 100%; padding: 24px; background: white; }
+  .no-print { display: none !important; }
 }
 .animate-pulse-ring {
   animation: pulse-ring 2s infinite;

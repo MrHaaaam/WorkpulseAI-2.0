@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { 
   Check, 
   X, 
@@ -12,6 +12,7 @@ import {
 
 export interface LeaveRequest {
   id: string;
+  employeeId?: string;
   employeeName: string;
   role: string;
   leaveType: "Annual Leave" | "Sick Leave" | "Personal Leave" | "Maternity Leave";
@@ -37,14 +38,23 @@ export function LeaveRequestsView({
 }: LeaveRequestsViewProps) {
   const [searchTerm, setSearchTerm] = useState("");
   const [filterStatus, setFilterStatus] = useState<"all" | "pending" | "approved" | "rejected">("all");
+  const [localRequests, setLocalRequests] = useState(requests);
+  useEffect(() => { fetch('http://localhost:5000/api/leave-requests').then((response) => response.ok ? response.json() : Promise.reject()).then(setLocalRequests).catch(() => setLocalRequests([])); }, []);
+
+  async function updateRequest(id: string, status: "approved" | "rejected") {
+    const response = await fetch(`http://localhost:5000/api/leave-requests/${id}/status`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status }) });
+    if (!response.ok) return;
+    setLocalRequests((current) => current.map((request) => request.id === id ? { ...request, status } : request));
+    if (status === "approved") onApprove?.(id); else onReject?.(id);
+  }
   // REMOVED: filterLeaveType state declaration
 
-  const pendingCount = requests.filter(r => r.status === "pending").length;
-  const approvedCount = requests.filter(r => r.status === "approved").length;
-  const totalDaysRequested = requests.reduce((acc, r) => acc + (r.status === "approved" ? r.totalDays : 0), 0);
+  const pendingCount = localRequests.filter(r => r.status === "pending").length;
+  const approvedCount = localRequests.filter(r => r.status === "approved").length;
+  const totalDaysRequested = localRequests.reduce((acc, r) => acc + (r.status === "approved" ? r.totalDays : 0), 0);
 
   // UPDATED: Filtration rules look strictly at search text and status matches now
-  const filteredRequests = requests.filter(req => {
+  const filteredRequests = localRequests.filter(req => {
     const matchesSearch = req.employeeName.toLowerCase().includes(searchTerm.toLowerCase()) || 
                           req.role.toLowerCase().includes(searchTerm.toLowerCase());
     const matchesStatus = filterStatus === "all" || req.status === filterStatus;
@@ -198,13 +208,13 @@ onClick={() => setFilterStatus(val as "all" | "pending" | "approved" | "rejected
                 {request.status === "pending" && (
                   <div className="flex items-center gap-2 w-full md:w-auto">
                     <button
-                      onClick={() => onReject && onReject(request.id)}
+                      onClick={() => updateRequest(request.id, "rejected")}
                       className="flex-1 md:flex-none inline-flex items-center justify-center gap-1 rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-rose-50 hover:text-rose-600 hover:border-rose-200 transition-colors"
                     >
                       <X className="h-3.5 w-3.5" /> Decline
                     </button>
                     <button
-                      onClick={() => onApprove && onApprove(request.id)}
+                      onClick={() => updateRequest(request.id, "approved")}
                       className="flex-1 md:flex-none inline-flex items-center justify-center gap-1 rounded-lg bg-[#8642ED] px-3 py-1.5 text-xs font-semibold text-white hover:bg-[#7232db] shadow-sm transition-colors"
                     >
                       <Check className="h-3.5 w-3.5" /> Approve
