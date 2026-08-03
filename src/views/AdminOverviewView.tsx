@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { 
   Users, 
   UserCheck, 
@@ -10,7 +10,13 @@ import {
   Activity, 
   ReceiptText, 
   AlertCircle, 
-  CheckCircle2 
+  CheckCircle2,
+  Gauge,
+  Timer,
+  WalletCards,
+  ShieldCheck,
+  ChevronLeft,
+  ChevronRight,
 } from "lucide-react";
 import {
   ResponsiveContainer,
@@ -76,25 +82,59 @@ interface AdminOverviewProps {
   metrics: {
     totalStaff: number;
     activeWorkforce: number;
+    workforceEligible: number;
     pendingPayrollCount: number;
     biometricKeysActive: number;
   };
+  analytics: {
+    attendanceRate: number;
+    punctualityRate: number;
+    biometricCoverage: number;
+    payrollCompletion: number;
+  };
+  latestAttendanceDate?: string;
+  leaveRequests: { id: string; employeeId?: string; startDate: string; endDate: string; totalDays: number; status: string }[];
+  attendanceRecords: { date?: string; status: string }[];
 }
 
 export function AdminOverviewView({ 
   attendanceTrends, 
   liveBreakdown = [], 
   auditTrail = [], 
-  metrics 
+  metrics,
+  analytics,
+  latestAttendanceDate,
+  leaveRequests = [],
+  attendanceRecords = [],
 }: AdminOverviewProps) {
   const [viewMode, setViewMode] = useState<ViewMode>("weekly");
+  const [workforceDate, setWorkforceDate] = useState(latestAttendanceDate || new Date().toISOString().slice(0, 10));
+  const [performanceDate, setPerformanceDate] = useState(latestAttendanceDate || new Date().toISOString().slice(0, 10));
   const chartData = attendanceTrends?.[viewMode] || [];
+  const approvedLeavesForDate = leaveRequests.filter((leave) => {
+    if (leave.status !== "approved") return false;
+    return leave.startDate <= workforceDate && leave.endDate >= workforceDate;
+  });
+  const employeesOnLeave = new Set(approvedLeavesForDate.map((leave) => leave.employeeId || leave.id)).size;
+  const activeForDate = Math.max(0, metrics.workforceEligible - employeesOnLeave);
+  const performanceRecords = attendanceRecords.filter((record) => record.date === performanceDate);
+  const attendedForDate = performanceRecords.filter((record) => record.status === "Present" || record.status === "Late").length;
+  const onTimeForDate = performanceRecords.filter((record) => record.status === "Present").length;
+  const attendanceRateForDate = performanceRecords.length ? attendedForDate / performanceRecords.length * 100 : 0;
+  const punctualityRateForDate = attendedForDate ? onTimeForDate / attendedForDate * 100 : 0;
+  const performanceMetrics = [
+    { label: "Attendance rate", value: attendanceRateForDate, icon: Gauge, color: "text-emerald-600", bar: "bg-emerald-500", hint: "Present and late on selected date" },
+    { label: "On-time arrival", value: punctualityRateForDate, icon: Timer, color: "text-sky-600", bar: "bg-sky-500", hint: "On time among selected-day attendees" },
+    { label: "Employees registered", value: analytics.biometricCoverage, icon: ShieldCheck, color: "text-violet-600", bar: "bg-violet-500", hint: "Staff with enrolled biometrics" },
+    { label: "Payroll completion", value: analytics.payrollCompletion, icon: WalletCards, color: "text-amber-600", bar: "bg-amber-500", hint: "Requests marked as paid" },
+  ];
 
   const adminMetrics = [
-    { label: "Total Registered Staff", value: metrics.totalStaff.toString(), change: "+2", trend: "up", icon: Users, ...cardColorStyles.purple },
-    { label: "Active Workforce", value: metrics.activeWorkforce.toString(), change: "+1", trend: "up", icon: UserCheck, ...cardColorStyles.emerald },
-    { label: "Pending Payroll Sign-offs", value: metrics.pendingPayrollCount.toString(), change: "Action Req.", trend: "down", icon: Clock, ...cardColorStyles.amber },
-    { label: "Biometric Keys Active", value: metrics.biometricKeysActive.toString(), change: "+3", trend: "up", icon: Fingerprint, ...cardColorStyles.violet },
+    { label: "Total Registered Staff", value: metrics.totalStaff, progress: metrics.totalStaff ? 100 : 0, hint: "Employee records in the system", icon: Users, color: "text-[#8642ED]", bar: "bg-[#8642ED]" },
+    { label: "Active Workforce", value: activeForDate, progress: metrics.totalStaff ? activeForDate / metrics.totalStaff * 100 : 0, hint: "Available on selected date", icon: UserCheck, color: "text-emerald-600", bar: "bg-emerald-500" },
+    { label: "Pending Payroll Sign-offs", value: metrics.pendingPayrollCount, progress: metrics.totalStaff ? metrics.pendingPayrollCount / metrics.totalStaff * 100 : 0, hint: "Records awaiting admin action", icon: Clock, color: "text-amber-600", bar: "bg-amber-500" },
+    { label: "Biometric Keys Active", value: metrics.biometricKeysActive, progress: metrics.totalStaff ? metrics.biometricKeysActive / metrics.totalStaff * 100 : 0, hint: "Employees ready for biometric scans", icon: Fingerprint, color: "text-violet-600", bar: "bg-violet-500" },
+    { label: "Employees on Leave", value: employeesOnLeave, progress: metrics.totalStaff ? employeesOnLeave / metrics.totalStaff * 100 : 0, hint: "Approved leave on selected date", icon: Calendar, color: "text-sky-600", bar: "bg-sky-500" },
   ];
 
   return (
@@ -109,7 +149,7 @@ export function AdminOverviewView({
             <Calendar className="h-4 w-4 text-slate-400" />
             <input
               type="text"
-              defaultValue="Jul 01 – Jul 13, 2026"
+              value={latestAttendanceDate ? `Through ${new Date(`${latestAttendanceDate}T00:00:00`).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}` : 'No attendance period'}
               className="text-sm font-medium text-slate-700 outline-none bg-transparent"
               readOnly
             />
@@ -126,29 +166,75 @@ export function AdminOverviewView({
         </div>
       </div>
 
-      {/* Analytics Cards */}
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+      {/* Workforce inventory cards */}
+      <Card>
+        <CardHeader className="pb-3">
+          <div className="flex items-center justify-between">
+            <div>
+              <CardTitle>Workforce Operations</CardTitle>
+              <CardDescription>Current staffing, payroll, and biometric readiness</CardDescription>
+            </div>
+            <DateNavigator label="Workforce date" value={workforceDate} onChange={setWorkforceDate} />
+          </div>
+        </CardHeader>
+        <CardContent>
+          <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 xl:grid-cols-5">
         {adminMetrics.map((m) => {
           const Icon = m.icon;
+          const safeProgress = Math.max(0, Math.min(100, m.progress));
           return (
-            <Card key={m.label} className="animate-fade-in">
-              <CardContent className="p-5">
-                <div className="flex items-start justify-between">
-                  <div className={`flex h-11 w-11 items-center justify-center rounded-xl ${m.bg} shadow-sm`}>
-                    <Icon className={`h-5 w-5 ${m.text}`} />
-                  </div>
-                  <Badge variant={m.trend === "up" ? "success" : "danger"}>
-                    {m.trend === "up" ? <TrendingUp className="h-3 w-3" /> : <TrendingDown className="h-3 w-3" />}
-                    {m.change}
-                  </Badge>
+            <div key={m.label} className="animate-fade-in rounded-xl border border-slate-200 bg-slate-50/60 p-4">
+                <div className="flex items-center justify-between">
+                  <p className="text-xs font-medium text-slate-600">{m.label}</p>
+                  <Icon className={`h-4 w-4 ${m.color}`} />
                 </div>
-                <p className="mt-4 text-3xl font-bold text-slate-900">{m.value}</p>
-                <p className="text-sm text-slate-500">{m.label}</p>
-              </CardContent>
-            </Card>
+                <p className="mt-2 text-2xl font-bold text-slate-900">{m.value}</p>
+                <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-slate-200">
+                  <div className={`h-full rounded-full ${m.bar}`} style={{ width: `${safeProgress}%` }} />
+                </div>
+                <div className="mt-2 flex items-center justify-between gap-2 text-[11px]">
+                  <span className="text-slate-400">{m.hint}</span>
+                  <span className={`shrink-0 font-semibold ${m.color}`}>{safeProgress.toFixed(0)}%</span>
+                </div>
+            </div>
           );
         })}
-      </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader className="pb-3">
+          <div className="flex items-center justify-between">
+            <div>
+              <CardTitle>Workforce Performance Snapshot</CardTitle>
+              <CardDescription>Operational rates calculated from current system records</CardDescription>
+            </div>
+            <DateNavigator label="Performance date" value={performanceDate} onChange={setPerformanceDate} />
+          </div>
+        </CardHeader>
+        <CardContent>
+          <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 xl:grid-cols-4">
+            {performanceMetrics.map((metric) => {
+              const Icon = metric.icon;
+              const safeValue = Math.max(0, Math.min(100, metric.value));
+              return (
+                <div key={metric.label} className="rounded-xl border border-slate-200 bg-slate-50/60 p-4">
+                  <div className="flex items-center justify-between">
+                    <p className="text-xs font-medium text-slate-600">{metric.label}</p>
+                    <Icon className={`h-4 w-4 ${metric.color}`} />
+                  </div>
+                  <p className="mt-2 text-2xl font-bold text-slate-900">{safeValue.toFixed(1)}%</p>
+                  <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-slate-200">
+                    <div className={`h-full rounded-full ${metric.bar}`} style={{ width: `${safeValue}%` }} />
+                  </div>
+                  <p className="mt-2 text-[11px] text-slate-400">{metric.hint}</p>
+                </div>
+              );
+            })}
+          </div>
+        </CardContent>
+      </Card>
 
       {/* Primary Analytics Visualization Charts */}
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
@@ -637,6 +723,50 @@ export function OverviewView({
           </CardContent>
         </Card>
       </div>
+    </div>
+  );
+}
+
+function DateNavigator({ label, value, onChange }: { label: string; value: string; onChange: (value: string) => void }) {
+  const inputRef = useRef<HTMLInputElement>(null);
+  const moveDay = (amount: number) => {
+    const date = new Date(`${value}T12:00:00`);
+    date.setDate(date.getDate() + amount);
+    onChange(date.toISOString().slice(0, 10));
+  };
+  const formatted = new Date(`${value}T00:00:00`).toLocaleDateString("en-US", {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
+  const openCalendar = () => {
+    const input = inputRef.current;
+    if (!input) return;
+    if (typeof input.showPicker === "function") input.showPicker();
+    else {
+      input.focus();
+      input.click();
+    }
+  };
+
+  return (
+    <div className="relative flex items-stretch overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+      <button type="button" onClick={() => moveDay(-1)} aria-label="Previous day" className="flex w-9 items-center justify-center border-r border-slate-200 text-slate-400 transition-colors hover:bg-violet-50 hover:text-[#8642ED]">
+        <ChevronLeft className="h-4 w-4" />
+      </button>
+      <button type="button" onClick={openCalendar} aria-label={`Open ${label} calendar`} className="relative flex min-w-[210px] cursor-pointer items-center gap-2.5 px-3 py-2 text-left transition-colors hover:bg-violet-50">
+        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[#8642ED]/10 text-[#8642ED]"><Calendar className="h-4 w-4" /></span>
+        <span className="min-w-0">
+          <span className="block text-[10px] font-semibold uppercase tracking-wider text-slate-400">{label}</span>
+          <span className="block whitespace-nowrap text-xs font-semibold text-slate-700">{formatted}</span>
+        </span>
+        <span className="ml-auto text-[10px] font-semibold text-[#8642ED]">Choose</span>
+      </button>
+      <input ref={inputRef} aria-label={label} type="date" value={value} onChange={(event) => onChange(event.target.value)} className="pointer-events-none absolute h-px w-px opacity-0" />
+      <button type="button" onClick={() => moveDay(1)} aria-label="Next day" className="flex w-9 items-center justify-center border-l border-slate-200 text-slate-400 transition-colors hover:bg-violet-50 hover:text-[#8642ED]">
+        <ChevronRight className="h-4 w-4" />
+      </button>
     </div>
   );
 }
