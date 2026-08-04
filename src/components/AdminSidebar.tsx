@@ -1,4 +1,4 @@
-import { 
+import {
   Fingerprint,
   LayoutDashboard, 
   Users, 
@@ -9,6 +9,7 @@ import {
   Sparkles,
   Calendar
 } from "lucide-react";
+import { apiFetch, clearSession } from "../lib/api";
 import { cn } from "../lib/utils";
 import { Badge } from "./ui/Badge";
 
@@ -29,11 +30,10 @@ interface SidebarProps {
 
 export function AdminSidebar({ active, onNavigate }: SidebarProps) {
   async function logout() {
-    const token = sessionStorage.getItem('workpulse_token');
     try {
-      if (token) await fetch('http://localhost:5000/api/auth/logout', { method: 'POST', headers: { Authorization: `Bearer ${token}` } });
+      await apiFetch('/api/auth/logout', { method: 'POST' });
     } finally {
-      sessionStorage.removeItem('workpulse_token');
+      clearSession();
       window.location.href = '/';
     }
   }

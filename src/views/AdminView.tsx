@@ -8,6 +8,8 @@ import { Badge } from "../components/ui/Badge";
 import { Dialog, DialogClose, DialogHeader } from "../components/ui/Dialog";
 import { Input } from "../components/ui/Input";
 import type { Employee } from "../lib/data";
+import { useToast } from "../components/ui/Toast";
+import { apiFetch } from "../lib/api";
 
 const hoverScrollbarClasses = 
   "max-h-[400px] overflow-y-auto pr-2 " +
@@ -16,6 +18,7 @@ const hoverScrollbarClasses =
   "hover:[&::-webkit-scrollbar-thumb]:bg-slate-300 [&::-webkit-scrollbar-thumb]:rounded-full transition-colors duration-300";
 
 export function AdminView() {
+  const { toast } = useToast();
   const [localEmployees, setLocalEmployees] = useState<(Employee & { banned?: boolean })[]>([]);
   const [archivedAccounts, setArchivedAccounts] = useState<{ id: string; name: string; type: "Employee"; record: Employee & { banned?: boolean } }[]>([]);
   const [adminUnlocked, setAdminUnlocked] = useState(false);
@@ -26,7 +29,7 @@ export function AdminView() {
 
   useEffect(() => {
     const token = sessionStorage.getItem('workpulse_token');
-    Promise.all([fetch('http://localhost:5000/api/employees'), fetch('http://localhost:5000/api/archived-employees', { headers: { Authorization: `Bearer ${token ?? ''}` } })]).then(async ([activeResponse, archivedResponse]) => {
+    Promise.all([apiFetch('/api/employees'), apiFetch('/api/archived-employees', { headers: { Authorization: `Bearer ${token ?? ''}` } })]).then(async ([activeResponse, archivedResponse]) => {
       if (activeResponse.ok) setLocalEmployees(await activeResponse.json());
       if (archivedResponse.ok) {
         const archived = await archivedResponse.json() as (Employee & { banned?: boolean })[];
@@ -36,7 +39,9 @@ export function AdminView() {
   }, []);
 
   function toggleBanEmployee(id: string) {
+    const employee = localEmployees.find((item) => item.id === id);
     setLocalEmployees((prev) => prev.map((e) => (e.id === id ? { ...e, banned: !(e as any).banned } : e)));
+    if (employee) toast({ title: (employee as any).banned ? "Account access restored" : "Account access blocked", description: `${employee.name}'s access was updated.`, variant: (employee as any).banned ? "success" : "info" });
   }
 
   async function unlockAdminControls(event: React.FormEvent) {
@@ -44,7 +49,7 @@ export function AdminView() {
     if (!password) { setPasswordError("Enter your admin password."); return; }
     try {
       const token = sessionStorage.getItem('workpulse_token');
-      const response = await fetch('http://localhost:5000/api/auth/verify-password', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token ?? ''}` }, body: JSON.stringify({ password }) });
+      const response = await apiFetch('/api/auth/verify-password', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token ?? ''}` }, body: JSON.stringify({ password }) });
       const contentType = response.headers.get('content-type') ?? '';
       const data = contentType.includes('application/json') ? await response.json() : null;
       if (!response.ok) throw new Error(data?.error || `Password verification failed (server returned ${response.status})`);
@@ -52,8 +57,9 @@ export function AdminView() {
       setAdminUnlocked(true);
       setPasswordError("");
       setPassword("");
+      toast({ title: "Admin controls unlocked", description: "Protected account controls are now available.", variant: "success" });
     } catch (reason) {
-      setPasswordError(reason instanceof Error ? reason.message : 'Password verification failed');
+      const message = reason instanceof Error ? reason.message : 'Password verification failed'; setPasswordError(message); toast({ title: "Unable to unlock controls", description: message, variant: "error" });
     }
   }
 
@@ -61,11 +67,12 @@ export function AdminView() {
     const account = archivedAccounts.find((item) => item.id === id);
     if (!account) return;
     const token = sessionStorage.getItem('workpulse_token');
-    const response = await fetch(`http://localhost:5000/api/employees/${id}/unarchive`, { method: 'POST', headers: { Authorization: `Bearer ${token ?? ''}` } });
-    if (!response.ok) return;
+    const response = await apiFetch(`/api/employees/${id}/unarchive`, { method: 'POST', headers: { Authorization: `Bearer ${token ?? ''}` } });
+    if (!response.ok) { toast({ title: "Account was not restored", description: "Please try again.", variant: "error" }); return; }
     const restored = await response.json();
     setLocalEmployees((current) => [...current, { ...restored, banned: false }]);
     setArchivedAccounts((current) => current.filter((item) => item.id !== id));
+    toast({ title: "Account restored", description: `${account.name} returned to the employee directory.`, variant: "success" });
   }
 
   if (!adminUnlocked) return (

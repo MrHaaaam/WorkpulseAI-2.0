@@ -3,8 +3,97 @@ import mongoose from 'mongoose';
 import nodemailer from 'nodemailer';
 import crypto from 'node:crypto';
 import { verifySecret } from './auth.js';
+import { auditEvent, authenticate, csrfProtection, pick, requireRole } from '../security.js';
 
 const router = Router();
+
+router.use(authenticate, csrfProtection);
+router.use((req, res, next) => {
+  if (!['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method)) return next();
+  res.on('finish', () => {
+    void auditEvent({
+      req,
+      actor: req.auth?.actor,
+      action: `api.${req.method.toLowerCase()}`,
+      targetType: req.path.split('/').filter(Boolean)[0] ?? 'api',
+      targetId: req.params?.id ?? req.params?.employeeId ?? null,
+      outcome: res.statusCode < 400 ? 'success' : 'failure',
+      metadata: { path: req.path, statusCode: res.statusCode },
+    });
+  });
+  next();
+});
+
+router.get('/employee/me', requireRole('regular', 'extra'), async (req, res) => {
+  try {
+    const db = mongoose.connection.db;
+    const employeeId = req.auth.actor.employeeId;
+    const employee = await db.collection('employees').findOne({ id: employeeId, archived: { $ne: true } });
+    if (!employee) return res.status(404).json({ error: 'Employee profile not found' });
+    const [attendance, leaveRequests, payroll] = await Promise.all([
+      db.collection('attendance').find({ employeeId }).sort({ date: -1 }).limit(60).toArray(),
+      db.collection('leave_requests').find({ employeeId }).sort({ createdAt: -1, _id: -1 }).toArray(),
+      db.collection('payroll_requests').find({ employeeId }).sort({ createdAt: -1, _id: -1 }).limit(12).toArray(),
+    ]);
+    res.json({
+      profile: { id: employee.id, name: employee.name, email: employee.email, phone: employee.phone, address: employee.address, role: employee.role, status: employee.status, biometricStatus: employee.biometricStatus, casualLeave: employee.casualLeave, sickLeave: employee.sickLeave, hourlyRate: employee.hourlyRate, grossSalary: employee.grossSalary },
+      attendance: attendance.map(({ _id, ...record }) => record),
+      leaveRequests: leaveRequests.map(({ _id, ...record }) => record),
+      payroll: payroll.map(({ _id, ...record }) => ({ id: record.id, amount: record.amount, currentAmount: record.currentAmount, carryOverAmount: record.carryOverAmount, status: record.status, periodStart: record.periodStart, createdAt: record.createdAt })),
+    });
+  } catch { res.status(500).json({ error: 'Unable to load employee workspace' }); }
+});
+
+router.post('/employee/me/leave-requests', requireRole('regular', 'extra'), async (req, res) => {
+  try {
+    const db = mongoose.connection.db;
+    const employeeId = req.auth.actor.employeeId;
+    const employee = await db.collection('employees').findOne({ id: employeeId, archived: { $ne: true }, status: { $ne: 'inactive' } });
+    if (!employee) return res.status(404).json({ error: 'Active employee profile not found' });
+    const leaveType = String(req.body?.leaveType ?? '');
+    const startDate = String(req.body?.startDate ?? '');
+    const endDate = String(req.body?.endDate ?? '');
+    const reason = String(req.body?.reason ?? '').trim();
+    if (!['Annual Leave', 'Sick Leave', 'Personal Leave', 'Maternity Leave'].includes(leaveType)) return res.status(400).json({ error: 'Select a valid leave type' });
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(startDate) || !/^\d{4}-\d{2}-\d{2}$/.test(endDate)) return res.status(400).json({ error: 'Enter valid leave dates' });
+    const start = new Date(`${startDate}T00:00:00Z`);
+    const end = new Date(`${endDate}T00:00:00Z`);
+    const totalDays = Math.floor((end.getTime() - start.getTime()) / 86400000) + 1;
+    if (!Number.isFinite(totalDays) || totalDays < 1 || totalDays > 60) return res.status(400).json({ error: 'Leave must be between 1 and 60 days' });
+    if (reason.length < 5 || reason.length > 500) return res.status(400).json({ error: 'Provide a reason between 5 and 500 characters' });
+    const overlap = await db.collection('leave_requests').findOne({ employeeId, status: 'pending', startDate: { $lte: endDate }, endDate: { $gte: startDate } });
+    if (overlap) return res.status(409).json({ error: 'A pending leave request already overlaps these dates' });
+    const id = `LR-${Date.now().toString(36).toUpperCase()}-${crypto.randomBytes(2).toString('hex').toUpperCase()}`;
+    const initials = employee.name.split(/\s+/).filter(Boolean).map((part) => part[0]).join('').slice(0, 2).toUpperCase();
+    const request = { id, employeeId, employeeName: employee.name, role: employee.role === 'extra' ? 'Extra' : 'Regular', leaveType, startDate, endDate, totalDays, reason, status: 'pending', initials, createdAt: new Date() };
+    await db.collection('leave_requests').insertOne(request);
+    res.status(201).json({ ...request, _id: undefined });
+  } catch { res.status(500).json({ error: 'Unable to submit leave request' }); }
+});
+
+router.use(requireRole('admin'));
+
+const employeeFields = ['id', 'name', 'role', 'casualLeave', 'sickLeave', 'biometricStatus', 'status', 'grossSalary', 'hoursWorked', 'hourlyRate', 'email', 'phone', 'address', 'identifiers'];
+
+function normalizedEmployee(input) {
+  const employee = pick(input ?? {}, employeeFields);
+  employee.id = String(employee.id ?? '').trim().slice(0, 40);
+  employee.name = String(employee.name ?? '').trim().slice(0, 120);
+  employee.role = ['regular', 'extra'].includes(employee.role) ? employee.role : 'regular';
+  employee.status = ['active', 'on-leave', 'inactive'].includes(employee.status) ? employee.status : 'active';
+  employee.biometricStatus = ['enrolled', 'pending', 'none'].includes(employee.biometricStatus) ? employee.biometricStatus : 'none';
+  if (employee.email != null) employee.email = String(employee.email).trim().toLowerCase().slice(0, 254);
+  if (employee.phone != null) employee.phone = String(employee.phone).trim().slice(0, 30);
+  if (employee.address != null) employee.address = String(employee.address).trim().slice(0, 300);
+  employee.grossSalary = Math.max(0, Number(employee.grossSalary || 0));
+  employee.hoursWorked = Math.max(0, Number(employee.hoursWorked || 0));
+  employee.hourlyRate = Math.max(0, Number(employee.hourlyRate || 0));
+  employee.identifiers = Array.isArray(employee.identifiers) ? employee.identifiers.slice(0, 20).map((item) => ({ type: String(item?.type ?? '').slice(0, 50), value: String(item?.value ?? '').slice(0, 100), amount: Math.max(0, Number(item?.amount || 0)) })) : [];
+  const leaveBalance = (value) => ({ used: Math.max(0, Number(value?.used || 0)), total: Math.max(0, Number(value?.total || 0)) });
+  employee.casualLeave = leaveBalance(employee.casualLeave);
+  employee.sickLeave = leaveBalance(employee.sickLeave);
+  return employee;
+}
 
 const defaultSettings = {
   shift: { enabled: false, startTime: '09:00', maxHours: 8, breakMinutes: 60, workDays: 5 },
@@ -59,10 +148,14 @@ router.get('/settings', async (_req, res) => {
 router.put('/settings', async (req, res) => {
   try {
     const incoming = req.body ?? {};
+    const numberInRange = (value, fallback, minimum, maximum) => {
+      const number = Number(value);
+      return Number.isFinite(number) ? Math.min(maximum, Math.max(minimum, number)) : fallback;
+    };
     const normalized = {
-      shift: incoming.shift?.enabled ? { ...defaultSettings.shift, ...incoming.shift, enabled: true } : { ...defaultSettings.shift, enabled: false },
-      lateness: incoming.lateness?.enabled ? { ...defaultSettings.lateness, ...incoming.lateness, enabled: true } : { ...defaultSettings.lateness, enabled: false },
-      leave: incoming.leave?.enabled ? { ...defaultSettings.leave, ...incoming.leave, enabled: true } : { ...defaultSettings.leave, enabled: false },
+      shift: { enabled: Boolean(incoming.shift?.enabled), startTime: /^([01]\d|2[0-3]):[0-5]\d$/.test(incoming.shift?.startTime) ? incoming.shift.startTime : defaultSettings.shift.startTime, maxHours: numberInRange(incoming.shift?.maxHours, 8, 1, 24), breakMinutes: numberInRange(incoming.shift?.breakMinutes, 60, 0, 240), workDays: numberInRange(incoming.shift?.workDays, 5, 1, 7) },
+      lateness: { enabled: Boolean(incoming.lateness?.enabled), graceMinutes: numberInRange(incoming.lateness?.graceMinutes, 15, 0, 240), lateThresholdMinutes: numberInRange(incoming.lateness?.lateThresholdMinutes, 30, 0, 480), penaltyRate: numberInRange(incoming.lateness?.penaltyRate, 1, 0, 100) },
+      leave: { enabled: Boolean(incoming.leave?.enabled), casualDays: numberInRange(incoming.leave?.casualDays, 10, 0, 365), sickDays: numberInRange(incoming.leave?.sickDays, 10, 0, 365), frequency: ['monthly', 'quarterly', 'annual'].includes(incoming.leave?.frequency) ? incoming.leave.frequency : 'monthly', carryOverDays: numberInRange(incoming.leave?.carryOverDays, 5, 0, 365) },
     };
     await mongoose.connection.db.collection('settings').updateOne({ key: 'company' }, { $set: { ...normalized, updatedAt: new Date() } }, { upsert: true });
     await enforceAutomaticClockOut(mongoose.connection.db, normalized);
@@ -125,7 +218,7 @@ router.get('/employees', async (req, res) => {
 
 router.post('/employees', async (req, res) => {
   try {
-    const employee = req.body;
+    const employee = normalizedEmployee(req.body);
     if (!employee?.id || !employee?.name) return res.status(400).json({ error: 'Employee ID and name are required' });
     const exists = await mongoose.connection.db.collection('employees').findOne({ id: employee.id });
     if (exists) return res.status(409).json({ error: 'Employee ID already exists' });
@@ -136,7 +229,8 @@ router.post('/employees', async (req, res) => {
 
 router.put('/employees/:id', async (req, res) => {
   try {
-    const employee = req.body;
+    const employee = normalizedEmployee(req.body);
+    employee.id = req.params.id;
     const result = await mongoose.connection.db.collection('employees').updateOne({ id: req.params.id }, { $set: { ...employee, updatedAt: new Date() } });
     if (!result.matchedCount) return res.status(404).json({ error: 'Employee not found' });
     res.json(employee);

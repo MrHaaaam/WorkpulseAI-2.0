@@ -9,6 +9,8 @@
     "start": "node src/server.js",
     "seed:employees": "node seed.js",
     "seed:admin": "node seed-admin.js"
+    ,"audit:security": "node audit-report.js",
+    "seed:employee:deocares": "node seed-employee-account.js"
   },
   "dependencies": {
     "cors": "^2.8.5",

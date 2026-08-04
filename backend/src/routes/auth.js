@@ -3,11 +3,16 @@ import crypto from 'node:crypto';
 import { promisify } from 'node:util';
 import mongoose from 'mongoose';
 import nodemailer from 'nodemailer';
+import { auditEvent, authenticate, clearSessionCookie, createCsrfToken, csrfProtection, getRequestToken, rateLimit, setSessionCookie } from '../security.js';
 
 const router = Router();
 const scrypt = promisify(crypto.scrypt);
 let operationIndex = 0;
 const operations = ['+', '-', '×', '÷'];
+const captchaLimit = rateLimit({ windowMs: 60_000, max: 20, keyPrefix: 'captcha' });
+const loginLimit = rateLimit({ windowMs: 15 * 60_000, max: 8, keyPrefix: 'login' });
+const otpLimit = rateLimit({ windowMs: 10 * 60_000, max: 10, keyPrefix: 'otp' });
+const passwordLimit = rateLimit({ windowMs: 15 * 60_000, max: 8, keyPrefix: 'verify-password' });
 
 export async function hashSecret(secret) {
   const salt = crypto.randomBytes(16).toString('hex');
@@ -33,7 +38,7 @@ function makeCaptcha() {
   return { challenge: `${left} ${operation} ${right}`, answer: String(answer) };
 }
 
-router.get('/captcha', async (_request, response) => {
+router.get('/captcha', captchaLimit, async (_request, response) => {
   const db = mongoose.connection.db;
   if (!db) return response.status(503).json({ error: 'Database is unavailable' });
   const captchaId = crypto.randomUUID();
@@ -42,24 +47,29 @@ router.get('/captcha', async (_request, response) => {
   response.json({ captchaId, challenge });
 });
 
-router.post('/login', async (request, response) => {
+router.post('/login', loginLimit, async (request, response) => {
   try {
     const { email, password, captchaId, captchaAnswer } = request.body ?? {};
     if (!email || !password || !captchaId || captchaAnswer === undefined) return response.status(400).json({ error: 'Complete all login fields' });
+    if (String(email).length > 254 || String(password).length > 200 || String(captchaAnswer).length > 20) return response.status(400).json({ error: 'Invalid login input' });
     const db = mongoose.connection.db;
     const captcha = await db.collection('login_captchas').findOneAndDelete({ captchaId });
-    if (!captcha || captcha.expiresAt < new Date() || !(await verifySecret(String(captchaAnswer).trim(), captcha.answerHash))) return response.status(400).json({ error: 'Invalid or expired CAPTCHA' });
+    if (!captcha || captcha.expiresAt < new Date() || !(await verifySecret(String(captchaAnswer).trim(), captcha.answerHash))) { await auditEvent({ req: request, action: 'auth.login', targetType: 'session', outcome: 'failure', metadata: { reason: 'captcha' } }); return response.status(400).json({ error: 'Invalid or expired CAPTCHA' }); }
 
-    const admin = await db.collection('admin_accounts').findOne({ email: String(email).trim().toLowerCase(), active: true });
-    if (!admin || !(await verifySecret(password, admin.passwordHash))) return response.status(401).json({ error: 'Invalid email or password' });
+    const normalizedEmail = String(email).trim().toLowerCase();
+    let account = await db.collection('admin_accounts').findOne({ email: normalizedEmail, active: true });
+    let accountType = 'admin';
+    if (!account) { account = await db.collection('employee_accounts').findOne({ email: normalizedEmail, active: true }); accountType = 'employee'; }
+    if (!account || !(await verifySecret(password, account.passwordHash))) { await auditEvent({ req: request, actor: account, action: 'auth.login', targetType: 'session', outcome: 'failure', metadata: { reason: 'credentials' } }); return response.status(401).json({ error: 'Invalid email or password' }); }
 
     if (!process.env.SMTP_USER || !process.env.SMTP_APP_PASSWORD) return response.status(503).json({ error: 'Email OTP is not configured on the server' });
     const otp = String(crypto.randomInt(100000, 1_000_000));
     const verificationId = crypto.randomUUID();
-    await db.collection('login_otps').insertOne({ verificationId, adminId: admin._id, otpHash: await hashSecret(otp), expiresAt: new Date(Date.now() + 10 * 60_000), attempts: 0 });
+    await db.collection('login_otps').insertOne({ verificationId, accountId: account._id, accountType, otpHash: await hashSecret(otp), expiresAt: new Date(Date.now() + 10 * 60_000), attempts: 0 });
 
     const transport = nodemailer.createTransport({ service: 'gmail', auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_APP_PASSWORD } });
-    await transport.sendMail({ from: `Workpulse AI <${process.env.SMTP_USER}>`, to: admin.email, subject: 'Your Workpulse AI login code', text: `Your Workpulse AI verification code is ${otp}. It expires in 10 minutes.` });
+    await transport.sendMail({ from: `Workpulse AI <${process.env.SMTP_USER}>`, to: account.email, subject: 'Your Workpulse AI login code', text: `Your Workpulse AI verification code is ${otp}. It expires in 10 minutes.` });
+    await auditEvent({ req: request, actor: account, action: 'auth.otp_sent', targetType: 'session', outcome: 'success' });
     response.json({ verificationId, message: 'OTP sent to your email' });
   } catch (error) {
     console.error('Login failed:', error instanceof Error ? error.message : error);
@@ -67,51 +77,68 @@ router.post('/login', async (request, response) => {
   }
 });
 
-router.post('/verify-otp', async (request, response) => {
+router.post('/verify-otp', otpLimit, async (request, response) => {
   const { verificationId, otp } = request.body ?? {};
   const db = mongoose.connection.db;
   const record = await db.collection('login_otps').findOne({ verificationId });
-  if (!record || record.expiresAt < new Date() || record.attempts >= 5) return response.status(401).json({ error: 'Invalid or expired verification code' });
+  if (!record || record.expiresAt < new Date() || record.attempts >= 5) { await auditEvent({ req: request, action: 'auth.otp_verify', targetType: 'session', outcome: 'failure', metadata: { reason: 'expired_or_locked' } }); return response.status(401).json({ error: 'Invalid or expired verification code' }); }
   const valid = await verifySecret(String(otp ?? '').trim(), record.otpHash);
   if (!valid) {
     await db.collection('login_otps').updateOne({ _id: record._id }, { $inc: { attempts: 1 } });
+    await auditEvent({ req: request, action: 'auth.otp_verify', targetType: 'session', outcome: 'failure', metadata: { reason: 'invalid_code' } });
     return response.status(401).json({ error: 'Invalid or expired verification code' });
   }
   await db.collection('login_otps').deleteOne({ _id: record._id });
   const token = crypto.randomBytes(32).toString('hex');
   const tokenDigest = crypto.createHash('sha256').update(token).digest('hex');
-  await db.collection('admin_sessions').insertOne({ tokenDigest, adminId: record.adminId, createdAt: new Date(), expiresAt: new Date(Date.now() + 8 * 60 * 60_000) });
-  response.json({ token });
+  const csrf = createCsrfToken();
+  const accountId = record.accountId ?? record.adminId;
+  const accountType = record.accountType ?? 'admin';
+  await db.collection('admin_sessions').insertOne({ tokenDigest, csrfDigest: csrf.tokenDigest, accountId, accountType, ...(accountType === 'admin' ? { adminId: accountId } : {}), createdAt: new Date(), expiresAt: new Date(Date.now() + 8 * 60 * 60_000) });
+  setSessionCookie(response, token);
+  const account = await db.collection(accountType === 'employee' ? 'employee_accounts' : 'admin_accounts').findOne({ _id: accountId });
+  await auditEvent({ req: request, actor: account, action: 'auth.login', targetType: 'session', outcome: 'success' });
+  response.json({ csrfToken: csrf.token, role: account?.role ?? 'admin' });
 });
 
 router.get('/session', async (request, response) => {
-  const token = request.headers.authorization?.replace(/^Bearer\s+/i, '');
-  if (!token) return response.status(401).json({ authenticated: false });
-  const tokenDigest = crypto.createHash('sha256').update(token).digest('hex');
+  const requestToken = getRequestToken(request);
+  if (!requestToken) return response.status(401).json({ authenticated: false });
+  const tokenDigest = crypto.createHash('sha256').update(requestToken.token).digest('hex');
   const session = await mongoose.connection.db.collection('admin_sessions').findOne({ tokenDigest, expiresAt: { $gt: new Date() } });
   if (!session) return response.status(401).json({ authenticated: false });
-  response.json({ authenticated: true });
+  const csrf = createCsrfToken();
+  await mongoose.connection.db.collection('admin_sessions').updateOne({ _id: session._id }, { $set: { csrfDigest: csrf.tokenDigest } });
+  const accountId = session.accountId ?? session.adminId;
+  const accountType = session.accountType ?? 'admin';
+  const account = await mongoose.connection.db.collection(accountType === 'employee' ? 'employee_accounts' : 'admin_accounts').findOne({ _id: accountId, active: true });
+  if (!account) return response.status(401).json({ authenticated: false });
+  response.json({ authenticated: true, csrfToken: csrf.token, role: account.role, accountType });
 });
 
-router.post('/verify-password', async (request, response) => {
-  const token = request.headers.authorization?.replace(/^Bearer\s+/i, '');
+router.post('/verify-password', passwordLimit, authenticate, csrfProtection, async (request, response) => {
+  const token = getRequestToken(request)?.token;
   const password = request.body?.password;
   if (!token || !password) return response.status(400).json({ error: 'Password is required' });
   const db = mongoose.connection.db;
   const tokenDigest = crypto.createHash('sha256').update(token).digest('hex');
   const session = await db.collection('admin_sessions').findOne({ tokenDigest, expiresAt: { $gt: new Date() } });
   if (!session) return response.status(401).json({ error: 'Your session has expired' });
-  const admin = await db.collection('admin_accounts').findOne({ _id: session.adminId, active: true });
-  if (!admin || !(await verifySecret(password, admin.passwordHash))) return response.status(401).json({ error: 'Incorrect admin password' });
+  if (request.auth?.actor?.role !== 'admin') return response.status(403).json({ error: 'Administrator access required' });
+  const admin = request.auth.actor;
+  if (!admin || !(await verifySecret(password, admin.passwordHash))) { await auditEvent({ req: request, actor: admin, action: 'auth.password_verify', targetType: 'admin_controls', outcome: 'failure' }); return response.status(401).json({ error: 'Incorrect admin password' }); }
+  await auditEvent({ req: request, actor: admin, action: 'auth.password_verify', targetType: 'admin_controls', outcome: 'success' });
   response.json({ verified: true });
 });
 
-router.post('/logout', async (request, response) => {
-  const token = request.headers.authorization?.replace(/^Bearer\s+/i, '');
+router.post('/logout', authenticate, csrfProtection, async (request, response) => {
+  const token = getRequestToken(request)?.token;
   if (token) {
     const tokenDigest = crypto.createHash('sha256').update(token).digest('hex');
     await mongoose.connection.db.collection('admin_sessions').deleteOne({ tokenDigest });
   }
+  await auditEvent({ req: request, actor: request.auth?.actor, action: 'auth.logout', targetType: 'session', outcome: 'success' });
+  clearSessionCookie(response);
   response.status(204).end();
 });
 

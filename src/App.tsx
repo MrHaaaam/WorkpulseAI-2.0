@@ -1,20 +1,22 @@
 import { useEffect, useState } from 'react';
 import Login from './pages/Login';
 import AdminOverviewRedirect from './pages/AdminOverviewRedirect';
+import { apiFetch, storeSession } from './lib/api';
+import { EmployeePortal } from './views/EmployeePortal';
 
 function ProtectedDashboard() {
   const [authorized, setAuthorized] = useState<boolean | null>(null);
+  const [role, setRole] = useState<string>('');
 
   useEffect(() => {
-    const token = sessionStorage.getItem('workpulse_token');
-    if (!token) { setAuthorized(false); return; }
-    fetch('http://localhost:5000/api/auth/session', { headers: { Authorization: `Bearer ${token}` } })
-      .then((response) => setAuthorized(response.ok))
+    apiFetch('/api/auth/session')
+      .then(async (response) => { if (response.ok) { const data = await response.json(); storeSession(data); setRole(data.role); } setAuthorized(response.ok); })
       .catch(() => setAuthorized(false));
   }, []);
 
   if (authorized === null) return <div className="flex min-h-screen items-center justify-center bg-slate-50 text-sm text-slate-500">Verifying secure session...</div>;
   if (!authorized) return <Login />;
+  if (role === 'regular' || role === 'extra') return <EmployeePortal />;
   return <AdminOverviewRedirect />;
 }
 

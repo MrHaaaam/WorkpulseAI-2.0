@@ -9,6 +9,8 @@ import {
   XCircle, 
   AlertCircle 
 } from "lucide-react";
+import { useToast } from "../components/ui/Toast";
+import { apiFetch } from "../lib/api";
 
 export interface LeaveRequest {
   id: string;
@@ -36,16 +38,23 @@ export function LeaveRequestsView({
   onApprove,
   onReject,
 }: LeaveRequestsViewProps) {
+  const { toast } = useToast();
   const [searchTerm, setSearchTerm] = useState("");
   const [filterStatus, setFilterStatus] = useState<"all" | "pending" | "approved" | "rejected">("all");
   const [localRequests, setLocalRequests] = useState(requests);
-  useEffect(() => { fetch('http://localhost:5000/api/leave-requests').then((response) => response.ok ? response.json() : Promise.reject()).then(setLocalRequests).catch(() => setLocalRequests([])); }, []);
+  useEffect(() => { apiFetch('/api/leave-requests').then((response) => response.ok ? response.json() : Promise.reject()).then(setLocalRequests).catch(() => setLocalRequests([])); }, []);
 
   async function updateRequest(id: string, status: "approved" | "rejected") {
-    const response = await fetch(`http://localhost:5000/api/leave-requests/${id}/status`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status }) });
-    if (!response.ok) return;
-    setLocalRequests((current) => current.map((request) => request.id === id ? { ...request, status } : request));
-    if (status === "approved") onApprove?.(id); else onReject?.(id);
+    const request = localRequests.find((item) => item.id === id);
+    try {
+      const response = await apiFetch(`/api/leave-requests/${id}/status`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status }) });
+      if (!response.ok) throw new Error(`Unable to ${status === "approved" ? "approve" : "reject"} leave request`);
+      setLocalRequests((current) => current.map((item) => item.id === id ? { ...item, status } : item));
+      if (status === "approved") onApprove?.(id); else onReject?.(id);
+      toast({ title: status === "approved" ? "Leave approved" : "Leave rejected", description: request ? `${request.employeeName}'s request was updated.` : "The leave request was updated.", variant: status === "approved" ? "success" : "info" });
+    } catch (reason) {
+      toast({ title: "Leave request not updated", description: reason instanceof Error ? reason.message : "Please try again.", variant: "error" });
+    }
   }
   // REMOVED: filterLeaveType state declaration
 

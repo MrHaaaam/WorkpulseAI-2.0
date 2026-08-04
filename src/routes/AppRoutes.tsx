@@ -9,6 +9,7 @@ import { AIInsightsView } from '../views/AIInsightsView';
 import { LeaveRequestsView } from '../views/LeaveRequestsView';
 import { AdminView } from '../views/AdminView';
 import { AttendanceView } from '../views/AttendanceView';
+import { apiFetch } from '../lib/api';
 
 type OverviewEmployee = { status: string; biometricStatus: string };
 type OverviewPayroll = { status: string };
@@ -64,10 +65,10 @@ export function AppRoutes() {
 
   useEffect(() => {
     Promise.all([
-      fetch('http://localhost:5000/api/employees'),
-      fetch('http://localhost:5000/api/payroll-requests'),
-      fetch('http://localhost:5000/api/attendance'),
-      fetch('http://localhost:5000/api/leave-requests'),
+      apiFetch('/api/employees'),
+      apiFetch('/api/payroll-requests'),
+      apiFetch('/api/attendance'),
+      apiFetch('/api/leave-requests'),
     ]).then(async ([employeesResponse, payrollResponse, attendanceResponse, leaveResponse]) => {
       setOverviewEmployees(employeesResponse.ok ? await employeesResponse.json() : []);
       setOverviewPayroll(payrollResponse.ok ? await payrollResponse.json() : []);
@@ -158,7 +159,7 @@ export function AppRoutes() {
 
     leave: <LeaveRequestsView requests={[]} onApprove={(id) => {
       setOverviewLeaves((current) => current.map((leave) => leave.id === id ? { ...leave, status: 'approved' } : leave));
-      fetch('http://localhost:5000/api/employees').then((response) => response.ok ? response.json() : Promise.reject()).then(setOverviewEmployees).catch(() => undefined);
+      apiFetch('/api/employees').then((response) => response.ok ? response.json() : Promise.reject()).then(setOverviewEmployees).catch(() => undefined);
     }} onReject={(id) => setOverviewLeaves((current) => current.map((leave) => leave.id === id ? { ...leave, status: 'rejected' } : leave))} />,
 
     payroll: <PayrollView employees={[]} requests={[]} />,

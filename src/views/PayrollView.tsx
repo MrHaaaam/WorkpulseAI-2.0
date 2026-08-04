@@ -6,6 +6,8 @@ import { Input } from "../components/ui/Input";
 import { Button } from "../components/ui/Button";
 import { Badge } from "../components/ui/Badge";
 import { Dialog, DialogHeader, DialogClose } from "../components/ui/Dialog";
+import { useToast } from "../components/ui/Toast";
+import { apiFetch } from "../lib/api";
 import { formatCurrency, type Employee } from "../lib/data";
 
 // 1. ADDED: Typed interfaces for the incoming database records
@@ -40,6 +42,7 @@ function computePayslip(emp: Employee): PayslipData {
 
 // 2. UPDATED: Component now accepts isolated data hooks via props instead of static global stores
 export function PayrollView({ employees = [], requests = [], onProcessPayslip }: PayrollViewProps) {
+  const { toast } = useToast();
   const [employeeRecords, setEmployeeRecords] = useState(employees);
   const [payrollRequests, setPayrollRequests] = useState(requests);
   const [search, setSearch] = useState("");
@@ -48,7 +51,7 @@ export function PayrollView({ employees = [], requests = [], onProcessPayslip }:
   const [selected, setSelected] = useState<Employee | null>(null);
 
   useEffect(() => {
-    Promise.all([fetch('http://localhost:5000/api/employees'), fetch('http://localhost:5000/api/payroll-requests')])
+    Promise.all([apiFetch('/api/employees'), apiFetch('/api/payroll-requests')])
       .then(async ([employeeResponse, payrollResponse]) => {
         if (employeeResponse.ok) setEmployeeRecords(await employeeResponse.json());
         if (payrollResponse.ok) setPayrollRequests(await payrollResponse.json());
@@ -179,12 +182,13 @@ onClick={() => setStatusFilter(val as "All" | "active" | "on-leave" | "inactive"
                           <Button size="sm" onClick={async () => {
                             if (onProcessPayslip) onProcessPayslip(e);
                             const additions = (e.identifiers ?? []).reduce((sum, identifier) => sum + (Number(identifier.amount) || 0), 0);
-                            const response = await fetch('http://localhost:5000/api/payroll-requests', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ employeeId: e.id, currentAmount: e.grossSalary + additions }) });
+                            const response = await apiFetch('/api/payroll-requests', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ employeeId: e.id, currentAmount: e.grossSalary + additions }) });
                             if (response.ok) {
                               const created = await response.json() as PayrollRequest;
                               setPayrollRequests((current) => current.some((item) => item.id === created.id) ? current : [...current, created]);
                               setSelected({ ...e, carryOverAmount: Number(created.carryOverAmount || 0) });
-                            }
+                              toast({ title: "Payroll started", description: `${e.name}'s payslip is ready for review.`, variant: "success" });
+                            } else toast({ title: "Unable to process payroll", description: "Please try again or check the server connection.", variant: "error" });
                           }}>
                             <ReceiptText className="h-3.5 w-3.5" />
                             Process Payslip
@@ -193,11 +197,17 @@ onClick={() => setStatusFilter(val as "All" | "active" | "on-leave" | "inactive"
                       }
                       if (req.status === 'processing') {
                         return <div className="flex justify-end gap-2"><Button size="sm" variant="ghost" title="View payslip" onClick={() => setSelected({ ...e, carryOverAmount: Number(req.carryOverAmount || 0) })}><ReceiptText className="h-3.5 w-3.5" /></Button><Button size="sm" variant="outline" onClick={async () => {
-                          const response = await fetch(`http://localhost:5000/api/payroll-requests/${req.id}/confirm-payment`, { method: 'PATCH' });
-                          if (response.ok) setPayrollRequests((current) => current.map((item) => item.id === req.id ? { ...item, status: 'paid' } : item));
+                          const response = await apiFetch(`/api/payroll-requests/${req.id}/confirm-payment`, { method: 'PATCH' });
+                          if (response.ok) {
+                            setPayrollRequests((current) => current.map((item) => item.id === req.id ? { ...item, status: 'paid' } : item));
+                            toast({ title: "Payment confirmed", description: `${e.name}'s payroll was marked as paid.`, variant: "success" });
+                          } else toast({ title: "Payment was not updated", variant: "error" });
                         }}><Check className="h-3.5 w-3.5" /> Confirm Paid</Button><Button size="sm" variant="destructive" aria-label="Mark payroll as not paid" title="Mark as not paid" onClick={async () => {
-                          const response = await fetch(`http://localhost:5000/api/payroll-requests/${req.id}/reject-payment`, { method: 'PATCH' });
-                          if (response.ok) setPayrollRequests((current) => current.map((item) => item.id === req.id ? { ...item, status: 'rejected' } : item));
+                          const response = await apiFetch(`/api/payroll-requests/${req.id}/reject-payment`, { method: 'PATCH' });
+                          if (response.ok) {
+                            setPayrollRequests((current) => current.map((item) => item.id === req.id ? { ...item, status: 'rejected' } : item));
+                            toast({ title: "Payroll marked unpaid", description: `${e.name}'s payroll status was updated.`, variant: "info" });
+                          } else toast({ title: "Payroll was not updated", variant: "error" });
                         }}><X className="h-3.5 w-3.5" /></Button></div>;
                       }
                       return <Button size="sm" variant="outline" onClick={() => setSelected({ ...e, carryOverAmount: Number(req.carryOverAmount || 0) })}><ReceiptText className="h-3.5 w-3.5" /> View Summary</Button>;
@@ -222,8 +232,8 @@ onClick={() => setStatusFilter(val as "All" | "active" | "on-leave" | "inactive"
 }
 
 function PayslipModal({ employee, onClose }: { employee: Employee | null; onClose: () => void }) {
+  const { toast } = useToast();
   const [sending, setSending] = useState(false);
-  const [message, setMessage] = useState("");
   if (!employee) return null;
   const payslip = computePayslip(employee);
   const totalAdditions = payslip.additions.reduce((sum, item) => sum + item.value, 0);
@@ -315,15 +325,14 @@ function PayslipModal({ employee, onClose }: { employee: Employee | null; onClos
         </div>
 
         {employee.identifiers?.filter((identifier) => identifier.value).length ? <div className="rounded-xl border border-slate-200 p-4"><h3 className="mb-2 text-sm font-semibold text-slate-900">Profile Identifiers</h3>{employee.identifiers.filter((identifier) => identifier.value).map((identifier) => <div key={identifier.type} className="flex justify-between gap-4 py-1 text-sm"><span className="text-slate-500">{identifier.type}</span><span className="text-right font-medium text-slate-700">{identifier.value} · +{formatCurrency(Number(identifier.amount) || 0)}</span></div>)}</div> : null}
-        {message && <p className={`rounded-lg p-3 text-sm ${message.startsWith('Sent') ? 'bg-emerald-50 text-emerald-700' : 'bg-rose-50 text-rose-700'}`}>{message}</p>}
         <div className="no-print grid gap-2 sm:grid-cols-2"><Button variant="outline" size="lg" onClick={() => window.print()}><Printer className="h-4 w-4" />Print Summary</Button><Button size="lg" disabled={sending || !employee.email} onClick={async () => {
-          setSending(true); setMessage('');
+          setSending(true);
           try {
-            const response = await fetch(`http://localhost:5000/api/payroll/${employee.id}/email-summary`, { method: 'POST' });
+            const response = await apiFetch(`/api/payroll/${employee.id}/email-summary`, { method: 'POST' });
             const data = await response.json();
             if (!response.ok) throw new Error(data.error || 'Unable to send payroll summary');
-            setMessage(`Sent to ${employee.email}`);
-          } catch (reason) { setMessage(reason instanceof Error ? reason.message : 'Unable to send payroll summary'); }
+            toast({ title: "Payroll summary sent", description: `Delivered to ${employee.email}.`, variant: "success" });
+          } catch (reason) { toast({ title: "Summary not sent", description: reason instanceof Error ? reason.message : 'Unable to send payroll summary', variant: "error" }); }
           finally { setSending(false); }
         }}>
           <Mail className="h-4 w-4" />

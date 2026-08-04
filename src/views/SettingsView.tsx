@@ -1,9 +1,11 @@
 import { useEffect, useState } from "react";
-import { CalendarDays, CheckCircle, Clock, Save } from "lucide-react";
+import { CalendarDays, Clock, Save } from "lucide-react";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "../components/ui/Card";
 import { Input, Label } from "../components/ui/Input";
 import { Select } from "../components/ui/Select";
 import { Button } from "../components/ui/Button";
+import { useToast } from "../components/ui/Toast";
+import { apiFetch } from "../lib/api";
 
 type Settings = {
   shift: { enabled: boolean; startTime: string; maxHours: number; breakMinutes: number; workDays: number };
@@ -22,13 +24,13 @@ function Toggle({ enabled, onChange }: { enabled: boolean; onChange: (enabled: b
 }
 
 export function SettingsView() {
+  const { toast } = useToast();
   const [settings, setSettings] = useState<Settings>(defaults);
-  const [saved, setSaved] = useState(false);
   const [saving, setSaving] = useState(false);
 
-  useEffect(() => { fetch("http://localhost:5000/api/settings").then((response) => response.ok ? response.json() : Promise.reject()).then((data) => setSettings({ ...defaults, ...data })).catch(() => {}); }, []);
+  useEffect(() => { apiFetch("/api/settings").then((response) => response.ok ? response.json() : Promise.reject()).then((data) => setSettings({ ...defaults, ...data })).catch(() => {}); }, []);
   const setSection = <K extends keyof Settings>(section: K, value: Partial<Settings[K]>) => setSettings((current) => ({ ...current, [section]: { ...current[section], ...value } }));
-  const save = async () => { setSaving(true); try { const response = await fetch("http://localhost:5000/api/settings", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(settings) }); if (!response.ok) throw new Error(); setSettings(await response.json()); setSaved(true); setTimeout(() => setSaved(false), 2500); } finally { setSaving(false); } };
+  const save = async () => { setSaving(true); try { const response = await apiFetch("/api/settings", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(settings) }); if (!response.ok) throw new Error("The server could not save your settings."); setSettings(await response.json()); toast({ title: "Settings saved", description: "Your company rules are now up to date.", variant: "success" }); } catch (reason) { toast({ title: "Settings not saved", description: reason instanceof Error ? reason.message : "Please try again.", variant: "error" }); } finally { setSaving(false); } };
 
   return <div className="space-y-6">
     <div><h2 className="text-2xl font-bold text-slate-900">Company Settings</h2><p className="text-sm text-slate-500">Disabled cards have no effect. Payroll is always calculated in fixed 15-day periods.</p></div>
@@ -37,6 +39,6 @@ export function SettingsView() {
       <Card className={!settings.lateness.enabled ? "opacity-75" : ""}><CardHeader><div className="flex items-start justify-between gap-3"><div className="flex gap-3"><div className="flex h-10 w-10 items-center justify-center rounded-xl bg-amber-50"><Clock className="h-5 w-5 text-amber-600" /></div><div><CardTitle>Grace Period & Lateness</CardTitle><CardDescription>Late clock-in rules</CardDescription></div></div><Toggle enabled={settings.lateness.enabled} onChange={(enabled) => setSection("lateness", { enabled })} /></div></CardHeader><CardContent className="space-y-4"><div className="space-y-2"><Label>Grace Period (minutes)</Label><Input disabled={!settings.lateness.enabled} className="no-number-arrows" type="number" value={settings.lateness.graceMinutes || ""} onChange={(e) => setSection("lateness", { graceMinutes: Number(e.target.value) })} /></div><div className="space-y-2"><Label>Late Threshold (minutes)</Label><Input disabled={!settings.lateness.enabled} className="no-number-arrows" type="number" value={settings.lateness.lateThresholdMinutes || ""} onChange={(e) => setSection("lateness", { lateThresholdMinutes: Number(e.target.value) })} /></div><div className="space-y-2"><Label>Penalty Rate (%)</Label><Input disabled={!settings.lateness.enabled} className="no-number-arrows" type="number" step="0.5" value={settings.lateness.penaltyRate || ""} onChange={(e) => setSection("lateness", { penaltyRate: Number(e.target.value) })} /></div></CardContent></Card>
       <Card className={!settings.leave.enabled ? "opacity-75" : ""}><CardHeader><div className="flex items-start justify-between gap-3"><div className="flex gap-3"><div className="flex h-10 w-10 items-center justify-center rounded-xl bg-emerald-50"><CalendarDays className="h-5 w-5 text-emerald-600" /></div><div><CardTitle>Leave Accrual Rules</CardTitle><CardDescription>Annual leave credit allocation</CardDescription></div></div><Toggle enabled={settings.leave.enabled} onChange={(enabled) => setSection("leave", { enabled })} /></div></CardHeader><CardContent className="space-y-4"><div className="grid grid-cols-2 gap-4"><div className="space-y-2"><Label>Casual Leave</Label><Input disabled={!settings.leave.enabled} className="no-number-arrows" type="number" value={settings.leave.casualDays || ""} onChange={(e) => setSection("leave", { casualDays: Number(e.target.value) })} /></div><div className="space-y-2"><Label>Sick Leave</Label><Input disabled={!settings.leave.enabled} className="no-number-arrows" type="number" value={settings.leave.sickDays || ""} onChange={(e) => setSection("leave", { sickDays: Number(e.target.value) })} /></div></div><div className="space-y-2"><Label>Accrual Frequency</Label><Select disabled={!settings.leave.enabled} value={settings.leave.frequency} onChange={(e) => setSection("leave", { frequency: e.target.value })}><option value="monthly">Monthly</option><option value="quarterly">Quarterly</option><option value="annual">Annual</option></Select></div><div className="space-y-2"><Label>Carry-over Limit</Label><Input disabled={!settings.leave.enabled} className="no-number-arrows" type="number" value={settings.leave.carryOverDays || ""} onChange={(e) => setSection("leave", { carryOverDays: Number(e.target.value) })} /></div></CardContent></Card>
     </div>
-    <div className="flex items-center justify-end gap-3">{saved && <span className="flex items-center gap-1.5 text-sm font-medium text-emerald-600"><CheckCircle className="h-4 w-4" />Settings saved</span>}<Button variant="outline" onClick={() => setSettings(defaults)}>Reset to Defaults</Button><Button onClick={save} disabled={saving}><Save className="h-4 w-4" />{saving ? "Saving..." : "Save Changes"}</Button></div>
+    <div className="flex items-center justify-end gap-3"><Button variant="outline" onClick={() => { setSettings(defaults); toast({ title: "Defaults restored", description: "Review the values, then save to apply them.", variant: "info" }); }}>Reset to Defaults</Button><Button onClick={save} disabled={saving}><Save className="h-4 w-4" />{saving ? "Saving..." : "Save Changes"}</Button></div>
   </div>;
 }

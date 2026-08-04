@@ -7,6 +7,8 @@ import { Card, CardContent } from "../components/ui/Card";
 import { Dialog, DialogClose, DialogHeader } from "../components/ui/Dialog";
 import { Input } from "../components/ui/Input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../components/ui/Table";
+import { useToast } from "../components/ui/Toast";
+import { apiFetch } from "../lib/api";
 
 export interface Employee {
   id: string;
@@ -65,6 +67,7 @@ function StatusBadge({ status }: { status: Employee["status"] }) {
 }
 
 export function EmployeeDirectoryView({ employees: initialEmployees }: Partial<EmployeeDirectoryViewProps>) {
+  const { toast } = useToast();
   const [employees, setEmployees] = useState<Employee[]>(initialEmployees ?? []);
   const [viewMode, setViewMode] = useState<ViewMode>("table");
   const [search, setSearch] = useState("");
@@ -83,7 +86,7 @@ export function EmployeeDirectoryView({ employees: initialEmployees }: Partial<E
   const [archiving, setArchiving] = useState(false);
 
   useEffect(() => {
-    fetch('http://localhost:5000/api/employees').then((response) => response.ok ? response.json() : Promise.reject()).then(setEmployees).catch(() => {});
+    apiFetch('/api/employees').then((response) => response.ok ? response.json() : Promise.reject()).then(setEmployees).catch(() => {});
   }, []);
 
   const filtered = useMemo(() => employees.filter((employee) => {
@@ -130,12 +133,13 @@ export function EmployeeDirectoryView({ employees: initialEmployees }: Partial<E
     if (!draft.id.trim() || !draft.name.trim()) return;
     setSaving(true); setFormError("");
     try {
-      const response = await fetch(`http://localhost:5000/api/employees${editingId ? `/${editingId}` : ''}`, { method: editingId ? 'PUT' : 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(draft) });
+      const response = await apiFetch(`/api/employees${editingId ? `/${editingId}` : ''}`, { method: editingId ? 'PUT' : 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(draft) });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || 'Unable to save employee');
       setEmployees((current) => editingId ? current.map((employee) => employee.id === editingId ? data : employee) : [...current, data]);
       setEditorOpen(false);
-    } catch (reason) { setFormError(reason instanceof Error ? reason.message : 'Unable to save employee'); }
+      toast({ title: editingId ? "Employee updated" : "Employee account created", description: `${data.name}'s record was saved successfully.`, variant: "success" });
+    } catch (reason) { const message = reason instanceof Error ? reason.message : 'Unable to save employee'; setFormError(message); toast({ title: editingId ? "Update failed" : "Account creation failed", description: message, variant: "error" }); }
     finally { setSaving(false); }
   }
 
@@ -152,12 +156,13 @@ export function EmployeeDirectoryView({ employees: initialEmployees }: Partial<E
     setArchiving(true); setArchiveError("");
     try {
       const token = sessionStorage.getItem('workpulse_token');
-      const response = await fetch(`http://localhost:5000/api/employees/${archiveTarget.id}/archive`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token ?? ''}` }, body: JSON.stringify({ password: archivePassword }) });
+      const response = await apiFetch(`/api/employees/${archiveTarget.id}/archive`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token ?? ''}` }, body: JSON.stringify({ password: archivePassword }) });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || 'Unable to archive employee');
       setEmployees((current) => current.filter((employee) => employee.id !== archiveTarget.id));
+      toast({ title: "Employee archived", description: `${archiveTarget.name}'s account moved to Admin Controls.`, variant: "success" });
       setArchiveTarget(null); setArchivePassword("");
-    } catch (reason) { setArchiveError(reason instanceof Error ? reason.message : 'Unable to archive employee'); }
+    } catch (reason) { const message = reason instanceof Error ? reason.message : 'Unable to archive employee'; setArchiveError(message); toast({ title: "Archive failed", description: message, variant: "error" }); }
     finally { setArchiving(false); }
   }
 

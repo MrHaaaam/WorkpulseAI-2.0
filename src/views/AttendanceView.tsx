@@ -4,6 +4,7 @@ import { Check, Clock, X } from "lucide-react";
 import { Card, CardContent } from "../components/ui/Card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../components/ui/Table";
 import { Badge } from "../components/ui/Badge";
+import { apiFetch } from "../lib/api";
 
 export interface AttendanceRecord {
   employeeId: string;
@@ -40,7 +41,7 @@ export function AttendanceView(props: {
         setLoading(true);
 
         // Placeholder endpoint; update when your backend is ready.
-        const res = await fetch("http://localhost:5000/api/attendance");
+        const res = await apiFetch("/api/attendance");
         if (!res.ok) throw new Error(`Failed to load attendance (${res.status})`);
 
         const data = (await res.json()) as AttendanceRecord[];

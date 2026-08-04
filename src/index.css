@@ -19,7 +19,7 @@
 
   font: 16px/145% var(--sans);
   letter-spacing: 0.18px;
-  color-scheme: light dark;
+  color-scheme: light;
   color: var(--text);
   background: var(--bg);
   font-synthesis: none;
@@ -29,26 +29,6 @@
 
   @media (max-width: 1024px) {
     font-size: 15px;
-  }
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --text: #000000;
-    --text-h: #000000;
-    --bg: #16171d;
-    --border: #2e303a;
-    --code-bg: #1f2028;
-    --accent: #c084fc;
-    --accent-bg: rgba(192, 132, 252, 0.15);
-    --accent-border: rgba(192, 132, 252, 0.5);
-    --social-bg: rgba(47, 48, 58, 0.5);
-    --shadow:
-      rgba(0, 0, 0, 0.4) 0 10px 15px -3px, rgba(0, 0, 0, 0.25) 0 4px 6px -2px;
-  }
-
-  #social .button-icon {
-    filter: invert(1) brightness(2);
   }
 }
 
@@ -69,27 +49,7 @@ body {
 h1,
 h2 {
   font-family: var(--heading);
-  font-weight: 500;
-  color: var(--text-h);
-}
-
-h1 {
-  font-size: 56px;
-  letter-spacing: -1.68px;
-  margin: 32px 0;
-  @media (max-width: 1024px) {
-    font-size: 36px;
-    margin: 20px 0;
-  }
-}
-h2 {
-  font-size: 24px;
-  line-height: 118%;
-  letter-spacing: -0.24px;
-  margin: 0 0 8px;
-  @media (max-width: 1024px) {
-    font-size: 20px;
-  }
+  color: inherit;
 }
 p {
   margin: 0;
@@ -192,6 +152,12 @@ code {
   100% { box-shadow: 0 0 0 0 rgba(59, 130, 246, 0); }
 }
 
+@layer components {
+  .input {
+    @apply h-11 w-full rounded-xl border border-slate-300 bg-slate-100 px-3 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 hover:border-slate-400 focus:border-indigo-500 focus:bg-white focus:ring-4 focus:ring-indigo-500/10;
+  }
+}
+
 @media print {
   body * { visibility: hidden !important; }
   .print-payslip, .print-payslip * { visibility: visible !important; }
@@ -200,4 +166,19 @@ code {
 }
 .animate-pulse-ring {
   animation: pulse-ring 2s infinite;
+}
+
+@keyframes toast-in {
+  from { opacity: 0; transform: translate3d(16px, -8px, 0) scale(.98); }
+  to { opacity: 1; transform: translate3d(0, 0, 0) scale(1); }
+}
+@keyframes toast-timer {
+  from { transform: scaleX(1); }
+  to { transform: scaleX(0); }
+}
+.animate-toast-in { animation: toast-in .24s ease-out both; }
+.animate-toast-timer { animation: toast-timer linear both; }
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-toast-in, .animate-toast-timer { animation: none; }
 }
