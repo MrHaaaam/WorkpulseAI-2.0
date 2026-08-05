@@ -7,7 +7,8 @@ import {
   LogOut, 
   ChevronRight, 
   Sparkles,
-  Calendar
+  Calendar,
+  X
 } from "lucide-react";
 import { apiFetch, clearSession } from "../lib/api";
 import { cn } from "../lib/utils";
@@ -26,9 +27,11 @@ export type ViewKey =
 interface SidebarProps {
   active: ViewKey;
   onNavigate: (view: ViewKey) => void;
+  mobileOpen?: boolean;
+  onMobileClose?: () => void;
 }
 
-export function AdminSidebar({ active, onNavigate }: SidebarProps) {
+export function AdminSidebar({ active, onNavigate, mobileOpen = false, onMobileClose = () => {} }: SidebarProps) {
   async function logout() {
     try {
       await apiFetch('/api/auth/logout', { method: 'POST' });
@@ -49,8 +52,10 @@ export function AdminSidebar({ active, onNavigate }: SidebarProps) {
   ];
 
   return (
-    <aside className="flex h-screen w-56 flex-col border-r border-slate-200 bg-white">
-      <div className="flex items-center gap-2.5 border-b border-slate-200 px-3 py-3">
+    <>
+    <button aria-label="Close navigation" onClick={onMobileClose} className={`fixed inset-0 z-40 bg-slate-950/40 backdrop-blur-sm transition-opacity lg:hidden ${mobileOpen ? "pointer-events-auto opacity-100" : "pointer-events-none opacity-0"}`} />
+    <aside className={`fixed inset-y-0 left-0 z-50 flex w-[min(19rem,86vw)] flex-col border-r border-slate-200/80 bg-white shadow-2xl transition-transform duration-200 lg:sticky lg:top-0 lg:z-20 lg:h-screen lg:w-64 lg:translate-x-0 lg:shadow-none ${mobileOpen ? "translate-x-0" : "-translate-x-full"}`}>
+      <div className="flex h-16 items-center gap-3 border-b border-slate-200/80 px-4">
         <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-[#8642ED] shadow-md shadow-[#8642ED]/25">
           <Fingerprint className="h-[18px] w-[18px] text-white" />
         </div>
@@ -62,32 +67,33 @@ export function AdminSidebar({ active, onNavigate }: SidebarProps) {
           </h2>
           <p className="text-[10px] font-medium uppercase tracking-[0.18em] text-slate-400">Admin</p>
         </div>
+        <button onClick={onMobileClose} aria-label="Close navigation" className="ml-auto rounded-lg p-2 text-slate-400 hover:bg-slate-100 hover:text-slate-700 lg:hidden"><X className="h-5 w-5" /></button>
       </div>
 
-      <nav className="flex-1 space-y-1 overflow-y-auto p-3 scrollbar-thin">
-        <p className="mb-2 px-3 text-[11px] font-semibold uppercase tracking-wider text-slate-400">Admin Menu</p>
+      <nav className="scrollbar-thin flex-1 space-y-1 overflow-y-auto p-3">
+        <p className="mb-2 px-3 pt-2 text-[10px] font-bold uppercase tracking-[0.16em] text-slate-400">Workspace</p>
         {navItems.map((item) => {
           const Icon = item.icon;
           const isActive = active === item.key;
           return (
             <button
               key={item.key}
-              onClick={() => onNavigate(item.key)}
+              onClick={() => { onNavigate(item.key); onMobileClose(); }}
               className={cn(
-                "group flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-[13px] font-medium transition-all",
-                isActive ? "bg-[#8642ED]/10 text-[#8642ED]" : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
+                "group flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-[13px] font-semibold transition-all",
+                isActive ? "bg-violet-600 text-white shadow-sm shadow-violet-600/20" : "text-slate-600 hover:bg-slate-100 hover:text-slate-950"
               )}
             >
-              <Icon className={cn("h-[18px] w-[18px] shrink-0 transition-colors", isActive ? "text-[#8642ED]" : "text-slate-400 group-hover:text-slate-600")} />
+              <Icon className={cn("h-[18px] w-[18px] shrink-0 transition-colors", isActive ? "text-white" : "text-slate-400 group-hover:text-slate-700")} />
               {item.label}
-              {isActive && <ChevronRight className="ml-auto h-3.5 w-3.5 text-[#8642ED]" />}
+              {isActive && <ChevronRight className="ml-auto h-3.5 w-3.5 text-white/80" />}
             </button>
           );
         })}
       </nav>
 
-      <div className="border-t border-slate-200 p-3">
-        <div className="flex items-center gap-2.5 rounded-lg bg-slate-50 p-2.5">
+      <div className="border-t border-slate-200/80 p-3">
+        <div className="flex items-center gap-2.5 rounded-xl border border-slate-200 bg-slate-50 p-2.5">
           <div className="flex h-9 w-9 items-center justify-center rounded-full bg-[#8642ED] text-[13px] font-bold text-white">A</div>
           <div className="min-w-0 flex-1">
             <p className="truncate text-[13px] font-semibold text-slate-900">Admin User</p>
@@ -104,5 +110,6 @@ export function AdminSidebar({ active, onNavigate }: SidebarProps) {
         </div>
       </div>
     </aside>
+    </>
   );
 }

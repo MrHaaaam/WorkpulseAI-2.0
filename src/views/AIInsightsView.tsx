@@ -92,7 +92,7 @@ export function AIInsightsView() {
   const tone = tones[selected.tone];
 
   return (
-    <div className="mx-auto max-w-[1500px] space-y-6">
+    <div className="min-w-0 space-y-6">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <div className="mb-2 flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.16em] text-[#8642ED]">
@@ -112,9 +112,9 @@ export function AIInsightsView() {
           const modelTone = tones[model.tone];
           const active = model.key === activeModel;
           return (
-            <button key={model.key} onClick={() => setActiveModel(model.key)} className="text-left">
-              <Card className={cn("h-full transition-all hover:-translate-y-0.5 hover:shadow-md", active && "border-[#8642ED] ring-2 ring-[#8642ED]/10")}>
-                <CardContent className="p-5">
+            <button key={model.key} onClick={() => setActiveModel(model.key)} className="h-full w-full min-w-0 text-left">
+              <Card className={cn("h-full min-w-0 overflow-hidden transition-all hover:-translate-y-0.5 hover:shadow-md", active && "border-[#8642ED] ring-2 ring-[#8642ED]/10")}>
+                <CardContent className="p-5 !pt-5">
                   <div className="flex items-start justify-between">
                     <div className={cn("flex h-10 w-10 items-center justify-center rounded-xl", modelTone.icon)}><Icon className="h-5 w-5" /></div>
                     {active ? <Badge>Selected</Badge> : <ChevronRight className="h-4 w-4 text-slate-300" />}
@@ -142,7 +142,7 @@ export function AIInsightsView() {
         </CardHeader>
 
         {activeModel === "forecast" && (
-          <CardContent className="grid gap-6 p-6 lg:grid-cols-[1.15fr_0.85fr]">
+          <CardContent className="grid min-w-0 gap-5 p-4 sm:p-6 lg:grid-cols-[minmax(0,1.15fr)_minmax(0,0.85fr)]">
             <div className="space-y-5">
               <Section title="Why this model" icon={BrainCircuit}>Weighted averages can show a broad direction, but miss recurring patterns. Holt-Winters responds to recent behavior while learning effects such as Friday call-outs or rainy-season absence spikes.</Section>
               <Formula>ŷ<sub>t+h|t</sub> = ℓ<sub>t</sub> + hb<sub>t</sub> + s<sub>t+h−m(k+1)</sub></Formula>
@@ -157,7 +157,7 @@ export function AIInsightsView() {
         )}
 
         {activeModel === "risk" && (
-          <CardContent className="space-y-6 p-6">
+          <CardContent className="min-w-0 space-y-6 p-4 sm:p-6">
             <div className="grid gap-6 lg:grid-cols-2">
               <div className="space-y-4">
                 <Section title="Risk scoring foundation" icon={AlertTriangle}>The Bradford Factor emphasizes frequent, separate absence spells because they create more unexpected disruption than one continuous absence of the same length.</Section>
@@ -173,7 +173,7 @@ export function AIInsightsView() {
                 <p className="rounded-lg border border-violet-200 bg-violet-50 p-3 text-xs leading-5 text-violet-800">Example configuration: a penalty loses 50% of its weight every 30 days.</p>
               </div>
             </div>
-            <div className="overflow-hidden rounded-xl border border-slate-200">
+            <div className="scrollbar-thin overflow-x-auto rounded-xl border border-slate-200 [&>*]:min-w-[560px]">
               <div className="grid grid-cols-[90px_1fr_1fr] bg-slate-50 px-4 py-2.5 text-[11px] font-semibold uppercase tracking-wider text-slate-500"><span>Score</span><span>Signal</span><span>Recommended action</span></div>
               {riskTiers.map((tier) => <div key={tier.range} className="grid grid-cols-[90px_1fr_1fr] items-center border-t border-slate-100 px-4 py-3 text-xs"><span className="flex items-center gap-2 font-semibold text-slate-900"><i className={cn("h-2 w-2 rounded-full", tier.color)} />{tier.range}</span><span className="text-slate-600">{tier.signal}</span><span className="font-medium text-slate-700">{tier.action}</span></div>)}
             </div>
@@ -181,7 +181,7 @@ export function AIInsightsView() {
         )}
 
         {activeModel === "anomaly" && (
-          <CardContent className="grid gap-6 p-6 lg:grid-cols-[1.15fr_0.85fr]">
+          <CardContent className="grid min-w-0 gap-5 p-4 sm:p-6 lg:grid-cols-[minmax(0,1.15fr)_minmax(0,0.85fr)]">
             <div className="space-y-5">
               <Section title="A baseline that resists outliers" icon={ScanSearch}>A mean clock-in time can be distorted by one extremely late scan. The median and Median Absolute Deviation (MAD) preserve the team’s true center and typical spread.</Section>
               <Formula>Modified Z = 0.6745(xᵢ − x̃) / MAD</Formula>
@@ -192,7 +192,7 @@ export function AIInsightsView() {
         )}
 
         {activeModel === "verification" && (
-          <CardContent className="grid gap-6 p-6 lg:grid-cols-[1.15fr_0.85fr]">
+          <CardContent className="grid min-w-0 gap-5 p-4 sm:p-6 lg:grid-cols-[minmax(0,1.15fr)_minmax(0,0.85fr)]">
             <div className="space-y-5">
               <Section title="Verify the machine, not only the person" icon={Fingerprint}>Each fingerprint match produces a confidence score. A rolling average across the latest 500 scans or 3 days reveals gradual dirt, wear, or optical sensor failure.</Section>
               <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">

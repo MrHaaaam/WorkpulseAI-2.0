@@ -22,14 +22,14 @@ export function Dialog({ open, onClose, children, className }: DialogProps) {
   if (!open) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+    <div className="fixed inset-0 z-50 flex items-end justify-center p-0 sm:items-center sm:p-4">
       <div
         className="absolute inset-0 bg-slate-900/50 backdrop-blur-sm animate-fade-in"
         onClick={onClose}
       />
       <div
         className={cn(
-          "relative z-10 w-full max-w-lg max-h-[90vh] overflow-y-auto scrollbar-thin rounded-2xl border border-slate-200 bg-white shadow-2xl animate-scale-in",
+          "scrollbar-thin relative z-10 max-h-[94svh] w-full max-w-lg overflow-y-auto rounded-t-2xl border border-slate-200 bg-white shadow-2xl animate-scale-in sm:max-h-[90vh] sm:rounded-2xl",
           className
         )}
       >
@@ -40,7 +40,7 @@ export function Dialog({ open, onClose, children, className }: DialogProps) {
 }
 
 export function DialogHeader({ children }: { children: React.ReactNode }) {
-  return <div className="flex items-start justify-between p-6 pb-2">{children}</div>;
+  return <div className="flex items-start justify-between gap-3 p-4 pb-2 sm:p-6 sm:pb-2">{children}</div>;
 }
 
 export function DialogClose({ onClose }: { onClose: () => void }) {

@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo } from 'react';
+import { Menu } from 'lucide-react';
 import { AdminSidebar, type ViewKey } from '../components/AdminSidebar';
 import { AdminOverviewView } from '../views/AdminOverviewView';
 import { EmployeeDirectoryView } from '../views/EmployeeDirectoryView';
@@ -171,6 +172,12 @@ export function AppRoutes() {
 
   const initialView: ViewKey = (paramView in viewMap) ? paramView : 'overview';
   const [active, setActive] = useState<ViewKey>(initialView);
+  const [mobileNavigationOpen, setMobileNavigationOpen] = useState(false);
+
+  const viewLabels: Record<ViewKey, string> = {
+    overview: 'Overview', attendance: 'Attendance', employees: 'Employee Directory', leave: 'Leave Requests',
+    payroll: 'Payroll', insights: 'AI Insights', settings: 'System Settings', admin: 'Admin Controls',
+  };
 
   // Sync state transitions back to URL queries
   useEffect(() => {
@@ -185,12 +192,18 @@ export function AppRoutes() {
   }, [active]);
 
   return (
-    <div className="flex h-screen w-full">
-      <AdminSidebar active={active} onNavigate={setActive} />
-      
-      <main className="flex-1 overflow-y-auto bg-slate-50 p-6">
-        {viewMap[active] || viewMap.overview}
-      </main>
+    <div className="flex min-h-screen w-full bg-slate-100/70">
+      <AdminSidebar active={active} onNavigate={setActive} mobileOpen={mobileNavigationOpen} onMobileClose={() => setMobileNavigationOpen(false)} />
+      <div className="min-w-0 flex-1">
+        <header className="sticky top-0 z-30 flex h-16 items-center border-b border-slate-200/80 bg-white/90 px-4 backdrop-blur-xl sm:px-6 lg:px-8">
+          <button onClick={() => setMobileNavigationOpen(true)} aria-label="Open navigation" className="mr-3 rounded-xl border border-slate-200 p-2 text-slate-600 hover:bg-slate-50 lg:hidden"><Menu className="h-5 w-5" /></button>
+          <div className="min-w-0"><p className="text-[10px] font-bold uppercase tracking-[0.16em] text-violet-600">Admin workspace</p><h1 className="truncate text-base font-bold text-slate-900 sm:text-lg">{viewLabels[active]}</h1></div>
+          <div className="ml-auto hidden items-center gap-2 rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-semibold text-emerald-700 sm:flex"><span className="h-2 w-2 rounded-full bg-emerald-500" />System online</div>
+        </header>
+        <main className="min-w-0 overflow-x-hidden px-3 py-4 sm:px-5 sm:py-6 lg:px-8 lg:py-8">
+          <div className="mx-auto w-full max-w-[1600px]">{viewMap[active] || viewMap.overview}</div>
+        </main>
+      </div>
     </div>
   );
 }

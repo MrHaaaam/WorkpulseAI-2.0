@@ -12,7 +12,7 @@ const operations = ['+', '-', '×', '÷'];
 const captchaLimit = rateLimit({ windowMs: 60_000, max: 20, keyPrefix: 'captcha' });
 const loginLimit = rateLimit({ windowMs: 15 * 60_000, max: 8, keyPrefix: 'login' });
 const otpLimit = rateLimit({ windowMs: 10 * 60_000, max: 10, keyPrefix: 'otp' });
-const passwordLimit = rateLimit({ windowMs: 15 * 60_000, max: 8, keyPrefix: 'verify-password' });
+const passwordCooldowns = new Map();
 
 export async function hashSecret(secret) {
   const salt = crypto.randomBytes(16).toString('hex');
@@ -26,6 +26,27 @@ export async function verifySecret(secret, stored) {
   const derived = Buffer.from(await scrypt(secret, salt, 64));
   const storedKey = Buffer.from(key, 'hex');
   return derived.length === storedKey.length && crypto.timingSafeEqual(derived, storedKey);
+}
+
+export async function verifyAdminPassword(request, password) {
+  const admin = request.auth?.actor;
+  if (!admin || admin.role !== 'admin') return { valid: false, forbidden: true };
+  const key = `${admin._id}:${request.ip}`;
+  const now = Date.now();
+  const state = passwordCooldowns.get(key) ?? { failures: 0, lockedUntil: 0 };
+  if (state.lockedUntil > now) return { valid: false, retryAfterSeconds: Math.ceil((state.lockedUntil - now) / 1000) };
+  if (await verifySecret(String(password ?? ''), admin.passwordHash)) {
+    passwordCooldowns.delete(key);
+    return { valid: true, admin };
+  }
+  const failures = state.failures + 1;
+  if (failures < 3) {
+    passwordCooldowns.set(key, { failures, lockedUntil: 0 });
+    return { valid: false };
+  }
+  const retryAfterSeconds = Math.min(50, 5 + (failures - 3) * 10);
+  passwordCooldowns.set(key, { failures, lockedUntil: now + retryAfterSeconds * 1000 });
+  return { valid: false, retryAfterSeconds };
 }
 
 function makeCaptcha() {
@@ -66,6 +87,10 @@ router.post('/login', loginLimit, async (request, response) => {
     const otp = String(crypto.randomInt(100000, 1_000_000));
     const verificationId = crypto.randomUUID();
     await db.collection('login_otps').insertOne({ verificationId, accountId: account._id, accountType, otpHash: await hashSecret(otp), expiresAt: new Date(Date.now() + 10 * 60_000), attempts: 0 });
+
+    if (process.env.NODE_ENV !== 'production') {
+      console.log(`[DEV] Login verification code for ${account.email}: ${otp}`);
+    }
 
     const transport = nodemailer.createTransport({ service: 'gmail', auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_APP_PASSWORD } });
     await transport.sendMail({ from: `Workpulse AI <${process.env.SMTP_USER}>`, to: account.email, subject: 'Your Workpulse AI login code', text: `Your Workpulse AI verification code is ${otp}. It expires in 10 minutes.` });
@@ -116,7 +141,7 @@ router.get('/session', async (request, response) => {
   response.json({ authenticated: true, csrfToken: csrf.token, role: account.role, accountType });
 });
 
-router.post('/verify-password', passwordLimit, authenticate, csrfProtection, async (request, response) => {
+router.post('/verify-password', authenticate, csrfProtection, async (request, response) => {
   const token = getRequestToken(request)?.token;
   const password = request.body?.password;
   if (!token || !password) return response.status(400).json({ error: 'Password is required' });
@@ -124,9 +149,15 @@ router.post('/verify-password', passwordLimit, authenticate, csrfProtection, asy
   const tokenDigest = crypto.createHash('sha256').update(token).digest('hex');
   const session = await db.collection('admin_sessions').findOne({ tokenDigest, expiresAt: { $gt: new Date() } });
   if (!session) return response.status(401).json({ error: 'Your session has expired' });
-  if (request.auth?.actor?.role !== 'admin') return response.status(403).json({ error: 'Administrator access required' });
   const admin = request.auth.actor;
-  if (!admin || !(await verifySecret(password, admin.passwordHash))) { await auditEvent({ req: request, actor: admin, action: 'auth.password_verify', targetType: 'admin_controls', outcome: 'failure' }); return response.status(401).json({ error: 'Incorrect admin password' }); }
+  const verification = await verifyAdminPassword(request, password);
+  if (verification.forbidden) return response.status(403).json({ error: 'Administrator access required' });
+  if (!verification.valid) {
+    await auditEvent({ req: request, actor: admin, action: 'auth.password_verify', targetType: 'admin_controls', outcome: 'failure' });
+    if (!verification.retryAfterSeconds) return response.status(401).json({ error: 'Incorrect admin password' });
+    response.setHeader('Retry-After', String(verification.retryAfterSeconds));
+    return response.status(429).json({ error: `Incorrect admin password. Try again in ${verification.retryAfterSeconds} seconds.`, retryAfterSeconds: verification.retryAfterSeconds });
+  }
   await auditEvent({ req: request, actor: admin, action: 'auth.password_verify', targetType: 'admin_controls', outcome: 'success' });
   response.json({ verified: true });
 });

@@ -26,10 +26,16 @@ export function AdminView() {
   const [archiveOpen, setArchiveOpen] = useState(false);
   const [password, setPassword] = useState("");
   const [passwordError, setPasswordError] = useState("");
+  const [passwordRetrySeconds, setPasswordRetrySeconds] = useState(0);
 
   useEffect(() => {
-    const token = sessionStorage.getItem('workpulse_token');
-    Promise.all([apiFetch('/api/employees'), apiFetch('/api/archived-employees', { headers: { Authorization: `Bearer ${token ?? ''}` } })]).then(async ([activeResponse, archivedResponse]) => {
+    if (passwordRetrySeconds <= 0) return;
+    const timer = window.setInterval(() => setPasswordRetrySeconds((seconds) => Math.max(0, seconds - 1)), 1000);
+    return () => window.clearInterval(timer);
+  }, [passwordRetrySeconds > 0]);
+
+  useEffect(() => {
+    Promise.all([apiFetch('/api/employees'), apiFetch('/api/archived-employees')]).then(async ([activeResponse, archivedResponse]) => {
       if (activeResponse.ok) setLocalEmployees(await activeResponse.json());
       if (archivedResponse.ok) {
         const archived = await archivedResponse.json() as (Employee & { banned?: boolean })[];
@@ -48,10 +54,14 @@ export function AdminView() {
     event.preventDefault();
     if (!password) { setPasswordError("Enter your admin password."); return; }
     try {
-      const token = sessionStorage.getItem('workpulse_token');
-      const response = await apiFetch('/api/auth/verify-password', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token ?? ''}` }, body: JSON.stringify({ password }) });
+      const response = await apiFetch('/api/auth/verify-password', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password }) });
       const contentType = response.headers.get('content-type') ?? '';
       const data = contentType.includes('application/json') ? await response.json() : null;
+      if (response.status === 429) {
+        const seconds = Number(data?.retryAfterSeconds || response.headers.get('Retry-After') || 0);
+        setPasswordRetrySeconds(seconds);
+        throw new Error(`Too many password attempts. Try again in ${seconds} seconds.`);
+      }
       if (!response.ok) throw new Error(data?.error || `Password verification failed (server returned ${response.status})`);
       setPasswordPromptOpen(false);
       setAdminUnlocked(true);
@@ -66,8 +76,7 @@ export function AdminView() {
   async function restoreAccount(id: string) {
     const account = archivedAccounts.find((item) => item.id === id);
     if (!account) return;
-    const token = sessionStorage.getItem('workpulse_token');
-    const response = await apiFetch(`/api/employees/${id}/unarchive`, { method: 'POST', headers: { Authorization: `Bearer ${token ?? ''}` } });
+    const response = await apiFetch(`/api/employees/${id}/unarchive`, { method: 'POST' });
     if (!response.ok) { toast({ title: "Account was not restored", description: "Please try again.", variant: "error" }); return; }
     const restored = await response.json();
     setLocalEmployees((current) => [...current, { ...restored, banned: false }]);
@@ -76,8 +85,8 @@ export function AdminView() {
   }
 
   if (!adminUnlocked) return (
-    <div className="flex min-h-[70vh] items-center justify-center"><Card className="w-full max-w-md"><CardContent className="flex flex-col items-center p-8 text-center"><div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-[#8642ED]/10"><KeyRound className="h-7 w-7 text-[#8642ED]" /></div><h2 className="mt-4 text-xl font-bold text-slate-900">Admin Controls Locked</h2><p className="mt-1 text-sm text-slate-500">Password verification is required before accessing any administrative controls.</p><Button className="mt-5" onClick={() => { setPassword(""); setPasswordError(""); setPasswordPromptOpen(true); }}>Enter Password</Button></CardContent></Card>
-      <Dialog open={passwordPromptOpen} onClose={() => setPasswordPromptOpen(false)} className="max-w-sm"><DialogHeader><div><h3 className="flex items-center gap-2 text-base font-bold text-slate-900"><KeyRound className="h-4 w-4 text-[#8642ED]" /> Admin Password</h3><p className="mt-1 text-xs text-slate-500">Verify your current account password to continue.</p></div><DialogClose onClose={() => setPasswordPromptOpen(false)} /></DialogHeader><form onSubmit={unlockAdminControls} className="space-y-3 px-6 pb-6 pt-3"><Input type="password" autoFocus value={password} onChange={(event) => { setPassword(event.target.value); setPasswordError(""); }} placeholder="Enter admin password" />{passwordError && <p className="text-xs text-rose-600">{passwordError}</p>}<div className="flex justify-end gap-2"><Button type="button" size="sm" variant="outline" onClick={() => setPasswordPromptOpen(false)}>Cancel</Button><Button type="submit" size="sm">Unlock</Button></div></form></Dialog>
+    <div className="flex min-h-[calc(100svh-10rem)] items-center justify-center py-6"><Card className="w-full max-w-md"><CardContent className="flex flex-col items-center p-6 text-center sm:p-8"><div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-[#8642ED]/10"><KeyRound className="h-7 w-7 text-[#8642ED]" /></div><h2 className="mt-4 text-xl font-bold text-slate-900">Admin Controls Locked</h2><p className="mt-1 text-sm text-slate-500">Password verification is required before accessing any administrative controls.</p><Button className="mt-5" onClick={() => { setPassword(""); setPasswordError(""); setPasswordPromptOpen(true); }}>Enter Password</Button></CardContent></Card>
+      <Dialog open={passwordPromptOpen} onClose={() => setPasswordPromptOpen(false)} className="max-w-sm"><DialogHeader><div><h3 className="flex items-center gap-2 text-base font-bold text-slate-900"><KeyRound className="h-4 w-4 text-[#8642ED]" /> Admin Password</h3><p className="mt-1 text-xs text-slate-500">Verify your current account password to continue.</p></div><DialogClose onClose={() => setPasswordPromptOpen(false)} /></DialogHeader><form onSubmit={unlockAdminControls} className="space-y-3 px-6 pb-6 pt-3"><Input type="password" autoFocus disabled={passwordRetrySeconds > 0} value={password} onChange={(event) => { setPassword(event.target.value); setPasswordError(""); }} placeholder={passwordRetrySeconds > 0 ? `Try again in ${passwordRetrySeconds}s` : "Enter admin password"} />{passwordRetrySeconds > 0 && <p className="text-xs font-medium text-amber-600">Password attempts locked for {passwordRetrySeconds} more seconds.</p>}{passwordError && <p className="text-xs text-rose-600">{passwordError}</p>}<div className="flex justify-end gap-2"><Button type="button" size="sm" variant="outline" onClick={() => setPasswordPromptOpen(false)}>Cancel</Button><Button type="submit" size="sm" disabled={passwordRetrySeconds > 0}>{passwordRetrySeconds > 0 ? `Wait ${passwordRetrySeconds}s` : "Unlock"}</Button></div></form></Dialog>
     </div>
   );
 
@@ -86,12 +95,12 @@ export function AdminView() {
       {/* Page Header */}
       <div className="relative overflow-hidden rounded-2xl border border-slate-200/60 bg-white/70 px-5 py-5 shadow-sm backdrop-blur">
         <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-rose-500/10 via-transparent to-transparent" />
-        <div className="relative flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+        <div className="relative flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
           <div>
             <h2 className="text-2xl font-bold text-slate-900">Admin Control Panel</h2>
             <p className="text-sm text-slate-500">Manage user access, bans, and global system configuration</p>
           </div>
-          <div className="flex gap-2"><Button variant="outline" onClick={() => setArchiveOpen(true)}><Archive className="h-4 w-4" /> Archive</Button><Button variant="outline" onClick={() => { setArchiveOpen(false); setAdminUnlocked(false); }}><KeyRound className="h-4 w-4" /> Lock</Button></div>
+          <div className="flex w-full flex-wrap gap-2 sm:w-auto sm:justify-end"><Button className="flex-1 sm:flex-none" variant="outline" onClick={() => setArchiveOpen(true)}><Archive className="h-4 w-4" /> Archive</Button><Button className="flex-1 sm:flex-none" variant="outline" onClick={() => { setArchiveOpen(false); setAdminUnlocked(false); }}><KeyRound className="h-4 w-4" /> Lock</Button></div>
         </div>
       </div>
 
@@ -104,7 +113,7 @@ export function AdminView() {
           </CardHeader>
           <CardContent>
             <div className={hoverScrollbarClasses}>
-              <Table>
+              <Table className="min-w-[620px]">
                 <TableHeader className="sticky top-0 bg-white z-10 shadow-sm">
                   <TableRow>
                     <TableHead>Employee</TableHead>
@@ -128,7 +137,7 @@ export function AdminView() {
                           <Badge variant="success">Active</Badge>
                         )}
                       </TableCell>
-                      <TableCell className="flex justify-end gap-2">
+                      <TableCell className="text-right">
                         <Button size="sm" variant={(e as any).banned ? "outline" : undefined} onClick={() => toggleBanEmployee(e.id)}>
                           {(e as any).banned ? (
                             <><Check className="mr-1.5 h-3.5 w-3.5" />Unban</>
@@ -155,7 +164,7 @@ export function AdminView() {
             <CardDescription>Global configuration and system restrictions</CardDescription>
           </CardHeader>
           <CardContent>
-            <Table>
+            <Table className="min-w-[680px]">
               <TableHeader>
                 <TableRow>
                   <TableHead>Configuration</TableHead>
@@ -191,7 +200,7 @@ export function AdminView() {
 
       {archiveOpen && (
         <Card className="border-violet-200">
-          <CardHeader><div className="flex items-start justify-between"><div><CardTitle className="flex items-center gap-2"><Archive className="h-5 w-5 text-[#8642ED]" /> Archive</CardTitle><CardDescription>Protected archived accounts. Restore records when needed.</CardDescription></div><Button size="sm" variant="outline" onClick={() => setArchiveOpen(false)}>Close &amp; Lock</Button></div></CardHeader>
+          <CardHeader><div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between"><div><CardTitle className="flex items-center gap-2"><Archive className="h-5 w-5 text-[#8642ED]" /> Archive</CardTitle><CardDescription>Protected archived accounts. Restore records when needed.</CardDescription></div><Button className="w-full sm:w-auto" size="sm" variant="outline" onClick={() => setArchiveOpen(false)}>Close &amp; Lock</Button></div></CardHeader>
           <CardContent className="p-0"><Table><TableHeader><TableRow><TableHead>Account</TableHead><TableHead>Type</TableHead><TableHead className="text-right">Action</TableHead></TableRow></TableHeader><TableBody>
             {archivedAccounts.map((account) => <TableRow key={account.id}><TableCell><div className="font-medium text-slate-900">{account.name}</div><div className="text-xs text-slate-400">{account.id}</div></TableCell><TableCell><Badge variant="neutral">{account.type}</Badge></TableCell><TableCell className="text-right"><Button size="sm" variant="outline" onClick={() => restoreAccount(account.id)}><RotateCcw className="h-3.5 w-3.5" /> Restore</Button></TableCell></TableRow>)}
           </TableBody></Table>{archivedAccounts.length === 0 && <div className="py-10 text-center text-sm text-slate-400">The archive is empty.</div>}</CardContent>

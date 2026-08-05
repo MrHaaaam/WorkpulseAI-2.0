@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Archive, BriefcaseBusiness, Check, Clock, Contact, Fingerprint, Grid2X2, IdCard, KeyRound, List, Mail, MapPin, Pencil, Phone, Plus, Search, ShieldCheck, UserRound, X } from "lucide-react";
+import { Archive, BriefcaseBusiness, CalendarDays, Check, Clock, Contact, Fingerprint, Grid2X2, IdCard, KeyRound, List, Mail, MapPin, Pencil, Phone, Plus, Search, ShieldCheck, UserRound, X } from "lucide-react";
 
 import { Badge } from "../components/ui/Badge";
 import { Button } from "../components/ui/Button";
@@ -12,6 +12,8 @@ import { apiFetch } from "../lib/api";
 
 export interface Employee {
   id: string;
+  firstName?: string;
+  lastName?: string;
   name: string;
   role: string;
   casualLeave: { total: number; used: number };
@@ -24,6 +26,7 @@ export interface Employee {
   email?: string;
   phone?: string;
   address?: string;
+  createdAt?: string;
   sssNumber?: string;
   philHealthNumber?: string;
   pagIbigNumber?: string;
@@ -36,6 +39,8 @@ type ViewMode = "table" | "cards";
 
 const emptyEmployee: Employee = {
   id: "",
+  firstName: "",
+  lastName: "",
   name: "",
   role: "regular",
   casualLeave: { used: 0, total: 10 },
@@ -75,6 +80,9 @@ export function EmployeeDirectoryView({ employees: initialEmployees }: Partial<E
   const [editorOpen, setEditorOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draft, setDraft] = useState<Employee>(emptyEmployee);
+  const [savedDraft, setSavedDraft] = useState<Employee | null>(null);
+  const [adminPassword, setAdminPassword] = useState("");
+  const [passwordRetrySeconds, setPasswordRetrySeconds] = useState(0);
   const [identifierType, setIdentifierType] = useState("SSS");
   const [customIdentifierType, setCustomIdentifierType] = useState("");
   const [fingerprintRegistering, setFingerprintRegistering] = useState(false);
@@ -89,6 +97,12 @@ export function EmployeeDirectoryView({ employees: initialEmployees }: Partial<E
     apiFetch('/api/employees').then((response) => response.ok ? response.json() : Promise.reject()).then(setEmployees).catch(() => {});
   }, []);
 
+  useEffect(() => {
+    if (passwordRetrySeconds <= 0) return;
+    const timer = window.setInterval(() => setPasswordRetrySeconds((seconds) => Math.max(0, seconds - 1)), 1000);
+    return () => window.clearInterval(timer);
+  }, [passwordRetrySeconds > 0]);
+
   const filtered = useMemo(() => employees.filter((employee) => {
     const query = search.toLowerCase();
     const matchesSearch = [employee.name, employee.id, employee.role, employee.sssNumber, employee.address]
@@ -96,12 +110,22 @@ export function EmployeeDirectoryView({ employees: initialEmployees }: Partial<E
     return matchesSearch && (statusFilter === "All" || employee.status === statusFilter);
   }), [employees, search, statusFilter]);
 
-  function openAdd() {
-    const nextNumber = employees.length + 1;
+  async function openAdd() {
+    const nextNumber = employees.reduce((maximum, employee) => {
+      const match = /^EMP-(\d+)$/i.exec(employee.id);
+      return match ? Math.max(maximum, Number(match[1])) : maximum;
+    }, 0) + 1;
     setEditingId(null);
+    setSavedDraft(null);
+    setAdminPassword("");
     setFingerprintRegistering(false);
     setDraft({ ...emptyEmployee, id: `EMP-${String(nextNumber).padStart(3, "0")}`, identifiers: [] });
     setEditorOpen(true);
+    try {
+      const response = await apiFetch('/api/employees-next-id');
+      const data = await response.json();
+      if (response.ok && data.id) setDraft((current) => ({ ...current, id: data.id }));
+    } catch { /* Keep the local preview; the server still assigns the final ID. */ }
   }
 
   function openEdit(employee: Employee) {
@@ -115,8 +139,27 @@ export function EmployeeDirectoryView({ employees: initialEmployees }: Partial<E
     ].filter(Boolean).map((identifier) => ({ ...identifier, amount: 0 })) as { type: string; value: string; amount: number }[];
     const normalizedRole = employee.role === "extra" ? "extra" : "regular";
     const hourlyRate = normalizedRole === "regular" ? 50 : 40;
-    setDraft({ ...emptyEmployee, ...employee, role: normalizedRole, hourlyRate, hoursWorked: employee.hoursWorked ?? ((employee.grossSalary ?? 0) / hourlyRate), identifiers: employee.identifiers ?? legacyIdentifiers });
+    const nameParts = employee.name.trim().split(/\s+/);
+    const editable = { ...emptyEmployee, ...employee, firstName: employee.firstName || nameParts[0] || "", lastName: employee.lastName || nameParts.slice(1).join(" "), role: normalizedRole, hourlyRate, hoursWorked: employee.hoursWorked ?? ((employee.grossSalary ?? 0) / hourlyRate), identifiers: employee.identifiers ?? legacyIdentifiers };
+    setDraft(editable);
+    setSavedDraft(editable);
+    setAdminPassword("");
     setEditorOpen(true);
+  }
+
+  function closeEditor() {
+    setEditorOpen(false);
+    setAdminPassword("");
+    setFormError("");
+    setFingerprintRegistering(false);
+  }
+
+  function revertChanges() {
+    if (!savedDraft) return;
+    setDraft(savedDraft);
+    setAdminPassword("");
+    setFormError("");
+    setFingerprintRegistering(false);
   }
 
   function update<K extends keyof Employee>(field: K, value: Employee[K]) {
@@ -130,14 +173,29 @@ export function EmployeeDirectoryView({ employees: initialEmployees }: Partial<E
 
   async function saveEmployee(event: React.FormEvent) {
     event.preventDefault();
-    if (!draft.id.trim() || !draft.name.trim()) return;
+    if (!draft.firstName?.trim() || !draft.lastName?.trim()) return;
     setSaving(true); setFormError("");
     try {
-      const response = await apiFetch(`/api/employees${editingId ? `/${editingId}` : ''}`, { method: editingId ? 'PUT' : 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(draft) });
+      if (editingId) {
+        const verificationResponse = await apiFetch('/api/auth/verify-password', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ password: adminPassword }),
+        });
+        const verificationType = verificationResponse.headers.get('content-type') ?? '';
+        const verificationData = verificationType.includes('application/json') ? await verificationResponse.json() : null;
+        if (verificationResponse.status === 429) {
+          const seconds = Number(verificationData?.retryAfterSeconds || verificationResponse.headers.get('Retry-After') || 0);
+          setPasswordRetrySeconds(seconds);
+          throw new Error(`Too many password attempts. Try again in ${seconds} seconds.`);
+        }
+        if (!verificationResponse.ok) throw new Error(verificationData?.error || 'Incorrect admin password');
+      }
+      const response = await apiFetch(`/api/employees${editingId ? `/${editingId}` : ''}`, { method: editingId ? 'PUT' : 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(editingId ? { ...draft, adminPassword } : draft) });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || 'Unable to save employee');
       setEmployees((current) => editingId ? current.map((employee) => employee.id === editingId ? data : employee) : [...current, data]);
-      setEditorOpen(false);
+      closeEditor();
       toast({ title: editingId ? "Employee updated" : "Employee account created", description: `${data.name}'s record was saved successfully.`, variant: "success" });
     } catch (reason) { const message = reason instanceof Error ? reason.message : 'Unable to save employee'; setFormError(message); toast({ title: editingId ? "Update failed" : "Account creation failed", description: message, variant: "error" }); }
     finally { setSaving(false); }
@@ -155,8 +213,7 @@ export function EmployeeDirectoryView({ employees: initialEmployees }: Partial<E
     if (!archiveTarget || !archivePassword) return;
     setArchiving(true); setArchiveError("");
     try {
-      const token = sessionStorage.getItem('workpulse_token');
-      const response = await apiFetch(`/api/employees/${archiveTarget.id}/archive`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token ?? ''}` }, body: JSON.stringify({ password: archivePassword }) });
+      const response = await apiFetch(`/api/employees/${archiveTarget.id}/archive`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password: archivePassword }) });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || 'Unable to archive employee');
       setEmployees((current) => current.filter((employee) => employee.id !== archiveTarget.id));
@@ -176,12 +233,12 @@ export function EmployeeDirectoryView({ employees: initialEmployees }: Partial<E
         <Button onClick={openAdd}><Plus className="h-4 w-4" /> Add Employee</Button>
       </div>
 
-      <div className="flex flex-wrap items-center gap-2">
-        <div className="relative w-full sm:w-72">
+      <div className="grid grid-cols-1 gap-2 sm:grid-cols-[minmax(0,1fr)_auto_auto] sm:items-center lg:grid-cols-[minmax(18rem,28rem)_auto_auto_1fr]">
+        <div className="relative min-w-0">
           <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
           <Input placeholder="Search name, ID, SSS, role, or address..." value={search} onChange={(e) => setSearch(e.target.value)} className="pl-10" />
         </div>
-        <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value as typeof statusFilter)} className="h-10 w-auto rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-700">
+        <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value as typeof statusFilter)} className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-700 sm:w-auto">
           <option value="All">All statuses</option><option value="active">Active</option><option value="on-leave">On Leave</option><option value="inactive">Inactive</option>
         </select>
         <div className="flex rounded-lg border border-slate-200 bg-white p-1">
@@ -191,7 +248,7 @@ export function EmployeeDirectoryView({ employees: initialEmployees }: Partial<E
       </div>
 
       {viewMode === "table" ? (
-        <Card><CardContent className="p-0"><Table>
+        <Card className="min-w-0 overflow-hidden"><CardContent className="p-0"><Table className="min-w-[760px]">
           <TableHeader><TableRow className="bg-slate-50/50"><TableHead>Employee</TableHead><TableHead>Role</TableHead><TableHead>SSS Number</TableHead><TableHead>Biometric</TableHead><TableHead>Status</TableHead><TableHead className="text-right">Actions</TableHead></TableRow></TableHeader>
           <TableBody>{filtered.map((employee) => <TableRow key={employee.id}>
             <TableCell><div className="flex items-center gap-3"><div className="flex h-9 w-9 items-center justify-center rounded-full bg-violet-100 text-xs font-bold text-[#8642ED]">{initials(employee.name)}</div><div><p className="font-medium text-slate-900">{employee.name}</p><p className="text-xs text-slate-400">{employee.id}</p></div></div></TableCell>
@@ -203,29 +260,31 @@ export function EmployeeDirectoryView({ employees: initialEmployees }: Partial<E
           </TableRow>)}</TableBody>
         </Table>{filtered.length === 0 && <div className="py-12 text-center text-sm text-slate-400">No employees match your search.</div>}</CardContent></Card>
       ) : (
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 md:grid-cols-3">{filtered.map((employee) => (
-          <Card key={employee.id}><CardContent className="p-5">
-            <div className="flex items-start justify-between"><div className="flex items-center gap-3"><div className="flex h-11 w-11 items-center justify-center rounded-xl bg-violet-100 font-bold text-[#8642ED]">{initials(employee.name)}</div><div><h3 className="font-semibold text-slate-900">{employee.name}</h3><p className="text-xs text-slate-500">{employee.id} · {employee.role}</p></div></div><StatusBadge status={employee.status} /></div>
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">{filtered.map((employee) => (
+          <Card key={employee.id}><CardContent className="p-5 !pt-5">
+            <div className="flex min-w-0 items-start justify-between gap-2"><div className="flex min-w-0 items-center gap-3"><div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-violet-100 font-bold text-[#8642ED]">{initials(employee.name)}</div><div className="min-w-0"><h3 className="truncate font-semibold text-slate-900">{employee.name}</h3><p className="truncate text-xs text-slate-500">{employee.id} · {employee.role}</p></div></div><div className="shrink-0"><StatusBadge status={employee.status} /></div></div>
             <div className="mt-5 space-y-2 border-t border-slate-100 pt-4 text-sm"><div className="flex justify-between"><span className="text-slate-400">SSS</span><span className="text-slate-700">{employee.identifiers?.find((item) => item.type.toLowerCase() === "sss")?.value || employee.sssNumber || "Not added"}</span></div><div className="flex justify-between"><span className="text-slate-400">Address</span><span className="max-w-[65%] truncate text-slate-700">{employee.address || "Not added"}</span></div><div className="flex justify-between"><span className="text-slate-400">Fingerprint</span><BiometricBadge status={employee.biometricStatus} /></div></div>
             <div className="mt-5 grid grid-cols-2 gap-2"><Button variant="outline" onClick={() => openEdit(employee)}><Pencil className="h-4 w-4" /> Edit</Button><Button variant="outline" className="text-rose-600 hover:bg-rose-50" onClick={() => { setArchiveTarget(employee); setArchivePassword(""); setArchiveError(""); }}><Archive className="h-4 w-4" /> Archive</Button></div>
           </CardContent></Card>
         ))}</div>
       )}
 
-      <Dialog open={editorOpen} onClose={() => setEditorOpen(false)} className="max-h-[92vh] max-w-3xl overflow-hidden">
+      <Dialog open={editorOpen} onClose={closeEditor} className="max-h-[92vh] max-w-3xl overflow-hidden">
         <div className="border-b border-slate-100 bg-gradient-to-r from-violet-50 via-white to-white">
-          <DialogHeader><div className="flex items-center gap-3"><div className="flex h-11 w-11 items-center justify-center rounded-xl bg-[#8642ED] text-white shadow-sm"><UserRound className="h-5 w-5" /></div><div><h3 className="text-lg font-bold text-slate-900">{editingId ? "Edit employee" : "Add new employee"}</h3><p className="mt-0.5 text-xs text-slate-500">{editingId ? `Update ${draft.name || "this employee"}'s profile and access.` : "Create a complete profile and attendance account."}</p></div></div><DialogClose onClose={() => setEditorOpen(false)} /></DialogHeader>
-          <div className="flex gap-5 px-6 pb-4 text-xs font-medium text-slate-400"><span className="flex items-center gap-1.5 text-[#8642ED]"><span className="flex h-5 w-5 items-center justify-center rounded-full bg-[#8642ED] text-[10px] text-white">1</span> Employee details</span><span className="flex items-center gap-1.5"><span className="flex h-5 w-5 items-center justify-center rounded-full bg-slate-200 text-[10px] text-slate-500">2</span> Fingerprint access</span></div>
+          <DialogHeader><div className="flex items-center gap-3"><div className="flex h-11 w-11 items-center justify-center rounded-xl bg-[#8642ED] text-white shadow-sm"><UserRound className="h-5 w-5" /></div><div><h3 className="text-lg font-bold text-slate-900">{editingId ? "Edit employee" : "Add new employee"}</h3><p className="mt-0.5 text-xs text-slate-500">{editingId ? `Update ${draft.name || "this employee"}'s profile and access.` : "Create a complete profile and attendance account."}</p></div></div><DialogClose onClose={closeEditor} /></DialogHeader>
+          <div className="flex flex-wrap gap-3 px-4 pb-4 text-xs font-medium text-slate-400 sm:gap-5 sm:px-6"><span className="flex items-center gap-1.5 text-[#8642ED]"><span className="flex h-5 w-5 items-center justify-center rounded-full bg-[#8642ED] text-[10px] text-white">1</span> Employee details</span><span className="flex items-center gap-1.5"><span className="flex h-5 w-5 items-center justify-center rounded-full bg-slate-200 text-[10px] text-slate-500">2</span> Fingerprint access</span></div>
         </div>
         <form onSubmit={saveEmployee} className="flex max-h-[calc(92vh-132px)] flex-col">
-          <div className="scrollbar-thin flex-1 space-y-5 overflow-y-auto px-6 py-5">
+          <div className="scrollbar-thin flex-1 space-y-5 overflow-y-auto px-4 py-4 sm:px-6 sm:py-5">
           <FormSection icon={<Contact className="h-4 w-4" />} title="Personal & contact information" description="Basic details used across the employee directory.">
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-              <Field label="Full name" required><Input required placeholder="e.g. Juan Dela Cruz" value={draft.name} onChange={(e) => update("name", e.target.value)} /></Field>
-              <Field label="Employee ID" required hint="A unique internal reference"><Input required value={draft.id} onChange={(e) => update("id", e.target.value)} /></Field>
-              <Field label="Email address"><div className="relative"><Mail className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" /><Input className="pl-9" type="email" placeholder="name@company.com" value={draft.email ?? ""} onChange={(e) => update("email", e.target.value)} /></div></Field>
-              <Field label="Phone number"><div className="relative"><Phone className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" /><Input className="pl-9" placeholder="+63 9XX XXX XXXX" value={draft.phone ?? ""} onChange={(e) => update("phone", e.target.value)} /></div></Field>
-              <div className="sm:col-span-2"><Field label="Home address"><div className="relative"><MapPin className="absolute left-3 top-3 h-4 w-4 text-slate-400" /><textarea rows={2} placeholder="Street, barangay, city, province" value={draft.address ?? ""} onChange={(e) => update("address", e.target.value)} className="w-full resize-none rounded-lg border border-slate-200 bg-white py-2 pl-9 pr-3 text-sm text-slate-900 outline-none transition focus:border-[#8642ED] focus:ring-2 focus:ring-[#8642ED]/20" /></div></Field></div>
+              <Field label="First name" required><Input required placeholder="e.g. Juan" value={draft.firstName ?? ""} onChange={(e) => update("firstName", e.target.value)} /></Field>
+              <Field label="Last name" required><Input required placeholder="e.g. Dela Cruz" value={draft.lastName ?? ""} onChange={(e) => update("lastName", e.target.value)} /></Field>
+              <Field label="Employee ID" required hint="Assigned automatically"><Input required readOnly className="bg-slate-100 text-slate-500" value={draft.id} /></Field>
+              <Field label="Account creation date" hint="Cannot be edited"><div className="relative"><CalendarDays className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" /><Input readOnly className="bg-slate-100 pl-9 text-slate-500" value={draft.createdAt ? new Date(draft.createdAt).toLocaleString("en-PH") : "Assigned when employee is created"} /></div></Field>
+              <Field label="Email address" required><div className="relative"><Mail className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" /><Input required className="pl-9" type="email" placeholder="name@company.com" value={draft.email ?? ""} onChange={(e) => update("email", e.target.value)} /></div></Field>
+              <Field label="Phone number" required hint="No spaces"><div className="relative"><Phone className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" /><Input required className="pl-9" type="tel" inputMode="numeric" pattern="\+639[0-9]{9}" maxLength={13} placeholder="+639123456789" value={draft.phone ?? ""} onChange={(e) => { const digits = e.target.value.replace(/\D/g, "").replace(/^63?/, "").slice(0, 10); update("phone", `+63${digits.startsWith("9") ? digits : `9${digits.replace(/^9/, "")}`}`.slice(0, 13)); }} /></div></Field>
+              <div className="sm:col-span-2"><Field label="Home address" required><div className="relative"><MapPin className="absolute left-3 top-3 h-4 w-4 text-slate-400" /><textarea required rows={2} placeholder="Street, barangay, city, province" value={draft.address ?? ""} onChange={(e) => update("address", e.target.value)} className="w-full resize-none rounded-lg border border-slate-200 bg-white py-2 pl-9 pr-3 text-sm text-slate-900 outline-none transition focus:border-[#8642ED] focus:ring-2 focus:ring-[#8642ED]/20" /></div></Field></div>
             </div>
           </FormSection>
           <FormSection icon={<BriefcaseBusiness className="h-4 w-4" />} title="Employment details" description="Role, compensation, and current employment state.">
@@ -277,9 +336,10 @@ export function EmployeeDirectoryView({ employees: initialEmployees }: Partial<E
           </div>
           {!editingId && draft.biometricStatus !== "enrolled" && <p className="mt-2 text-xs font-medium text-amber-600">A fingerprint is required before the employee account can be created.</p>}
           </FormSection>
+          {editingId && <FormSection icon={<KeyRound className="h-4 w-4" />} title="Confirm administrator changes" description="Your admin password is required before profile, role, or fingerprint changes can be saved."><Field label="Admin password" required><Input required type="password" autoComplete="current-password" disabled={passwordRetrySeconds > 0} placeholder={passwordRetrySeconds > 0 ? `Try again in ${passwordRetrySeconds}s` : "Enter your admin password"} value={adminPassword} onChange={(event) => { setAdminPassword(event.target.value); setFormError(""); }} /></Field>{passwordRetrySeconds > 0 && <p className="mt-2 text-xs font-medium text-amber-600">Password attempts locked for {passwordRetrySeconds} more seconds.</p>}</FormSection>}
           {formError && <p className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-medium text-rose-700">{formError}</p>}
           </div>
-          <div className="flex items-center justify-between border-t border-slate-200 bg-white px-6 py-4"><p className="hidden text-xs text-slate-400 sm:block"><span className="text-rose-500">*</span> Required fields</p><div className="ml-auto flex gap-2"><Button type="button" variant="outline" onClick={() => setEditorOpen(false)}>Cancel</Button><Button type="submit" disabled={saving || (!editingId && draft.biometricStatus !== "enrolled")}><Fingerprint className="h-4 w-4" /> {saving ? 'Saving...' : editingId ? "Save changes" : "Create employee"}</Button></div></div>
+          <div className="flex items-center justify-between border-t border-slate-200 bg-white px-6 py-4"><p className="hidden text-xs text-slate-400 sm:block"><span className="text-rose-500">*</span> Required fields</p><div className="ml-auto flex flex-wrap justify-end gap-2">{editingId && <Button type="button" variant="outline" onClick={revertChanges}>Revert changes</Button>}<Button type="button" variant="outline" onClick={closeEditor}>Cancel</Button><Button type="submit" disabled={saving || passwordRetrySeconds > 0 || (editingId ? !adminPassword : draft.biometricStatus !== "enrolled")}><Fingerprint className="h-4 w-4" /> {saving ? 'Saving...' : passwordRetrySeconds > 0 ? `Wait ${passwordRetrySeconds}s` : editingId ? "Save changes" : "Create employee"}</Button></div></div>
         </form>
       </Dialog>
       <Dialog open={!!archiveTarget} onClose={() => setArchiveTarget(null)} className="max-w-sm"><DialogHeader><div><h3 className="flex items-center gap-2 text-base font-bold text-slate-900"><KeyRound className="h-4 w-4 text-rose-600" /> Archive employee</h3><p className="mt-1 text-xs text-slate-500">{archiveTarget?.name} will become inactive and move to Admin Controls.</p></div><DialogClose onClose={() => setArchiveTarget(null)} /></DialogHeader><form onSubmit={archiveEmployee} className="space-y-3 px-6 pb-6 pt-3"><Field label="Confirm your admin password" required><Input type="password" autoFocus value={archivePassword} onChange={(event) => { setArchivePassword(event.target.value); setArchiveError(""); }} placeholder="Enter your password" /></Field>{archiveError && <p className="text-xs font-medium text-rose-600">{archiveError}</p>}<div className="flex justify-end gap-2"><Button type="button" variant="outline" onClick={() => setArchiveTarget(null)}>Cancel</Button><Button type="submit" variant="destructive" disabled={archiving || !archivePassword}><Archive className="h-4 w-4" />{archiving ? "Archiving..." : "Archive employee"}</Button></div></form></Dialog>

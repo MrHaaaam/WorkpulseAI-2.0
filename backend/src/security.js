@@ -46,9 +46,10 @@ export function rateLimit({ windowMs, max, keyPrefix }) {
     res.setHeader('RateLimit-Remaining', String(Math.max(0, max - bucket.count)));
     res.setHeader('RateLimit-Reset', String(Math.ceil(bucket.resetAt / 1000)));
     if (bucket.count > max) {
-      res.setHeader('Retry-After', String(Math.ceil((bucket.resetAt - now) / 1000)));
+      const retryAfterSeconds = Math.ceil((bucket.resetAt - now) / 1000);
+      res.setHeader('Retry-After', String(retryAfterSeconds));
       void auditEvent({ req, action: 'security.rate_limit', targetType: keyPrefix, outcome: 'failure' });
-      return res.status(429).json({ error: 'Too many attempts. Please wait and try again.' });
+      return res.status(429).json({ error: `Too many attempts. Try again in ${retryAfterSeconds} seconds.`, retryAfterSeconds });
     }
     next();
   };

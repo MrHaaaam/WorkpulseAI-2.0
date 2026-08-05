@@ -2,7 +2,7 @@ import { Router } from 'express';
 import mongoose from 'mongoose';
 import nodemailer from 'nodemailer';
 import crypto from 'node:crypto';
-import { verifySecret } from './auth.js';
+import { verifyAdminPassword, verifySecret } from './auth.js';
 import { auditEvent, authenticate, csrfProtection, pick, requireRole } from '../security.js';
 
 const router = Router();
@@ -36,7 +36,7 @@ router.get('/employee/me', requireRole('regular', 'extra'), async (req, res) => 
       db.collection('payroll_requests').find({ employeeId }).sort({ createdAt: -1, _id: -1 }).limit(12).toArray(),
     ]);
     res.json({
-      profile: { id: employee.id, name: employee.name, email: employee.email, phone: employee.phone, address: employee.address, role: employee.role, status: employee.status, biometricStatus: employee.biometricStatus, casualLeave: employee.casualLeave, sickLeave: employee.sickLeave, hourlyRate: employee.hourlyRate, grossSalary: employee.grossSalary },
+      profile: { id: employee.id, name: employee.name, email: employee.email, phone: employee.phone, address: employee.address, role: employee.role, status: employee.status, biometricStatus: employee.biometricStatus, casualLeave: employee.casualLeave, sickLeave: employee.sickLeave, hourlyRate: employee.hourlyRate, grossSalary: employee.grossSalary, createdAt: employee.createdAt },
       attendance: attendance.map(({ _id, ...record }) => record),
       leaveRequests: leaveRequests.map(({ _id, ...record }) => record),
       payroll: payroll.map(({ _id, ...record }) => ({ id: record.id, amount: record.amount, currentAmount: record.currentAmount, carryOverAmount: record.carryOverAmount, status: record.status, periodStart: record.periodStart, createdAt: record.createdAt })),
@@ -73,12 +73,14 @@ router.post('/employee/me/leave-requests', requireRole('regular', 'extra'), asyn
 
 router.use(requireRole('admin'));
 
-const employeeFields = ['id', 'name', 'role', 'casualLeave', 'sickLeave', 'biometricStatus', 'status', 'grossSalary', 'hoursWorked', 'hourlyRate', 'email', 'phone', 'address', 'identifiers'];
+const employeeFields = ['id', 'firstName', 'lastName', 'name', 'role', 'casualLeave', 'sickLeave', 'biometricStatus', 'status', 'grossSalary', 'hoursWorked', 'hourlyRate', 'email', 'phone', 'address', 'identifiers'];
 
 function normalizedEmployee(input) {
   const employee = pick(input ?? {}, employeeFields);
   employee.id = String(employee.id ?? '').trim().slice(0, 40);
-  employee.name = String(employee.name ?? '').trim().slice(0, 120);
+  employee.firstName = String(employee.firstName ?? '').trim().slice(0, 60);
+  employee.lastName = String(employee.lastName ?? '').trim().slice(0, 60);
+  employee.name = `${employee.firstName} ${employee.lastName}`.trim() || String(employee.name ?? '').trim().slice(0, 120);
   employee.role = ['regular', 'extra'].includes(employee.role) ? employee.role : 'regular';
   employee.status = ['active', 'on-leave', 'inactive'].includes(employee.status) ? employee.status : 'active';
   employee.biometricStatus = ['enrolled', 'pending', 'none'].includes(employee.biometricStatus) ? employee.biometricStatus : 'none';
@@ -93,6 +95,15 @@ function normalizedEmployee(input) {
   employee.casualLeave = leaveBalance(employee.casualLeave);
   employee.sickLeave = leaveBalance(employee.sickLeave);
   return employee;
+}
+
+async function nextEmployeeId(db) {
+  const records = await db.collection('employees').find({}, { projection: { id: 1 } }).toArray();
+  const highest = records.reduce((maximum, record) => {
+    const match = /^EMP-(\d+)$/i.exec(String(record.id ?? ''));
+    return match ? Math.max(maximum, Number(match[1])) : maximum;
+  }, 0);
+  return `EMP-${String(highest + 1).padStart(3, '0')}`;
 }
 
 const defaultSettings = {
@@ -195,6 +206,8 @@ router.get('/employees', async (req, res) => {
         const calculatedGross = Math.round(hoursWorked * hourlyRate * 100) / 100;
         return ({
         id: e.id,
+        firstName: e.firstName,
+        lastName: e.lastName,
         name: e.name,
         role: e.role,
         grossSalary: records.length ? calculatedGross : Number(e.grossSalary ?? 0),
@@ -208,6 +221,7 @@ router.get('/employees', async (req, res) => {
         email: e.email,
         phone: e.phone,
         address: e.address,
+        createdAt: e.createdAt,
         identifiers: e.identifiers ?? [],
       });})
     );
@@ -216,36 +230,50 @@ router.get('/employees', async (req, res) => {
   }
 });
 
+router.get('/employees-next-id', async (_req, res) => {
+  try { res.json({ id: await nextEmployeeId(mongoose.connection.db) }); }
+  catch { res.status(500).json({ error: 'Failed to generate the next employee ID' }); }
+});
+
 router.post('/employees', async (req, res) => {
   try {
     const employee = normalizedEmployee(req.body);
-    if (!employee?.id || !employee?.name) return res.status(400).json({ error: 'Employee ID and name are required' });
-    const exists = await mongoose.connection.db.collection('employees').findOne({ id: employee.id });
-    if (exists) return res.status(409).json({ error: 'Employee ID already exists' });
-    await mongoose.connection.db.collection('employees').insertOne({ ...employee, createdAt: new Date(), updatedAt: new Date() });
-    res.status(201).json(employee);
+    if (!employee.firstName || !employee.lastName) return res.status(400).json({ error: 'First name and last name are required' });
+    if (!employee.email || !employee.phone || !employee.address) return res.status(400).json({ error: 'Email, phone number, and address are required' });
+    if (!/^\+639\d{9}$/.test(employee.phone)) return res.status(400).json({ error: 'Phone number must use +639XXXXXXXXX with no spaces' });
+    const db = mongoose.connection.db;
+    employee.id = await nextEmployeeId(db);
+    const createdAt = new Date();
+    await db.collection('employees').insertOne({ ...employee, createdAt, updatedAt: createdAt });
+    res.status(201).json({ ...employee, createdAt });
   } catch { res.status(500).json({ error: 'Failed to create employee' }); }
 });
 
 router.put('/employees/:id', async (req, res) => {
   try {
+    const admin = req.auth?.actor;
+    const verification = await verifyAdminPassword(req, req.body?.adminPassword);
+    if (!verification.valid) {
+      if (verification.retryAfterSeconds) res.setHeader('Retry-After', String(verification.retryAfterSeconds));
+      const status = verification.forbidden ? 403 : verification.retryAfterSeconds ? 429 : 401;
+      const error = verification.forbidden ? 'Administrator access required' : verification.retryAfterSeconds ? `Incorrect admin password. Try again in ${verification.retryAfterSeconds} seconds.` : 'Incorrect admin password';
+      return res.status(status).json({ error, ...(verification.retryAfterSeconds ? { retryAfterSeconds: verification.retryAfterSeconds } : {}) });
+    }
     const employee = normalizedEmployee(req.body);
     employee.id = req.params.id;
+    if (!employee.firstName || !employee.lastName) return res.status(400).json({ error: 'First name and last name are required' });
+    if (employee.phone && !/^\+639\d{9}$/.test(employee.phone)) return res.status(400).json({ error: 'Phone number must use +639XXXXXXXXX with no spaces' });
+    const existing = await mongoose.connection.db.collection('employees').findOne({ id: req.params.id });
+    if (!existing) return res.status(404).json({ error: 'Employee not found' });
     const result = await mongoose.connection.db.collection('employees').updateOne({ id: req.params.id }, { $set: { ...employee, updatedAt: new Date() } });
     if (!result.matchedCount) return res.status(404).json({ error: 'Employee not found' });
-    res.json(employee);
+    res.json({ ...employee, createdAt: existing.createdAt });
   } catch { res.status(500).json({ error: 'Failed to update employee' }); }
 });
 
 async function authenticatedAdmin(req, passwordRequired = false) {
-  const token = req.headers.authorization?.replace(/^Bearer\s+/i, '');
-  if (!token) return null;
-  const db = mongoose.connection.db;
-  const tokenDigest = crypto.createHash('sha256').update(token).digest('hex');
-  const session = await db.collection('admin_sessions').findOne({ tokenDigest, expiresAt: { $gt: new Date() } });
-  if (!session) return null;
-  const admin = await db.collection('admin_accounts').findOne({ _id: session.adminId, active: true });
-  if (!admin) return null;
+  const admin = req.auth?.actor;
+  if (!admin || admin.role !== 'admin') return null;
   if (passwordRequired && !(await verifySecret(req.body?.password ?? '', admin.passwordHash))) return null;
   return admin;
 }
