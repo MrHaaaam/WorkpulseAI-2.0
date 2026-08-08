@@ -93,7 +93,7 @@ export function AIInsightsView() {
 
   return (
     <div className="min-w-0 space-y-6">
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+      <div data-guide="ai-heading" className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <div className="mb-2 flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.16em] text-[#8642ED]">
             <Sparkles className="h-4 w-4" /> Model intelligence center
@@ -106,13 +106,13 @@ export function AIInsightsView() {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+      <div data-guide="ai-models" className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
         {models.map((model) => {
           const Icon = model.icon;
           const modelTone = tones[model.tone];
           const active = model.key === activeModel;
           return (
-            <button key={model.key} onClick={() => setActiveModel(model.key)} className="h-full w-full min-w-0 text-left">
+            <button data-guide={`ai-${model.key}`} key={model.key} onClick={() => setActiveModel(model.key)} className="h-full w-full min-w-0 text-left">
               <Card className={cn("h-full min-w-0 overflow-hidden transition-all hover:-translate-y-0.5 hover:shadow-md", active && "border-[#8642ED] ring-2 ring-[#8642ED]/10")}>
                 <CardContent className="p-5 !pt-5">
                   <div className="flex items-start justify-between">
@@ -129,7 +129,7 @@ export function AIInsightsView() {
         })}
       </div>
 
-      <Card className="overflow-hidden animate-fade-in" key={activeModel}>
+      <Card data-guide="ai-explanation" className="overflow-hidden animate-fade-in" key={activeModel}>
         <div className={cn("h-1", tone.bar)} />
         <CardHeader className="border-b border-slate-100 bg-slate-50/50">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -206,7 +206,7 @@ export function AIInsightsView() {
         )}
       </Card>
 
-      <div className="flex items-start gap-3 rounded-xl border border-slate-200 bg-white p-4 text-xs leading-5 text-slate-500 shadow-sm">
+      <div data-guide="responsible-ai" className="flex items-start gap-3 rounded-xl border border-slate-200 bg-white p-4 text-xs leading-5 text-slate-500 shadow-sm">
         <Activity className="mt-0.5 h-4 w-4 shrink-0 text-[#8642ED]" />
         <p><span className="font-semibold text-slate-700">Responsible use:</span> AI scores are decision-support signals, not automatic disciplinary decisions. HR should review context, approved leave, accessibility needs, and company policy before acting.</p>
       </div>

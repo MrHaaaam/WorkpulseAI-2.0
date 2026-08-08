@@ -103,7 +103,7 @@ export function AttendanceView(props: {
         </div>
       ) : null}
 
-      <Card>
+      <Card data-guide="attendance-table">
         <CardContent className="p-0">
           <Table>
             <TableHeader>

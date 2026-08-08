@@ -75,6 +75,29 @@ router.use(requireRole('admin'));
 
 const employeeFields = ['id', 'firstName', 'lastName', 'name', 'role', 'casualLeave', 'sickLeave', 'biometricStatus', 'status', 'grossSalary', 'hoursWorked', 'hourlyRate', 'email', 'phone', 'address', 'identifiers'];
 
+router.get('/audit-events', async (req, res) => {
+  try {
+    const db = mongoose.connection.db;
+    if (!db) return res.status(503).json({ error: 'Database is unavailable' });
+    const requestedLimit = Number.parseInt(String(req.query.limit ?? '20'), 10);
+    const limit = Number.isFinite(requestedLimit) ? Math.max(1, Math.min(100, requestedLimit)) : 20;
+    const events = await db.collection('audit_events').find({}).sort({ occurredAt: -1, _id: -1 }).limit(limit).toArray();
+    res.json(events.map((event) => ({
+      id: String(event._id),
+      occurredAt: event.occurredAt,
+      actorEmail: event.actorEmail ?? null,
+      actorRole: event.actorRole ?? 'anonymous',
+      action: event.action ?? 'unknown',
+      targetType: event.targetType ?? 'system',
+      targetId: event.targetId ?? null,
+      outcome: event.outcome ?? 'unknown',
+    })));
+  } catch (error) {
+    console.error('Audit event fetch failed:', error instanceof Error ? error.message : error);
+    res.status(500).json({ error: 'Failed to fetch audit events' });
+  }
+});
+
 function normalizedEmployee(input) {
   const employee = pick(input ?? {}, employeeFields);
   employee.id = String(employee.id ?? '').trim().slice(0, 40);

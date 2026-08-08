@@ -17,6 +17,7 @@ import {
   ShieldCheck,
   ChevronLeft,
   ChevronRight,
+  BookOpen,
 } from "lucide-react";
 import {
   ResponsiveContainer,
@@ -95,6 +96,9 @@ interface AdminOverviewProps {
   latestAttendanceDate?: string;
   leaveRequests: { id: string; employeeId?: string; startDate: string; endDate: string; totalDays: number; status: string }[];
   attendanceRecords: { date?: string; status: string }[];
+  onStartGuide?: () => void;
+  auditLoading?: boolean;
+  auditError?: string;
 }
 
 export function AdminOverviewView({ 
@@ -106,6 +110,9 @@ export function AdminOverviewView({
   latestAttendanceDate,
   leaveRequests = [],
   attendanceRecords = [],
+  onStartGuide,
+  auditLoading = false,
+  auditError = '',
 }: AdminOverviewProps) {
   const [viewMode, setViewMode] = useState<ViewMode>("weekly");
   const [workforceDate, setWorkforceDate] = useState(latestAttendanceDate || new Date().toISOString().slice(0, 10));
@@ -145,6 +152,7 @@ export function AdminOverviewView({
           <p className="text-sm text-slate-500">Global system monitoring, attendance analytics, and operational tracking</p>
         </div>
         <div className="flex items-center gap-3">
+          <Button data-guide="overview-guide-button" variant="outline" onClick={onStartGuide} className="gap-2 whitespace-nowrap"><BookOpen className="h-4 w-4" /> Start guide again</Button>
           <div className="flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2">
             <Calendar className="h-4 w-4 text-slate-400" />
             <input
@@ -167,7 +175,7 @@ export function AdminOverviewView({
       </div>
 
       {/* Workforce inventory cards */}
-      <Card>
+      <Card data-guide="workforce-operations">
         <CardHeader className="pb-3">
           <div className="flex items-center justify-between">
             <div>
@@ -203,7 +211,7 @@ export function AdminOverviewView({
         </CardContent>
       </Card>
 
-      <Card>
+      <Card data-guide="performance-snapshot">
         <CardHeader className="pb-3">
           <div className="flex items-center justify-between">
             <div>
@@ -238,7 +246,7 @@ export function AdminOverviewView({
 
       {/* Primary Analytics Visualization Charts */}
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
-        <Card className="lg:col-span-2">
+        <Card data-guide="attendance-trends" className="lg:col-span-2">
           <CardHeader>
             <CardTitle>Workforce Attendance Trends</CardTitle>
             <CardDescription>Present vs Late vs Absent — {viewMode} view</CardDescription>
@@ -280,7 +288,7 @@ export function AdminOverviewView({
           </CardContent>
         </Card>
 
-        <Card>
+        <Card data-guide="today-breakdown">
           <CardHeader>
             <CardTitle>Today's Breakdown</CardTitle>
             <CardDescription>Live real-time distribution status</CardDescription>
@@ -414,7 +422,7 @@ export function AdminOverviewView({
       </div>
 
       {/* Global Audit Log */}
-      <Card>
+      <Card data-guide="audit-trail">
         <CardHeader>
           <div className="flex items-center justify-between">
             <div>
@@ -427,9 +435,9 @@ export function AdminOverviewView({
           </div>
         </CardHeader>
         <CardContent>
-          <div className="overflow-x-auto">
+          <div className={`overflow-x-auto ${auditTrail.length >= 15 ? 'max-h-[42rem] overflow-y-auto' : ''}`}>
             <table className="w-full text-left text-sm text-slate-600">
-              <thead className="border-b border-slate-200 bg-slate-50/50 text-xs uppercase text-slate-500">
+              <thead className={`border-b border-slate-200 bg-slate-50 text-xs uppercase text-slate-500 ${auditTrail.length >= 15 ? 'sticky top-0 z-10 shadow-sm' : ''}`}>
                 <tr>
                   <th className="px-4 py-3 font-medium">Operator Name</th>
                   <th className="px-4 py-3 font-medium">Access Node</th>
@@ -464,6 +472,7 @@ export function AdminOverviewView({
                     </td>
                   </tr>
                 ))}
+                {auditTrail.length === 0 && <tr><td colSpan={5} className={`px-4 py-10 text-center text-sm ${auditError ? 'text-rose-600' : 'text-slate-400'}`}>{auditLoading ? 'Loading audit events…' : auditError || 'No audit events found in audit_events.'}</td></tr>}
               </tbody>
             </table>
           </div>

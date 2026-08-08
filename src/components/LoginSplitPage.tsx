@@ -5,6 +5,19 @@ import { apiFetch, storeSession } from '../lib/api.ts'
 
 const API_URL = '/api/auth'
 
+function solveCaptcha(challenge: string) {
+  const [leftText, operation, rightText] = challenge.trim().split(/\s+/)
+  const left = Number(leftText)
+  const right = Number(rightText)
+
+  if (!Number.isFinite(left) || !Number.isFinite(right)) return null
+  if (operation === '+') return left + right
+  if (operation === '-') return left - right
+  if (operation === '×' || operation === 'Ã—') return left * right
+  if (operation === '÷' || operation === 'Ã·') return left / right
+  return null
+}
+
 export default function LoginSplitPage() {
   const { toast } = useToast()
   const [loading, setLoading] = useState(false)
@@ -17,6 +30,15 @@ export default function LoginSplitPage() {
   const [verificationId, setVerificationId] = useState('')
   const [otp, setOtp] = useState('')
   const otpRef = useRef<HTMLInputElement>(null)
+  const expectedCaptchaAnswer = solveCaptcha(captchaChallenge)
+  const captchaStatus = captchaAnswer.trim() === '' || expectedCaptchaAnswer === null
+    ? 'idle'
+    : Number(captchaAnswer) === expectedCaptchaAnswer ? 'correct' : 'incorrect'
+  const captchaInputClass = captchaStatus === 'correct'
+    ? 'border-emerald-500 bg-emerald-50 text-emerald-700 focus:border-emerald-500 focus:bg-emerald-50 focus:ring-emerald-500/15'
+    : captchaStatus === 'incorrect'
+      ? 'border-red-500 bg-red-50 text-red-700 focus:border-red-500 focus:bg-red-50 focus:ring-red-500/15'
+      : 'border-slate-300 bg-slate-100 text-slate-900 hover:border-slate-400 focus:border-indigo-500 focus:bg-white focus:ring-indigo-500/10'
 
   async function loadCaptcha(showError = true) {
     try {
@@ -111,7 +133,17 @@ export default function LoginSplitPage() {
                 <>
                   <div><label htmlFor="email" className="mb-2 block text-sm font-semibold text-slate-700">Corporate email</label><input id="email" autoComplete="username" type="email" required autoFocus className="h-12 w-full rounded-xl border border-slate-300 bg-slate-100 px-4 text-sm outline-none transition placeholder:text-slate-400 hover:border-slate-400 focus:border-indigo-500 focus:bg-white focus:ring-4 focus:ring-indigo-500/10" placeholder="you@company.com" value={email} onChange={(event) => setEmail(event.target.value)} /></div>
                   <div><div className="mb-2 flex items-center justify-between"><label htmlFor="password" className="text-sm font-semibold text-slate-700">Password</label><a href="#" className="text-xs font-semibold text-indigo-600 hover:text-indigo-700">Forgot password?</a></div><div className="relative"><input id="password" autoComplete="current-password" required type={showPassword ? 'text' : 'password'} className="h-12 w-full rounded-xl border border-slate-300 bg-slate-100 px-4 pr-12 text-sm outline-none transition placeholder:text-slate-400 hover:border-slate-400 focus:border-indigo-500 focus:bg-white focus:ring-4 focus:ring-indigo-500/10" placeholder="Enter your password" value={password} onChange={(event) => setPassword(event.target.value)} /><button type="button" onClick={() => setShowPassword((current) => !current)} className="absolute right-3 top-1/2 -translate-y-1/2 rounded-lg p-2 text-slate-400 hover:bg-white hover:text-slate-700" aria-label={showPassword ? 'Hide password' : 'Show password'}>{showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}</button></div></div>
-                  <div><label htmlFor="captcha" className="mb-2 block text-sm font-semibold text-slate-700">Security check</label><div className="grid grid-cols-[7rem_1fr_2.75rem] gap-2"><div className="grid h-12 place-items-center rounded-xl bg-slate-950 font-mono text-base font-bold tracking-wider text-white" aria-label={`Solve ${captchaChallenge}`}>{captchaChallenge || '•••'}</div><input id="captcha" required inputMode="numeric" className="h-12 min-w-0 rounded-xl border border-slate-300 bg-slate-100 px-4 text-sm outline-none transition hover:border-slate-400 focus:border-indigo-500 focus:bg-white focus:ring-4 focus:ring-indigo-500/10" placeholder="Answer" value={captchaAnswer} onChange={(event) => setCaptchaAnswer(event.target.value)} /><button type="button" onClick={() => void loadCaptcha()} className="grid h-12 place-items-center rounded-xl border border-slate-300 bg-slate-100 text-slate-500 transition hover:border-indigo-200 hover:bg-indigo-50 hover:text-indigo-600" aria-label="Get a new CAPTCHA"><RefreshCw className="h-4 w-4" /></button></div></div>
+                  <div>
+                    <label htmlFor="captcha" className="mb-2 block text-sm font-semibold text-slate-700">Security check</label>
+                    <div className="grid grid-cols-[7rem_1fr_2.75rem] gap-2">
+                      <div className="grid h-12 place-items-center rounded-xl bg-slate-950 font-mono text-base font-bold tracking-wider text-white" aria-label={`Solve ${captchaChallenge}`}>{captchaChallenge || '•••'}</div>
+                      <input id="captcha" required inputMode="numeric" aria-invalid={captchaStatus === 'incorrect'} aria-describedby="captcha-feedback" className={`h-12 min-w-0 rounded-xl border px-4 text-sm font-semibold outline-none transition focus:ring-4 ${captchaInputClass}`} placeholder="Answer" value={captchaAnswer} onChange={(event) => setCaptchaAnswer(event.target.value.replace(/\D/g, ''))} />
+                      <button type="button" onClick={() => void loadCaptcha()} className="grid h-12 place-items-center rounded-xl border border-slate-300 bg-slate-100 text-slate-500 transition hover:border-indigo-200 hover:bg-indigo-50 hover:text-indigo-600" aria-label="Get a new CAPTCHA"><RefreshCw className="h-4 w-4" /></button>
+                    </div>
+                    <p id="captcha-feedback" aria-live="polite" className={`mt-1.5 min-h-5 text-xs font-semibold ${captchaStatus === 'correct' ? 'text-emerald-600' : captchaStatus === 'incorrect' ? 'text-red-600' : 'text-transparent'}`}>
+                      {captchaStatus === 'correct' ? '✓ Correct answer' : captchaStatus === 'incorrect' ? '✕ Incorrect answer' : 'Enter your answer'}
+                    </p>
+                  </div>
                   <label className="flex cursor-pointer items-center gap-2.5 text-sm text-slate-600"><input type="checkbox" className="h-4 w-4 rounded border-slate-300 accent-indigo-600" /> Keep me signed in on this device</label>
                 </>
               )}

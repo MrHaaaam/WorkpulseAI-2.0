@@ -82,7 +82,7 @@ export function LeaveRequestsView({
       </div>
 
       {/* Modern Stats Bar */}
-      <div className="grid gap-4 sm:grid-cols-3">
+      <div data-guide="leave-summary" className="grid gap-4 sm:grid-cols-3">
         <div className="flex items-center gap-4 rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
           <div className="flex h-12 w-12 items-center justify-center rounded-lg bg-amber-50 text-amber-600">
             <Clock className="h-6 w-6" />
@@ -115,7 +115,7 @@ export function LeaveRequestsView({
       </div>
 
       {/* Filter & Search Bar */}
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+      <div data-guide="leave-filters" className="flex flex-col gap-3 sm:flex-row sm:items-center">
         {/* Search Input */}
         <div className="relative max-w-md flex-1 w-full">
           <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
@@ -152,7 +152,7 @@ onClick={() => setFilterStatus(val as "all" | "pending" | "approved" | "rejected
       </div>
 
       {/* Leave Requests Feed */}
-      <div className="space-y-4">
+      <div data-guide="leave-list" className="space-y-4">
         {filteredRequests.length > 0 ? (
           filteredRequests.map((request) => (
             <div

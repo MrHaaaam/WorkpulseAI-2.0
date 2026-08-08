@@ -230,10 +230,10 @@ export function EmployeeDirectoryView({ employees: initialEmployees }: Partial<E
           <h2 className="text-2xl font-bold text-slate-900">Employee Directory</h2>
           <p className="text-sm text-slate-500">Manage employee, payroll, contact, and biometric information</p>
         </div>
-        <Button onClick={openAdd}><Plus className="h-4 w-4" /> Add Employee</Button>
+        <Button data-guide="employee-add" onClick={openAdd}><Plus className="h-4 w-4" /> Add Employee</Button>
       </div>
 
-      <div className="grid grid-cols-1 gap-2 sm:grid-cols-[minmax(0,1fr)_auto_auto] sm:items-center lg:grid-cols-[minmax(18rem,28rem)_auto_auto_1fr]">
+      <div data-guide="employee-filters" className="grid grid-cols-1 gap-2 sm:grid-cols-[minmax(0,1fr)_auto_auto] sm:items-center lg:grid-cols-[minmax(18rem,28rem)_auto_auto_1fr]">
         <div className="relative min-w-0">
           <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
           <Input placeholder="Search name, ID, SSS, role, or address..." value={search} onChange={(e) => setSearch(e.target.value)} className="pl-10" />
@@ -248,7 +248,7 @@ export function EmployeeDirectoryView({ employees: initialEmployees }: Partial<E
       </div>
 
       {viewMode === "table" ? (
-        <Card className="min-w-0 overflow-hidden"><CardContent className="p-0"><Table className="min-w-[760px]">
+        <Card data-guide="employee-list" className="min-w-0 overflow-hidden"><CardContent className="p-0"><Table className="min-w-[760px]">
           <TableHeader><TableRow className="bg-slate-50/50"><TableHead>Employee</TableHead><TableHead>Role</TableHead><TableHead>SSS Number</TableHead><TableHead>Biometric</TableHead><TableHead>Status</TableHead><TableHead className="text-right">Actions</TableHead></TableRow></TableHeader>
           <TableBody>{filtered.map((employee) => <TableRow key={employee.id}>
             <TableCell><div className="flex items-center gap-3"><div className="flex h-9 w-9 items-center justify-center rounded-full bg-violet-100 text-xs font-bold text-[#8642ED]">{initials(employee.name)}</div><div><p className="font-medium text-slate-900">{employee.name}</p><p className="text-xs text-slate-400">{employee.id}</p></div></div></TableCell>
