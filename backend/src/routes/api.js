@@ -4,8 +4,17 @@ import nodemailer from 'nodemailer';
 import crypto from 'node:crypto';
 import { verifyAdminPassword, verifySecret } from './auth.js';
 import { auditEvent, authenticate, csrfProtection, pick, requireRole } from '../security.js';
+import {
+  BiometricError,
+  encryptFingerprintSamples,
+  findFingerprintMatch,
+  normalizeFingerprintSamples,
+  rejectDuplicateEnrollment,
+  validateEnrollmentSamples,
+} from '../biometrics.js';
 
 const router = Router();
+const MAX_DAILY_ATTENDANCE_SESSIONS = 3;
 
 router.use(authenticate, csrfProtection);
 router.use((req, res, next) => {
@@ -30,13 +39,14 @@ router.get('/employee/me', requireRole('regular', 'extra'), async (req, res) => 
     const employeeId = req.auth.actor.employeeId;
     const employee = await db.collection('employees').findOne({ id: employeeId, archived: { $ne: true } });
     if (!employee) return res.status(404).json({ error: 'Employee profile not found' });
-    const [attendance, leaveRequests, payroll] = await Promise.all([
+    const [attendance, leaveRequests, payroll, biometricTemplate] = await Promise.all([
       db.collection('attendance').find({ employeeId }).sort({ date: -1 }).limit(60).toArray(),
       db.collection('leave_requests').find({ employeeId }).sort({ createdAt: -1, _id: -1 }).toArray(),
       db.collection('payroll_requests').find({ employeeId }).sort({ createdAt: -1, _id: -1 }).limit(12).toArray(),
+      db.collection('biometric_templates').findOne({ employeeId }, { projection: { _id: 1 } }),
     ]);
     res.json({
-      profile: { id: employee.id, name: employee.name, email: employee.email, phone: employee.phone, address: employee.address, role: employee.role, status: employee.status, biometricStatus: employee.biometricStatus, casualLeave: employee.casualLeave, sickLeave: employee.sickLeave, hourlyRate: employee.hourlyRate, grossSalary: employee.grossSalary, createdAt: employee.createdAt },
+      profile: { id: employee.id, name: employee.name, email: employee.email, phone: employee.phone, address: employee.address, role: employee.role, status: employee.status, biometricStatus: biometricTemplate ? 'enrolled' : 'none', casualLeave: employee.casualLeave, sickLeave: employee.sickLeave, hourlyRate: employee.hourlyRate, grossSalary: employee.grossSalary, createdAt: employee.createdAt },
       attendance: attendance.map(({ _id, ...record }) => record),
       leaveRequests: leaveRequests.map(({ _id, ...record }) => record),
       payroll: payroll.map(({ _id, ...record }) => ({ id: record.id, amount: record.amount, currentAmount: record.currentAmount, carryOverAmount: record.carryOverAmount, status: record.status, periodStart: record.periodStart, createdAt: record.createdAt })),
@@ -73,7 +83,7 @@ router.post('/employee/me/leave-requests', requireRole('regular', 'extra'), asyn
 
 router.use(requireRole('admin'));
 
-const employeeFields = ['id', 'firstName', 'lastName', 'name', 'role', 'casualLeave', 'sickLeave', 'biometricStatus', 'status', 'grossSalary', 'hoursWorked', 'hourlyRate', 'email', 'phone', 'address', 'identifiers'];
+const employeeFields = ['id', 'firstName', 'lastName', 'name', 'role', 'casualLeave', 'sickLeave', 'status', 'grossSalary', 'hoursWorked', 'hourlyRate', 'email', 'phone', 'address', 'identifiers'];
 
 router.get('/audit-events', async (req, res) => {
   try {
@@ -106,7 +116,6 @@ function normalizedEmployee(input) {
   employee.name = `${employee.firstName} ${employee.lastName}`.trim() || String(employee.name ?? '').trim().slice(0, 120);
   employee.role = ['regular', 'extra'].includes(employee.role) ? employee.role : 'regular';
   employee.status = ['active', 'on-leave', 'inactive'].includes(employee.status) ? employee.status : 'active';
-  employee.biometricStatus = ['enrolled', 'pending', 'none'].includes(employee.biometricStatus) ? employee.biometricStatus : 'none';
   if (employee.email != null) employee.email = String(employee.email).trim().toLowerCase().slice(0, 254);
   if (employee.phone != null) employee.phone = String(employee.phone).trim().slice(0, 30);
   if (employee.address != null) employee.address = String(employee.address).trim().slice(0, 300);
@@ -152,6 +161,29 @@ function formatAttendanceTime(date) {
   return date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
 }
 
+function attendanceSessions(record) {
+  if (Array.isArray(record?.sessions) && record.sessions.length) {
+    return record.sessions.slice(0, MAX_DAILY_ATTENDANCE_SESSIONS).map((session) => ({
+      ...session,
+      checkIn: String(session?.checkIn ?? ''),
+      checkOut: session?.checkOut ? String(session.checkOut) : null,
+    })).filter((session) => session.checkIn);
+  }
+  return record?.checkIn ? [{ checkIn: String(record.checkIn), checkOut: record.checkOut ? String(record.checkOut) : null }] : [];
+}
+
+function attendanceHoursForRecord(record, settings) {
+  const rawHours = attendanceSessions(record).reduce((total, session) => {
+    const checkIn = parseAttendanceTime(record.date, session.checkIn);
+    const checkOut = parseAttendanceTime(record.date, session.checkOut);
+    if (!checkIn || !checkOut) return total;
+    return total + Math.max(0, (checkOut.getTime() - checkIn.getTime()) / 3600000);
+  }, 0);
+  const maxHours = settings.shift.enabled ? Number(settings.shift.maxHours) : Infinity;
+  const breakHours = settings.shift.enabled ? Number(settings.shift.breakMinutes || 0) / 60 : 0;
+  return Math.max(0, Math.min(rawHours, maxHours) - breakHours);
+}
+
 export async function getSettings(db) {
   const stored = await db.collection('settings').findOne({ key: 'company' });
   return {
@@ -163,14 +195,24 @@ export async function getSettings(db) {
 
 export async function enforceAutomaticClockOut(db, settings) {
   if (!settings.shift.enabled || !(Number(settings.shift.maxHours) > 0)) return;
-  const openRecords = await db.collection('attendance').find({ $or: [{ checkOut: null }, { checkOut: '' }, { checkOut: { $exists: false } }] }).toArray();
+  const openRecords = await db.collection('attendance').find({ $or: [
+    { sessions: { $elemMatch: { $or: [{ checkOut: null }, { checkOut: '' }, { checkOut: { $exists: false } }] } } },
+    { sessions: { $exists: false }, checkOut: null },
+    { sessions: { $exists: false }, checkOut: '' },
+    { sessions: { $exists: false }, checkOut: { $exists: false } },
+  ] }).toArray();
   const now = new Date();
   await Promise.all(openRecords.map(async (record) => {
-    const checkIn = parseAttendanceTime(record.date, record.checkIn);
+    const sessions = attendanceSessions(record);
+    const openSessionIndex = sessions.findLastIndex((session) => !session.checkOut);
+    if (openSessionIndex < 0) return;
+    const checkIn = parseAttendanceTime(record.date, sessions[openSessionIndex].checkIn);
     if (!checkIn) return;
     const automaticOut = new Date(checkIn.getTime() + Number(settings.shift.maxHours) * 60 * 60 * 1000);
     if (automaticOut > now) return;
-    await db.collection('attendance').updateOne({ _id: record._id }, { $set: { checkOut: formatAttendanceTime(automaticOut), autoClockedOut: true, updatedAt: now } });
+    const automaticOutTime = formatAttendanceTime(automaticOut);
+    sessions[openSessionIndex] = { ...sessions[openSessionIndex], checkOut: automaticOutTime, autoClockedOut: true };
+    await db.collection('attendance').updateOne({ _id: record._id }, { $set: { sessions, checkOut: automaticOutTime, autoClockedOut: true, sessionCount: sessions.length, updatedAt: now } });
   }));
 }
 
@@ -211,20 +253,16 @@ router.get('/employees', async (req, res) => {
     const periodStart = new Date();
     periodStart.setDate(periodStart.getDate() - 14);
     periodStart.setHours(0, 0, 0, 0);
-    const attendance = await db.collection('attendance').find({}).toArray();
+    const [attendance, biometricTemplates] = await Promise.all([
+      db.collection('attendance').find({}).toArray(),
+      db.collection('biometric_templates').find({}, { projection: { employeeId: 1 } }).toArray(),
+    ]);
+    const enrolledEmployeeIds = new Set(biometricTemplates.map((template) => template.employeeId));
 
     res.json(
       employees.map((e) => {
         const records = attendance.filter((record) => record.employeeId === e.id && new Date(record.date) >= periodStart);
-        const maxHours = settings.shift.enabled ? Number(settings.shift.maxHours) : Infinity;
-        const hoursWorked = records.reduce((total, record) => {
-          const checkIn = parseAttendanceTime(record.date, record.checkIn);
-          const checkOut = parseAttendanceTime(record.date, record.checkOut);
-          if (!checkIn || !checkOut) return total;
-          const rawHours = Math.max(0, (checkOut.getTime() - checkIn.getTime()) / 3600000);
-          const breakHours = settings.shift.enabled ? Number(settings.shift.breakMinutes || 0) / 60 : 0;
-          return total + Math.max(0, Math.min(rawHours, maxHours) - breakHours);
-        }, 0);
+        const hoursWorked = records.reduce((total, record) => total + attendanceHoursForRecord(record, settings), 0);
         const hourlyRate = e.role === 'extra' ? 40 : 50;
         const calculatedGross = Math.round(hoursWorked * hourlyRate * 100) / 100;
         return ({
@@ -240,7 +278,7 @@ router.get('/employees', async (req, res) => {
         status: e.status,
         casualLeave: e.casualLeave ?? { total: 10, used: 0 },
         sickLeave: e.sickLeave ?? { total: 10, used: 0 },
-        biometricStatus: e.biometricStatus ?? 'none',
+        biometricStatus: enrolledEmployeeIds.has(e.id) ? 'enrolled' : 'none',
         email: e.email,
         phone: e.phone,
         address: e.address,
@@ -260,21 +298,41 @@ router.get('/employees-next-id', async (_req, res) => {
 
 router.post('/employees', async (req, res) => {
   try {
+    const fingerprintSamples = normalizeFingerprintSamples(req.body?.fingerprintSamples, 3);
+    const deviceUid = String(req.body?.fingerprintDeviceUid ?? '').trim().slice(0, 200);
+    const enrollment = await validateEnrollmentSamples(fingerprintSamples);
     const employee = normalizedEmployee(req.body);
     if (!employee.firstName || !employee.lastName) return res.status(400).json({ error: 'First name and last name are required' });
     if (!employee.email || !employee.phone || !employee.address) return res.status(400).json({ error: 'Email, phone number, and address are required' });
     if (!/^\+639\d{9}$/.test(employee.phone)) return res.status(400).json({ error: 'Phone number must use +639XXXXXXXXX with no spaces' });
     const db = mongoose.connection.db;
     employee.id = await nextEmployeeId(db);
+    await rejectDuplicateEnrollment(db, employee.id, enrollment.templates);
     const createdAt = new Date();
-    await db.collection('employees').insertOne({ ...employee, createdAt, updatedAt: createdAt });
-    res.status(201).json({ ...employee, createdAt });
-  } catch { res.status(500).json({ error: 'Failed to create employee' }); }
+    const session = await mongoose.startSession();
+    try {
+      await session.withTransaction(async () => {
+        await db.collection('employees').insertOne({ ...employee, biometricStatus: 'enrolled', createdAt, updatedAt: createdAt }, { session });
+        await db.collection('biometric_templates').insertOne({
+          employeeId: employee.id,
+          protectedSamples: encryptFingerprintSamples(enrollment.templates),
+          sampleFormat: 'ansi-378-fmd', sampleCount: enrollment.templates.length,
+          matcher: 'HID FingerJet', matcherFormat: enrollment.format, deviceUid: deviceUid || null,
+          enrolledAt: createdAt, enrolledBy: req.auth.actor.email, version: 2,
+        }, { session });
+      });
+    } finally { await session.endSession(); }
+    res.status(201).json({ ...employee, biometricStatus: 'enrolled', createdAt });
+  } catch (error) {
+    if (error instanceof BiometricError) return res.status(error.status).json({ error: error.message });
+    if (error?.code === 11000) return res.status(409).json({ error: 'Employee ID or fingerprint enrollment already exists' });
+    console.error('Employee creation failed:', error instanceof Error ? error.message : error);
+    res.status(500).json({ error: 'Failed to create employee' });
+  }
 });
 
 router.put('/employees/:id', async (req, res) => {
   try {
-    const admin = req.auth?.actor;
     const verification = await verifyAdminPassword(req, req.body?.adminPassword);
     if (!verification.valid) {
       if (verification.retryAfterSeconds) res.setHeader('Retry-After', String(verification.retryAfterSeconds));
@@ -288,10 +346,47 @@ router.put('/employees/:id', async (req, res) => {
     if (employee.phone && !/^\+639\d{9}$/.test(employee.phone)) return res.status(400).json({ error: 'Phone number must use +639XXXXXXXXX with no spaces' });
     const existing = await mongoose.connection.db.collection('employees').findOne({ id: req.params.id });
     if (!existing) return res.status(404).json({ error: 'Employee not found' });
+    employee.biometricStatus = existing.biometricStatus ?? 'none';
     const result = await mongoose.connection.db.collection('employees').updateOne({ id: req.params.id }, { $set: { ...employee, updatedAt: new Date() } });
     if (!result.matchedCount) return res.status(404).json({ error: 'Employee not found' });
     res.json({ ...employee, createdAt: existing.createdAt });
   } catch { res.status(500).json({ error: 'Failed to update employee' }); }
+});
+
+router.put('/employees/:id/fingerprint', async (req, res) => {
+  try {
+    const verification = await verifyAdminPassword(req, req.body?.adminPassword);
+    if (!verification.valid) {
+      if (verification.retryAfterSeconds) res.setHeader('Retry-After', String(verification.retryAfterSeconds));
+      const status = verification.forbidden ? 403 : verification.retryAfterSeconds ? 429 : 401;
+      return res.status(status).json({ error: verification.forbidden ? 'Administrator access required' : 'Incorrect admin password', ...(verification.retryAfterSeconds ? { retryAfterSeconds: verification.retryAfterSeconds } : {}) });
+    }
+    const db = mongoose.connection.db;
+    const employee = await db.collection('employees').findOne({ id: req.params.id, archived: { $ne: true } });
+    if (!employee) return res.status(404).json({ error: 'Employee not found' });
+    const fingerprintSamples = normalizeFingerprintSamples(req.body?.fingerprintSamples, 3);
+    const deviceUid = String(req.body?.fingerprintDeviceUid ?? '').trim().slice(0, 200);
+    const enrollment = await validateEnrollmentSamples(fingerprintSamples);
+    await rejectDuplicateEnrollment(db, employee.id, enrollment.templates);
+    const now = new Date();
+    const session = await mongoose.startSession();
+    try {
+      await session.withTransaction(async () => {
+        await db.collection('biometric_templates').updateOne({ employeeId: employee.id }, { $set: {
+          protectedSamples: encryptFingerprintSamples(enrollment.templates),
+          sampleFormat: 'ansi-378-fmd', sampleCount: enrollment.templates.length,
+          matcher: 'HID FingerJet', matcherFormat: enrollment.format, deviceUid: deviceUid || null,
+          enrolledAt: now, enrolledBy: req.auth.actor.email, version: 2,
+        } }, { upsert: true, session });
+        await db.collection('employees').updateOne({ id: employee.id }, { $set: { biometricStatus: 'enrolled', updatedAt: now } }, { session });
+      });
+    } finally { await session.endSession(); }
+    res.json({ employeeId: employee.id, biometricStatus: 'enrolled', enrolledAt: now });
+  } catch (error) {
+    if (error instanceof BiometricError) return res.status(error.status).json({ error: error.message });
+    console.error('Fingerprint registration failed:', error instanceof Error ? error.message : error);
+    res.status(500).json({ error: 'Failed to register fingerprint' });
+  }
 });
 
 async function authenticatedAdmin(req, passwordRequired = false) {
@@ -304,8 +399,10 @@ async function authenticatedAdmin(req, passwordRequired = false) {
 router.post('/employees/:id/archive', async (req, res) => {
   try {
     if (!(await authenticatedAdmin(req, true))) return res.status(401).json({ error: 'Incorrect password or expired session' });
-    const result = await mongoose.connection.db.collection('employees').findOneAndUpdate({ id: req.params.id, archived: { $ne: true } }, { $set: { archived: true, status: 'inactive', archivedAt: new Date(), updatedAt: new Date() } }, { returnDocument: 'after' });
+    const db = mongoose.connection.db;
+    const result = await db.collection('employees').findOneAndUpdate({ id: req.params.id, archived: { $ne: true } }, { $set: { archived: true, status: 'inactive', biometricStatus: 'none', archivedAt: new Date(), updatedAt: new Date() } }, { returnDocument: 'after' });
     if (!result) return res.status(404).json({ error: 'Employee not found or already archived' });
+    await db.collection('biometric_templates').deleteOne({ employeeId: req.params.id });
     res.json({ id: result.id, status: result.status, archived: true });
   } catch { res.status(500).json({ error: 'Failed to archive employee' }); }
 });
@@ -422,15 +519,7 @@ router.post('/payroll/:employeeId/email-summary', async (req, res) => {
     periodStart.setHours(0, 0, 0, 0);
     const records = await mongoose.connection.db.collection('attendance').find({ employeeId: employee.id }).toArray();
     const periodRecords = records.filter((record) => new Date(record.date) >= periodStart);
-    const maxHours = settings.shift.enabled ? Number(settings.shift.maxHours) : Infinity;
-    const hoursWorked = periodRecords.reduce((total, record) => {
-      const checkIn = parseAttendanceTime(record.date, record.checkIn);
-      const checkOut = parseAttendanceTime(record.date, record.checkOut);
-      if (!checkIn || !checkOut) return total;
-      const rawHours = Math.max(0, (checkOut.getTime() - checkIn.getTime()) / 3600000);
-      const breakHours = settings.shift.enabled ? Number(settings.shift.breakMinutes || 0) / 60 : 0;
-      return total + Math.max(0, Math.min(rawHours, maxHours) - breakHours);
-    }, 0);
+    const hoursWorked = periodRecords.reduce((total, record) => total + attendanceHoursForRecord(record, settings), 0);
     const hourlyRate = employee.role === 'extra' ? 40 : 50;
     const gross = periodRecords.length ? Math.round(hoursWorked * hourlyRate * 100) / 100 : Number(employee.grossSalary ?? 0);
     const identifiers = Array.isArray(employee.identifiers) ? employee.identifiers.filter((item) => item?.type && item?.value) : [];
@@ -508,12 +597,114 @@ router.get('/attendance', async (req, res) => {
         date: a.date,
         checkIn: a.checkIn,
         checkOut: a.checkOut,
+        sessions: attendanceSessions(a),
+        sessionCount: attendanceSessions(a).length,
         status: a.status,
         autoClockedOut: a.autoClockedOut ?? false,
       }))
     );
   } catch (err) {
     res.status(500).json({ error: 'Failed to fetch attendance' });
+  }
+});
+
+function kioskTimestamp() {
+  const now = new Date();
+  const parts = Object.fromEntries(new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Manila', year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', hour12: false,
+  }).formatToParts(now).filter((part) => part.type !== 'literal').map((part) => [part.type, part.value]));
+  return {
+    now,
+    date: `${parts.year}-${parts.month}-${parts.day}`,
+    time: new Intl.DateTimeFormat('en-US', { timeZone: 'Asia/Manila', hour: '2-digit', minute: '2-digit', hour12: true }).format(now),
+    minuteOfDay: (Number(parts.hour) % 24) * 60 + Number(parts.minute),
+  };
+}
+
+router.post('/attendance/kiosk', async (req, res) => {
+  try {
+    const db = mongoose.connection?.db;
+    if (!db) return res.status(503).json({ error: 'MongoDB connection not ready' });
+    const [probe] = normalizeFingerprintSamples(req.body?.fingerprintSamples, 1);
+    const deviceUid = String(req.body?.deviceUid ?? '').trim().slice(0, 200);
+    const templates = await db.collection('biometric_templates').find({}).toArray();
+    const matched = await findFingerprintMatch(probe, templates);
+    if (!matched) return res.status(404).json({ error: 'Fingerprint not recognized. Ask an administrator to register it again.' });
+    const employeeId = matched.employeeId;
+    const employee = await db.collection('employees').findOne({ id: employeeId, archived: { $ne: true }, status: { $ne: 'inactive' } });
+    if (!employee) return res.status(404).json({ error: 'Active employee not found' });
+
+    const stamp = kioskTimestamp();
+    const existing = await db.collection('attendance').findOne({ employeeId, date: stamp.date });
+    if (!existing) {
+      const settings = await getSettings(db);
+      const shiftMatch = /^([01]\d|2[0-3]):([0-5]\d)$/.exec(String(settings.shift.startTime ?? ''));
+      const lateAfterMinute = settings.shift.enabled && shiftMatch
+        ? Number(shiftMatch[1]) * 60 + Number(shiftMatch[2]) + Number(settings.lateness.graceMinutes || 0)
+        : null;
+      const record = {
+        employeeId, name: employee.name, role: employee.role === 'extra' ? 'Extra' : 'Regular',
+        date: stamp.date, checkIn: stamp.time, checkOut: null,
+        sessions: [{ checkIn: stamp.time, checkOut: null, checkInAt: stamp.now, deviceUid: deviceUid || null, matchScore: matched.score }],
+        sessionCount: 1, lastAction: 'time-in',
+        status: lateAfterMinute !== null && stamp.minuteOfDay > lateAfterMinute ? 'Late' : 'Present',
+        captureMethod: 'digitalpersona-fingerjet', deviceUid: deviceUid || null,
+        identityVerified: true, matchScore: matched.score, matcherFormat: matched.format,
+        createdAt: stamp.now, updatedAt: stamp.now,
+      };
+      try { await db.collection('attendance').insertOne(record); }
+      catch (error) {
+        if (error?.code === 11000) return res.status(409).json({ error: 'Attendance was already recorded for this employee today' });
+        throw error;
+      }
+      return res.status(201).json({ action: 'time-in', record: { ...record, eventTime: stamp.time, _id: undefined } });
+    }
+
+    const lastAttendanceUpdate = new Date(existing.updatedAt ?? existing.createdAt ?? 0).getTime();
+    const duplicateScanWindowMs = 30_000;
+    const elapsedSinceTimeIn = stamp.now.getTime() - lastAttendanceUpdate;
+    if (Number.isFinite(lastAttendanceUpdate) && elapsedSinceTimeIn >= 0 && elapsedSinceTimeIn < duplicateScanWindowMs) {
+      const retryAfterSeconds = Math.max(1, Math.ceil((duplicateScanWindowMs - elapsedSinceTimeIn) / 1000));
+      res.setHeader('Retry-After', String(retryAfterSeconds));
+      return res.status(429).json({ error: 'Attendance was just recorded. Remove your finger before the next scan.', retryAfterSeconds });
+    }
+
+    const sessions = attendanceSessions(existing);
+    const lastSession = sessions.at(-1);
+    const versionFilter = { _id: existing._id, ...(existing.updatedAt ? { updatedAt: existing.updatedAt } : {}) };
+    let action;
+    let update;
+    if (lastSession && !lastSession.checkOut) {
+      sessions[sessions.length - 1] = {
+        ...lastSession, checkOut: stamp.time, checkOutAt: stamp.now,
+        checkoutDeviceUid: deviceUid || null, checkoutMatchScore: matched.score,
+      };
+      action = 'time-out';
+      update = {
+        sessions, sessionCount: sessions.length, checkOut: stamp.time, lastAction: action, updatedAt: stamp.now,
+        checkoutCaptureMethod: 'digitalpersona-fingerjet', checkoutDeviceUid: deviceUid || null,
+        checkoutIdentityVerified: true, checkoutMatchScore: matched.score,
+      };
+    } else {
+      if (sessions.length >= MAX_DAILY_ATTENDANCE_SESSIONS) {
+        return res.status(409).json({ error: 'Daily attendance limit reached: three time-in/time-out sessions are already complete.' });
+      }
+      sessions.push({ checkIn: stamp.time, checkOut: null, checkInAt: stamp.now, deviceUid: deviceUid || null, matchScore: matched.score });
+      action = 'time-in';
+      update = {
+        sessions, sessionCount: sessions.length, checkOut: null, lastAction: action, updatedAt: stamp.now,
+        lastCheckIn: stamp.time, deviceUid: deviceUid || null, matchScore: matched.score,
+      };
+    }
+
+    const updated = await db.collection('attendance').findOneAndUpdate(versionFilter, { $set: update }, { returnDocument: 'after' });
+    if (!updated) return res.status(409).json({ error: 'Attendance was updated by another request' });
+    return res.json({ action, record: { ...updated, eventTime: stamp.time, _id: undefined } });
+  } catch (error) {
+    if (error instanceof BiometricError) return res.status(error.status).json({ error: error.message });
+    console.error('Kiosk attendance failed:', error instanceof Error ? error.message : error);
+    res.status(500).json({ error: 'Unable to record kiosk attendance' });
   }
 });
 

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Archive, BriefcaseBusiness, CalendarDays, Check, Clock, Contact, Fingerprint, Grid2X2, IdCard, KeyRound, List, Mail, MapPin, Pencil, Phone, Plus, Search, ShieldCheck, UserRound, X } from "lucide-react";
+import { Archive, BriefcaseBusiness, CalendarDays, Check, Clock, Contact, Fingerprint, Grid2X2, IdCard, KeyRound, List, Mail, MapPin, Pencil, Phone, Plus, ScanLine, Search, ShieldCheck, UserRound, X } from "lucide-react";
 
 import { Badge } from "../components/ui/Badge";
 import { Button } from "../components/ui/Button";
@@ -9,6 +9,7 @@ import { Input } from "../components/ui/Input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../components/ui/Table";
 import { useToast } from "../components/ui/Toast";
 import { apiFetch } from "../lib/api";
+import { FingerprintEnrollment } from "../components/biometric/FingerprintEnrollment";
 
 export interface Employee {
   id: string;
@@ -36,6 +37,7 @@ export interface Employee {
 
 interface EmployeeDirectoryViewProps { employees: Employee[] }
 type ViewMode = "table" | "cards";
+const REQUIRED_FINGERPRINT_SCANS = 3;
 
 const emptyEmployee: Employee = {
   id: "",
@@ -86,6 +88,8 @@ export function EmployeeDirectoryView({ employees: initialEmployees }: Partial<E
   const [identifierType, setIdentifierType] = useState("SSS");
   const [customIdentifierType, setCustomIdentifierType] = useState("");
   const [fingerprintRegistering, setFingerprintRegistering] = useState(false);
+  const [fingerprintSamples, setFingerprintSamples] = useState<string[]>([]);
+  const [fingerprintDeviceUid, setFingerprintDeviceUid] = useState("");
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState("");
   const [archiveTarget, setArchiveTarget] = useState<Employee | null>(null);
@@ -101,7 +105,7 @@ export function EmployeeDirectoryView({ employees: initialEmployees }: Partial<E
     if (passwordRetrySeconds <= 0) return;
     const timer = window.setInterval(() => setPasswordRetrySeconds((seconds) => Math.max(0, seconds - 1)), 1000);
     return () => window.clearInterval(timer);
-  }, [passwordRetrySeconds > 0]);
+  }, [passwordRetrySeconds]);
 
   const filtered = useMemo(() => employees.filter((employee) => {
     const query = search.toLowerCase();
@@ -119,6 +123,8 @@ export function EmployeeDirectoryView({ employees: initialEmployees }: Partial<E
     setSavedDraft(null);
     setAdminPassword("");
     setFingerprintRegistering(false);
+    setFingerprintSamples([]);
+    setFingerprintDeviceUid("");
     setDraft({ ...emptyEmployee, id: `EMP-${String(nextNumber).padStart(3, "0")}`, identifiers: [] });
     setEditorOpen(true);
     try {
@@ -131,6 +137,8 @@ export function EmployeeDirectoryView({ employees: initialEmployees }: Partial<E
   function openEdit(employee: Employee) {
     setEditingId(employee.id);
     setFingerprintRegistering(false);
+    setFingerprintSamples([]);
+    setFingerprintDeviceUid("");
     const legacyIdentifiers = [
       employee.sssNumber && { type: "SSS", value: employee.sssNumber },
       employee.philHealthNumber && { type: "PhilHealth", value: employee.philHealthNumber },
@@ -152,6 +160,8 @@ export function EmployeeDirectoryView({ employees: initialEmployees }: Partial<E
     setAdminPassword("");
     setFormError("");
     setFingerprintRegistering(false);
+    setFingerprintSamples([]);
+    setFingerprintDeviceUid("");
   }
 
   function revertChanges() {
@@ -160,6 +170,8 @@ export function EmployeeDirectoryView({ employees: initialEmployees }: Partial<E
     setAdminPassword("");
     setFormError("");
     setFingerprintRegistering(false);
+    setFingerprintSamples([]);
+    setFingerprintDeviceUid("");
   }
 
   function update<K extends keyof Employee>(field: K, value: Employee[K]) {
@@ -174,6 +186,7 @@ export function EmployeeDirectoryView({ employees: initialEmployees }: Partial<E
   async function saveEmployee(event: React.FormEvent) {
     event.preventDefault();
     if (!draft.firstName?.trim() || !draft.lastName?.trim()) return;
+    if (!editingId && fingerprintSamples.length !== REQUIRED_FINGERPRINT_SCANS) { setFormError('Capture three fingerprint scans before creating the employee.'); return; }
     setSaving(true); setFormError("");
     try {
       if (editingId) {
@@ -191,9 +204,19 @@ export function EmployeeDirectoryView({ employees: initialEmployees }: Partial<E
         }
         if (!verificationResponse.ok) throw new Error(verificationData?.error || 'Incorrect admin password');
       }
-      const response = await apiFetch(`/api/employees${editingId ? `/${editingId}` : ''}`, { method: editingId ? 'PUT' : 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(editingId ? { ...draft, adminPassword } : draft) });
+      if (editingId && fingerprintSamples.length === REQUIRED_FINGERPRINT_SCANS) {
+        const fingerprintResponse = await apiFetch(`/api/employees/${editingId}/fingerprint`, {
+          method: 'PUT', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ adminPassword, fingerprintSamples, fingerprintDeviceUid }),
+        });
+        const fingerprintData = await fingerprintResponse.json().catch(() => ({}));
+        if (!fingerprintResponse.ok) throw new Error(fingerprintData.error || 'Unable to replace the fingerprint registration');
+      }
+      const payload = editingId ? { ...draft, adminPassword } : { ...draft, fingerprintSamples, fingerprintDeviceUid };
+      const response = await apiFetch(`/api/employees${editingId ? `/${editingId}` : ''}`, { method: editingId ? 'PUT' : 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || 'Unable to save employee');
+      if (fingerprintSamples.length === REQUIRED_FINGERPRINT_SCANS) data.biometricStatus = 'enrolled';
       setEmployees((current) => editingId ? current.map((employee) => employee.id === editingId ? data : employee) : [...current, data]);
       closeEditor();
       toast({ title: editingId ? "Employee updated" : "Employee account created", description: `${data.name}'s record was saved successfully.`, variant: "success" });
@@ -230,7 +253,7 @@ export function EmployeeDirectoryView({ employees: initialEmployees }: Partial<E
           <h2 className="text-2xl font-bold text-slate-900">Employee Directory</h2>
           <p className="text-sm text-slate-500">Manage employee, payroll, contact, and biometric information</p>
         </div>
-        <Button data-guide="employee-add" onClick={openAdd}><Plus className="h-4 w-4" /> Add Employee</Button>
+        <div className="flex flex-wrap gap-2"><Button variant="outline" onClick={() => window.open('/kiosk', '_blank', 'noopener,noreferrer')}><ScanLine className="h-4 w-4" /> Open Kiosk</Button><Button data-guide="employee-add" onClick={openAdd}><Plus className="h-4 w-4" /> Add Employee</Button></div>
       </div>
 
       <div data-guide="employee-filters" className="grid grid-cols-1 gap-2 sm:grid-cols-[minmax(0,1fr)_auto_auto] sm:items-center lg:grid-cols-[minmax(18rem,28rem)_auto_auto_1fr]">
@@ -321,25 +344,22 @@ export function EmployeeDirectoryView({ employees: initialEmployees }: Partial<E
                 <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-[#8642ED]/10"><Fingerprint className="h-5 w-5 text-[#8642ED]" /></div>
                 <div><p className="text-sm font-semibold text-slate-800">Fingerprint Registration</p><p className="text-xs text-slate-500">Required before a new attendance account can be created.</p></div>
               </div>
-              {fingerprintRegistering ? (
-                <div className="flex flex-wrap items-center gap-2">
-                  <Badge variant="warning"><Clock className="h-3 w-3" /> Ready to scan</Badge>
-                  <Button type="button" size="sm" onClick={() => { update("biometricStatus", "enrolled"); setFingerprintRegistering(false); }}><Fingerprint className="h-4 w-4" /> Complete Registration</Button>
-                  <Button type="button" size="sm" variant="outline" onClick={() => setFingerprintRegistering(false)}>Cancel</Button>
-                </div>
-              ) : draft.biometricStatus === "enrolled" ? (
-                <div className="flex items-center gap-2"><Badge variant="success"><Check className="h-3 w-3" /> Registered</Badge><Button type="button" size="sm" variant="outline" onClick={() => setFingerprintRegistering(true)}><Fingerprint className="h-4 w-4" /> Re-register</Button></div>
+              {!fingerprintRegistering && (draft.biometricStatus === "enrolled" || fingerprintSamples.length === REQUIRED_FINGERPRINT_SCANS) ? (
+                <div className="flex items-center gap-2"><Badge variant="success"><Check className="h-3 w-3" /> {fingerprintSamples.length === REQUIRED_FINGERPRINT_SCANS ? (editingId ? 'Replacement ready' : 'Ready to enroll') : 'Registered'}</Badge><Button type="button" size="sm" variant="outline" onClick={() => { setFingerprintSamples([]); setFingerprintDeviceUid(""); setFingerprintRegistering(true); }}><Fingerprint className="h-4 w-4" /> Re-register</Button></div>
+              ) : !fingerprintRegistering ? (
+                <Button type="button" size="sm" onClick={() => { setFingerprintSamples([]); setFingerprintDeviceUid(""); setFingerprintRegistering(true); }}><Fingerprint className="h-4 w-4" /> Register Fingerprint</Button>
               ) : (
-                <Button type="button" size="sm" onClick={() => setFingerprintRegistering(true)}><Fingerprint className="h-4 w-4" /> Register Fingerprint</Button>
+                <Badge variant="warning"><Clock className="h-3 w-3" /> Enrollment in progress</Badge>
               )}
             </div>
+            {fingerprintRegistering && <div className="mt-4"><FingerprintEnrollment onComplete={(samples, uid) => { setFingerprintSamples(samples); setFingerprintDeviceUid(uid); update("biometricStatus", "enrolled"); setFingerprintRegistering(false); }} onCancel={() => setFingerprintRegistering(false)} /></div>}
           </div>
-          {!editingId && draft.biometricStatus !== "enrolled" && <p className="mt-2 text-xs font-medium text-amber-600">A fingerprint is required before the employee account can be created.</p>}
+          {!editingId && fingerprintSamples.length !== REQUIRED_FINGERPRINT_SCANS && <p className="mt-2 text-xs font-medium text-amber-600">Capture three scans; at least two must match accurately.</p>}
           </FormSection>
           {editingId && <FormSection icon={<KeyRound className="h-4 w-4" />} title="Confirm administrator changes" description="Your admin password is required before profile, role, or fingerprint changes can be saved."><Field label="Admin password" required><Input required type="password" autoComplete="current-password" disabled={passwordRetrySeconds > 0} placeholder={passwordRetrySeconds > 0 ? `Try again in ${passwordRetrySeconds}s` : "Enter your admin password"} value={adminPassword} onChange={(event) => { setAdminPassword(event.target.value); setFormError(""); }} /></Field>{passwordRetrySeconds > 0 && <p className="mt-2 text-xs font-medium text-amber-600">Password attempts locked for {passwordRetrySeconds} more seconds.</p>}</FormSection>}
           {formError && <p className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-medium text-rose-700">{formError}</p>}
           </div>
-          <div className="flex items-center justify-between border-t border-slate-200 bg-white px-6 py-4"><p className="hidden text-xs text-slate-400 sm:block"><span className="text-rose-500">*</span> Required fields</p><div className="ml-auto flex flex-wrap justify-end gap-2">{editingId && <Button type="button" variant="outline" onClick={revertChanges}>Revert changes</Button>}<Button type="button" variant="outline" onClick={closeEditor}>Cancel</Button><Button type="submit" disabled={saving || passwordRetrySeconds > 0 || (editingId ? !adminPassword : draft.biometricStatus !== "enrolled")}><Fingerprint className="h-4 w-4" /> {saving ? 'Saving...' : passwordRetrySeconds > 0 ? `Wait ${passwordRetrySeconds}s` : editingId ? "Save changes" : "Create employee"}</Button></div></div>
+          <div className="flex items-center justify-between border-t border-slate-200 bg-white px-6 py-4"><p className="hidden text-xs text-slate-400 sm:block"><span className="text-rose-500">*</span> Required fields</p><div className="ml-auto flex flex-wrap justify-end gap-2">{editingId && <Button type="button" variant="outline" onClick={revertChanges}>Revert changes</Button>}<Button type="button" variant="outline" onClick={closeEditor}>Cancel</Button><Button type="submit" disabled={saving || fingerprintRegistering || passwordRetrySeconds > 0 || (editingId ? !adminPassword : fingerprintSamples.length !== REQUIRED_FINGERPRINT_SCANS)}><Fingerprint className="h-4 w-4" /> {saving ? 'Saving...' : passwordRetrySeconds > 0 ? `Wait ${passwordRetrySeconds}s` : editingId ? "Save changes" : "Create employee"}</Button></div></div>
         </form>
       </Dialog>
       <Dialog open={!!archiveTarget} onClose={() => setArchiveTarget(null)} className="max-w-sm"><DialogHeader><div><h3 className="flex items-center gap-2 text-base font-bold text-slate-900"><KeyRound className="h-4 w-4 text-rose-600" /> Archive employee</h3><p className="mt-1 text-xs text-slate-500">{archiveTarget?.name} will become inactive and move to Admin Controls.</p></div><DialogClose onClose={() => setArchiveTarget(null)} /></DialogHeader><form onSubmit={archiveEmployee} className="space-y-3 px-6 pb-6 pt-3"><Field label="Confirm your admin password" required><Input type="password" autoFocus value={archivePassword} onChange={(event) => { setArchivePassword(event.target.value); setArchiveError(""); }} placeholder="Enter your password" /></Field>{archiveError && <p className="text-xs font-medium text-rose-600">{archiveError}</p>}<div className="flex justify-end gap-2"><Button type="button" variant="outline" onClick={() => setArchiveTarget(null)}>Cancel</Button><Button type="submit" variant="destructive" disabled={archiving || !archivePassword}><Archive className="h-4 w-4" />{archiving ? "Archiving..." : "Archive employee"}</Button></div></form></Dialog>

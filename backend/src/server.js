@@ -21,9 +21,12 @@ app.use((req, res, next) => {
   if (process.env.NODE_ENV === 'production' && req.headers['x-forwarded-proto'] !== 'https' && !req.secure) return res.redirect(308, `https://${req.headers.host}${req.originalUrl}`);
   next();
 });
-app.use(express.json({ limit: '100kb' }));
+// Raw WebSDK samples are base64url-wrapped more than once. Four 500-DPI scans
+// can therefore exceed 2 MB even though the decoded images are much smaller.
+// The matcher separately caps each decoded sample at 1 MB, and raw images are
+// converted to templates immediately rather than persisted.
+app.use(express.json({ limit: '6mb' }));
 app.use('/api/auth', authRouter);
-app.use('/api', apiRouter);
 
 app.get('/api/health', (_request, response) => {
   response.json({
@@ -32,7 +35,12 @@ app.get('/api/health', (_request, response) => {
   });
 });
 
+app.use('/api', apiRouter);
+
 app.use((error, _request, response, _next) => {
+  if (error?.type === 'entity.too.large') {
+    return response.status(413).json({ error: 'Fingerprint scan upload is too large. Restart enrollment and capture four new scans.' });
+  }
   if (error instanceof SyntaxError && 'body' in error) {
     return response.status(400).json({ error: 'Invalid JSON request body' });
   }
@@ -60,6 +68,9 @@ async function startServer() {
         db.collection('employee_accounts').createIndex({ email: 1 }, { unique: true }),
         db.collection('employee_accounts').createIndex({ employeeId: 1 }, { unique: true }),
         db.collection('audit_events').createIndex({ occurredAt: -1 }),
+        db.collection('employees').createIndex({ id: 1 }, { unique: true, name: 'employee_id_unique' }),
+        db.collection('biometric_templates').createIndex({ employeeId: 1 }, { unique: true, name: 'biometric_employee_unique' }),
+        db.collection('attendance').createIndex({ employeeId: 1, date: 1 }, { unique: true }),
       ]);
     } catch (error) {
       console.error('Security index setup failed:', error instanceof Error ? error.message : error);

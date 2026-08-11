@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type FormEvent } from 'react'
+import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
 import { ArrowRight, Eye, EyeOff, Fingerprint, LoaderCircle, RefreshCw, ShieldCheck, Sparkles, Users } from 'lucide-react'
 import { useToast } from './ui/Toast.tsx'
 import { apiFetch, storeSession } from '../lib/api.ts'
@@ -40,7 +40,7 @@ export default function LoginSplitPage() {
       ? 'border-red-500 bg-red-50 text-red-700 focus:border-red-500 focus:bg-red-50 focus:ring-red-500/15'
       : 'border-slate-300 bg-slate-100 text-slate-900 hover:border-slate-400 focus:border-indigo-500 focus:bg-white focus:ring-indigo-500/10'
 
-  async function loadCaptcha(showError = true) {
+  const loadCaptcha = useCallback(async (showError = true) => {
     try {
       const response = await apiFetch(`${API_URL}/captcha`)
       const data = await response.json()
@@ -51,9 +51,9 @@ export default function LoginSplitPage() {
     } catch (reason) {
       if (showError) toast({ title: 'Security check unavailable', description: reason instanceof Error ? reason.message : 'Unable to reach the login server', variant: 'error' })
     }
-  }
+  }, [toast])
 
-  useEffect(() => { void loadCaptcha(false) }, [])
+  useEffect(() => { const timer = window.setTimeout(() => { void loadCaptcha(false) }, 0); return () => window.clearTimeout(timer) }, [loadCaptcha])
   useEffect(() => { if (verificationId) otpRef.current?.focus() }, [verificationId])
 
   async function submitLogin() {
@@ -87,7 +87,8 @@ export default function LoginSplitPage() {
       if (!response.ok) throw new Error(data.error || 'OTP verification failed')
       storeSession(data)
       toast({ title: 'Welcome back', description: 'Your identity was verified successfully.', variant: 'success', duration: 1800 })
-      window.setTimeout(() => { window.location.href = '/overview?view=overview' }, 450)
+      const destination = window.location.pathname === '/kiosk' ? '/kiosk' : '/overview?view=overview'
+      window.setTimeout(() => { window.location.href = destination }, 450)
     } catch (reason) {
       toast({ title: 'Verification failed', description: reason instanceof Error ? reason.message : 'Please try again.', variant: 'error' })
     } finally { setLoading(false) }

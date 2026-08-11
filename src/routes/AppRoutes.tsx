@@ -69,7 +69,9 @@ function attendanceTrend(records: OverviewAttendance[], mode: 'daily' | 'weekly'
   });
 
   const limit = mode === 'daily' ? 7 : mode === 'weekly' ? 6 : 6;
-  return [...buckets.values()].sort((a, b) => a.order - b.order).slice(-limit).map(({ order: _order, ...bucket }) => bucket);
+  return [...buckets.values()].sort((a, b) => a.order - b.order).slice(-limit).map((bucket) => ({
+    label: bucket.label, present: bucket.present, late: bucket.late, absent: bucket.absent,
+  }));
 }
 
 export function AppRoutes() {
