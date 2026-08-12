@@ -14,7 +14,7 @@ import { AttendanceView } from '../views/AttendanceView';
 import { apiFetch } from '../lib/api';
 
 type OverviewEmployee = { status: string; biometricStatus: string };
-type OverviewPayroll = { status: string };
+type OverviewPayroll = { status: string; periodStart?: string };
 type OverviewAttendance = { employeeId?: string; name?: string; role?: string; date?: string; checkIn?: string; checkOut?: string; status: string };
 type OverviewLeave = { id: string; employeeId?: string; startDate: string; endDate: string; totalDays: number; status: string };
 type OverviewAuditEvent = { id: string; occurredAt?: string; actorEmail?: string | null; actorRole?: string; action?: string; targetType?: string; outcome?: string };
@@ -74,6 +74,12 @@ function attendanceTrend(records: OverviewAttendance[], mode: 'daily' | 'weekly'
   }));
 }
 
+function currentPayrollPeriodKey() {
+  const now = new Date();
+  const day = now.getDate() <= 15 ? 1 : 16;
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+}
+
 export function AppRoutes() {
   const params = typeof window !== 'undefined' ? new URLSearchParams(window.location.search) : new URLSearchParams();
   const paramView = params.get('view') as ViewKey;
@@ -92,21 +98,19 @@ export function AppRoutes() {
   const [auditError, setAuditError] = useState('');
 
   useEffect(() => {
-    Promise.all([
-      apiFetch('/api/employees'),
-      apiFetch('/api/payroll-requests'),
-      apiFetch('/api/attendance'),
-      apiFetch('/api/leave-requests'),
-    ]).then(async ([employeesResponse, payrollResponse, attendanceResponse, leaveResponse]) => {
-      setOverviewEmployees(employeesResponse.ok ? await employeesResponse.json() : []);
-      setOverviewPayroll(payrollResponse.ok ? await payrollResponse.json() : []);
-      setOverviewAttendance(attendanceResponse.ok ? await attendanceResponse.json() : []);
-      setOverviewLeaves(leaveResponse.ok ? await leaveResponse.json() : []);
-    }).catch(() => {
-      setOverviewEmployees([]); setOverviewPayroll([]); setOverviewAttendance([]); setOverviewLeaves([]);
-    });
-
     let cancelled = false;
+    async function loadOverviewData() {
+      try {
+        const [employeesResponse, payrollResponse, attendanceResponse, leaveResponse] = await Promise.all([
+          apiFetch('/api/employees'), apiFetch('/api/payroll-requests'), apiFetch('/api/attendance'), apiFetch('/api/leave-requests'),
+        ]);
+        if (cancelled) return;
+        if (employeesResponse.ok) setOverviewEmployees(await employeesResponse.json());
+        if (payrollResponse.ok) setOverviewPayroll(await payrollResponse.json());
+        if (attendanceResponse.ok) setOverviewAttendance(await attendanceResponse.json());
+        if (leaveResponse.ok) setOverviewLeaves(await leaveResponse.json());
+      } catch { /* Preserve the last successful overview instead of replacing it with empty data. */ }
+    }
     async function loadAuditEvents(attempt = 0) {
       try {
         const response = await apiFetch('/api/audit-events?limit=20');
@@ -125,15 +129,19 @@ export function AppRoutes() {
         setAuditLoading(false);
       }
     }
+    void loadOverviewData();
     void loadAuditEvents();
-    return () => { cancelled = true; };
+    const overviewInterval = window.setInterval(() => void loadOverviewData(), 30_000);
+    const auditInterval = window.setInterval(() => void loadAuditEvents(), 30_000);
+    return () => { cancelled = true; window.clearInterval(overviewInterval); window.clearInterval(auditInterval); };
   }, []);
 
   const adminMetricsData = useMemo(() => {
     const totalStaff = overviewEmployees.length;
     const activeWorkforce = overviewEmployees.filter((employee) => employee.status === "active").length;
     const workforceEligible = overviewEmployees.filter((employee) => employee.status === "active" || employee.status === "on-leave").length;
-    const pendingPayrollCount = overviewPayroll.filter((payroll) => payroll.status === "processing").length;
+    const currentPayroll = overviewPayroll.filter((payroll) => payroll.periodStart === currentPayrollPeriodKey());
+    const pendingPayrollCount = currentPayroll.filter((payroll) => payroll.status === "processing").length;
     
     return {
       totalStaff,
@@ -153,17 +161,6 @@ export function AppRoutes() {
   const latestAttendanceDate = useMemo(() => overviewAttendance.reduce((latest, record) =>
     record.date && record.date > latest ? record.date : latest, ''), [overviewAttendance]);
 
-  const latestAttendance = useMemo(() => latestAttendanceDate
-    ? overviewAttendance.filter((record) => record.date === latestAttendanceDate)
-    : overviewAttendance, [overviewAttendance, latestAttendanceDate]);
-
-  const liveBreakdown = useMemo(() => [
-    { name: "Present", value: latestAttendance.filter((record) => record.status === "Present").length, color: "#10b981" },
-    { name: "Late", value: latestAttendance.filter((record) => record.status === "Late").length, color: "#f59e0b" },
-    { name: "Absent", value: latestAttendance.filter((record) => record.status === "Absent").length, color: "#ef4444" },
-    { name: "On Leave", value: latestAttendance.filter((record) => record.status === "On Leave").length, color: "#6366f1" },
-  ].filter((item) => item.value > 0), [latestAttendance]);
-
   const attendanceAnalytics = useMemo(() => {
     const total = overviewAttendance.length;
     const attended = overviewAttendance.filter((record) => record.status === 'Present' || record.status === 'Late').length;
@@ -174,8 +171,9 @@ export function AppRoutes() {
       attendanceRate: total ? attended / total * 100 : 0,
       punctualityRate: attended ? onTime / attended * 100 : 0,
       biometricCoverage,
-      payrollCompletion: overviewPayroll.length
-        ? overviewPayroll.filter((payroll) => payroll.status === 'paid').length / overviewPayroll.length * 100 : 0,
+      payrollCompletion: overviewPayroll.filter((payroll) => payroll.periodStart === currentPayrollPeriodKey()).length
+        ? overviewPayroll.filter((payroll) => payroll.periodStart === currentPayrollPeriodKey() && payroll.status === 'paid').length
+          / overviewPayroll.filter((payroll) => payroll.periodStart === currentPayrollPeriodKey()).length * 100 : 0,
     };
   }, [overviewAttendance, overviewEmployees, overviewPayroll]);
 
@@ -198,7 +196,6 @@ export function AppRoutes() {
     overview: (
       <AdminOverviewView 
         attendanceTrends={attendanceTrends}
-        liveBreakdown={liveBreakdown}
         auditTrail={auditTrail}
         metrics={adminMetricsData}
         analytics={attendanceAnalytics}
@@ -208,6 +205,7 @@ export function AppRoutes() {
         auditLoading={auditLoading}
         auditError={auditError}
         onStartGuide={() => { setActive('overview'); setGuideOpen(true); }}
+        onNavigate={setActive}
       />
     ),
     attendance: <AttendanceView role="admin" records={[]} />,

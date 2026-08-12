@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { 
   Users, 
   UserCheck, 
@@ -37,6 +37,7 @@ import { Tabs } from "../components/ui/Tabs";
 import { Badge } from "../components/ui/Badge";
 import { Button } from "../components/ui/Button";
 import { DateNavigator } from "../components/DateNavigator";
+import { apiFetch } from "../lib/api";
 
 type ViewMode = "daily" | "weekly" | "monthly";
 
@@ -77,7 +78,6 @@ const cardColorStyles = {
    ========================================================================== */
 interface AdminOverviewProps {
   attendanceTrends: Record<ViewMode, TrendMetrics[]>;
-  liveBreakdown: BreakdownItem[];
   auditTrail: AuditLogItem[];
   metrics: {
     totalStaff: number;
@@ -96,13 +96,13 @@ interface AdminOverviewProps {
   leaveRequests: { id: string; employeeId?: string; startDate: string; endDate: string; totalDays: number; status: string }[];
   attendanceRecords: { date?: string; status: string }[];
   onStartGuide?: () => void;
+  onNavigate?: (view: "payroll" | "admin" | "insights") => void;
   auditLoading?: boolean;
   auditError?: string;
 }
 
 export function AdminOverviewView({ 
   attendanceTrends, 
-  liveBreakdown = [], 
   auditTrail = [], 
   metrics,
   analytics,
@@ -110,12 +110,27 @@ export function AdminOverviewView({
   leaveRequests = [],
   attendanceRecords = [],
   onStartGuide,
+  onNavigate,
   auditLoading = false,
   auditError = '',
 }: AdminOverviewProps) {
   const [viewMode, setViewMode] = useState<ViewMode>("weekly");
   const [workforceDate, setWorkforceDate] = useState(latestAttendanceDate || new Date().toISOString().slice(0, 10));
   const [performanceDate, setPerformanceDate] = useState(latestAttendanceDate || new Date().toISOString().slice(0, 10));
+  const [systemHealth, setSystemHealth] = useState<{ api: "checking" | "online" | "offline"; database: "checking" | "connected" | "disconnected" }>({ api: "checking", database: "checking" });
+  useEffect(() => {
+    let cancelled = false;
+    const checkHealth = async () => {
+      try {
+        const response = await apiFetch("/api/health");
+        const data = await response.json().catch(() => ({}));
+        if (!cancelled) setSystemHealth({ api: response.ok ? "online" : "offline", database: data.database === "connected" ? "connected" : "disconnected" });
+      } catch { if (!cancelled) setSystemHealth({ api: "offline", database: "disconnected" }); }
+    };
+    const initial = window.setTimeout(() => void checkHealth(), 0);
+    const interval = window.setInterval(() => void checkHealth(), 30_000);
+    return () => { cancelled = true; window.clearTimeout(initial); window.clearInterval(interval); };
+  }, []);
   const chartData = attendanceTrends?.[viewMode] || [];
   const approvedLeavesForDate = leaveRequests.filter((leave) => {
     if (leave.status !== "approved") return false;
@@ -126,8 +141,17 @@ export function AdminOverviewView({
   const performanceRecords = attendanceRecords.filter((record) => record.date === performanceDate);
   const attendedForDate = performanceRecords.filter((record) => record.status === "Present" || record.status === "Late").length;
   const onTimeForDate = performanceRecords.filter((record) => record.status === "Present").length;
-  const attendanceRateForDate = performanceRecords.length ? attendedForDate / performanceRecords.length * 100 : 0;
+  const performanceLeave = new Set(leaveRequests.filter((leave) => leave.status === "approved" && leave.startDate <= performanceDate && leave.endDate >= performanceDate).map((leave) => leave.employeeId || leave.id)).size;
+  const expectedWorkforceForDate = Math.max(0, metrics.workforceEligible - performanceLeave);
+  const attendanceRateForDate = expectedWorkforceForDate ? attendedForDate / expectedWorkforceForDate * 100 : 0;
   const punctualityRateForDate = attendedForDate ? onTimeForDate / attendedForDate * 100 : 0;
+  const selectedBreakdown = [
+    { name: "Present", value: onTimeForDate, color: "#10b981" },
+    { name: "Late", value: performanceRecords.filter((record) => record.status === "Late").length, color: "#f59e0b" },
+    { name: "Absent", value: Math.max(0, expectedWorkforceForDate - attendedForDate), color: "#ef4444" },
+    { name: "On Leave", value: performanceLeave, color: "#6366f1" },
+  ].filter((item) => item.value > 0);
+  const failedAuditEvents = auditTrail.filter((event) => event.status === "Failed").length;
   const performanceMetrics = [
     { label: "Attendance rate", value: attendanceRateForDate, icon: Gauge, color: "text-emerald-600", bar: "bg-emerald-500", hint: "Present and late on selected date" },
     { label: "On-time arrival", value: punctualityRateForDate, icon: Timer, color: "text-sky-600", bar: "bg-sky-500", hint: "On time among selected-day attendees" },
@@ -289,14 +313,14 @@ export function AdminOverviewView({
 
         <Card data-guide="today-breakdown">
           <CardHeader>
-            <CardTitle>Today's Breakdown</CardTitle>
-            <CardDescription>Live real-time distribution status</CardDescription>
+            <CardTitle>Selected Day Breakdown</CardTitle>
+            <CardDescription>{new Date(`${performanceDate}T00:00:00`).toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" })}</CardDescription>
           </CardHeader>
           <CardContent>
-            <ResponsiveContainer width="100%" height={300}>
+            {selectedBreakdown.length ? <ResponsiveContainer width="100%" height={300}>
               <PieChart>
                 <Pie
-                  data={liveBreakdown}
+                  data={selectedBreakdown}
                   cx="50%"
                   cy="45%"
                   innerRadius={55}
@@ -304,7 +328,7 @@ export function AdminOverviewView({
                   paddingAngle={3}
                   dataKey="value"
                 >
-                  {liveBreakdown.map((entry, index) => (
+                  {selectedBreakdown.map((entry, index) => (
                     <Cell key={`cell-adm-${index}`} fill={entry.color || "#cbd5e1"} />
                   ))}
                 </Pie>
@@ -317,7 +341,7 @@ export function AdminOverviewView({
                 />
                 <Legend wrapperStyle={{ fontSize: "13px" }} />
               </PieChart>
-            </ResponsiveContainer>
+            </ResponsiveContainer> : <div className="grid h-[300px] place-items-center text-center text-sm text-slate-400">No workforce or attendance records for this date.</div>}
           </CardContent>
         </Card>
       </div>
@@ -371,7 +395,7 @@ export function AdminOverviewView({
                     <p className="text-[11px] text-amber-700">{metrics.pendingPayrollCount} payroll records currently processing</p>
                   </div>
                 </div>
-                <Button size="sm" className="h-7 bg-amber-500 hover:bg-amber-600 text-white border-0 text-xs">View</Button>
+                <Button size="sm" onClick={() => onNavigate?.("payroll")} className="h-7 border-0 bg-amber-500 text-xs text-white hover:bg-amber-600">View</Button>
               </div>
 
               <div className="flex items-center justify-between rounded-lg border border-slate-200 bg-slate-50 p-3">
@@ -380,11 +404,11 @@ export function AdminOverviewView({
                     <AlertCircle className="h-4 w-4" />
                   </div>
                   <div>
-                    <h4 className="text-xs font-semibold text-slate-900">System Logs</h4>
-                    <p className="text-[11px] text-slate-500">2 core anomalies flagged past 24h</p>
+                    <h4 className="text-xs font-semibold text-slate-900">Recent Failed Actions</h4>
+                    <p className="text-[11px] text-slate-500">{failedAuditEvents} failures in the loaded audit records</p>
                   </div>
                 </div>
-                <Button size="sm" variant="outline" className="h-7 text-xs">Logs</Button>
+                <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => document.getElementById("overview-audit-trail")?.scrollIntoView({ behavior: "smooth" })}>Logs</Button>
               </div>
             </CardContent>
           </Card>
@@ -398,22 +422,16 @@ export function AdminOverviewView({
             </CardHeader>
             <CardContent className="space-y-2.5 pt-1">
               <div className="flex justify-between items-center border-b border-slate-100 pb-1.5">
-                <span className="text-xs text-slate-600">Database Cluster Relay</span>
-                <span className="flex items-center gap-1.5 text-[11px] font-medium text-emerald-600">
-                  <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" /> Operational
-                </span>
+                <span className="text-xs text-slate-600">MongoDB Atlas</span>
+                <HealthLabel good={systemHealth.database === "connected"} checking={systemHealth.database === "checking"} goodText="Connected" badText="Disconnected" />
               </div>
               <div className="flex justify-between items-center border-b border-slate-100 pb-1.5">
-                <span className="text-xs text-slate-600">Automated Payroll Gateway</span>
-                <span className="flex items-center gap-1.5 text-[11px] font-medium text-emerald-600">
-                  <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" /> Operational
-                </span>
+                <span className="text-xs text-slate-600">WorkPulse API</span>
+                <HealthLabel good={systemHealth.api === "online"} checking={systemHealth.api === "checking"} goodText="Online" badText="Offline" />
               </div>
               <div className="flex justify-between items-center">
-                <span className="text-xs text-slate-600">Secure Biometric Sync Hub</span>
-                <span className="flex items-center gap-1.5 text-[11px] font-medium text-emerald-600">
-                  <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" /> Operational
-                </span>
+                <span className="text-xs text-slate-600">Overview data refresh</span>
+                <span className="flex items-center gap-1.5 text-[11px] font-medium text-sky-600"><span className="h-1.5 w-1.5 rounded-full bg-sky-500" /> Every 30 seconds</span>
               </div>
             </CardContent>
           </Card>
@@ -421,7 +439,7 @@ export function AdminOverviewView({
       </div>
 
       {/* Global Audit Log */}
-      <Card data-guide="audit-trail">
+      <Card id="overview-audit-trail" data-guide="audit-trail">
         <CardHeader>
           <div className="flex items-center justify-between">
             <div>
@@ -481,8 +499,14 @@ export function AdminOverviewView({
   );
 }
 
+function HealthLabel({ good, checking, goodText, badText }: { good: boolean; checking: boolean; goodText: string; badText: string }) {
+  const color = checking ? "text-slate-400" : good ? "text-emerald-600" : "text-red-600";
+  const dot = checking ? "bg-slate-400" : good ? "bg-emerald-500" : "bg-red-500";
+  return <span className={`flex items-center gap-1.5 text-[11px] font-medium ${color}`}><span className={`h-1.5 w-1.5 rounded-full ${dot}`} />{checking ? "Checking…" : good ? goodText : badText}</span>;
+}
 
-/* ==========================================================================
+
+/* ========================================================================== 
    2. MANAGER OVERVIEW COMPONENT
    ========================================================================== */
 interface OverviewViewProps {

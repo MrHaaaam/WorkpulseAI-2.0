@@ -150,16 +150,26 @@ export async function validateEnrollmentSamples(samples) {
   return { threshold: matchThreshold, format: acceptedFormat, templates };
 }
 
-export async function findFingerprintMatch(probe, templateDocuments) {
+export async function findFingerprintDecision(probe, templateDocuments) {
   const candidates = [];
   for (const template of templateDocuments) {
     try { candidates.push({ employeeId: template.employeeId, samples: decryptFingerprintSamples(template.protectedSamples) }); }
     catch (error) { console.error(`Biometric template ${template.employeeId} could not be decrypted:`, error instanceof Error ? error.message : error); }
   }
-  if (!candidates.length) return null;
+  if (!candidates.length) return { accepted: false, best: null, threshold: threshold() };
   const result = await runFingerprintMatcher(probe, candidates);
   const best = result.best;
-  return best && Number(best.score) <= threshold() ? { employeeId: best.employeeId, score: Number(best.score), format: best.format } : null;
+  const matchThreshold = threshold();
+  return {
+    accepted: Boolean(best && Number(best.score) <= matchThreshold),
+    best: best ? { employeeId: best.employeeId, score: Number(best.score), format: best.format } : null,
+    threshold: matchThreshold,
+  };
+}
+
+export async function findFingerprintMatch(probe, templateDocuments) {
+  const decision = await findFingerprintDecision(probe, templateDocuments);
+  return decision.accepted ? decision.best : null;
 }
 
 export async function rejectDuplicateEnrollment(db, employeeId, enrollmentTemplates) {

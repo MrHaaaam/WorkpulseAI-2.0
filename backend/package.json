@@ -8,8 +8,9 @@
     "dev": "node --watch src/server.js",
     "start": "node src/server.js",
     "seed:employees": "node seed.js",
-    "seed:admin": "node seed-admin.js"
-    ,"audit:security": "node audit-report.js",
+    "seed:admin": "node seed-admin.js",
+    "seed:ai": "node seed-ai-test-data.js",
+    "audit:security": "node audit-report.js",
     "seed:employee:deocares": "node seed-employee-account.js"
   },
   "dependencies": {

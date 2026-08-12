@@ -2,11 +2,13 @@ import { Router } from 'express';
 import mongoose from 'mongoose';
 import nodemailer from 'nodemailer';
 import crypto from 'node:crypto';
+import { buildAIInsights } from '../ai-insights.js';
 import { verifyAdminPassword, verifySecret } from './auth.js';
 import { auditEvent, authenticate, csrfProtection, pick, requireRole } from '../security.js';
 import {
   BiometricError,
   encryptFingerprintSamples,
+  findFingerprintDecision,
   findFingerprintMatch,
   normalizeFingerprintSamples,
   rejectDuplicateEnrollment,
@@ -82,6 +84,22 @@ router.post('/employee/me/leave-requests', requireRole('regular', 'extra'), asyn
 });
 
 router.use(requireRole('admin'));
+
+router.get('/ai-insights', async (_req, res) => {
+  try {
+    const db = mongoose.connection.db;
+    const [attendance, employees, leaveRequests, verificationAttempts] = await Promise.all([
+      db.collection('attendance').find({}).sort({ date: 1 }).toArray(),
+      db.collection('employees').find({ archived: { $ne: true } }).toArray(),
+      db.collection('leave_requests').find({ status: 'approved' }).toArray(),
+      db.collection('biometric_verification_attempts').find({}).sort({ createdAt: -1 }).limit(500).toArray(),
+    ]);
+    res.json(buildAIInsights({ attendance, employees, leaveRequests, verificationAttempts }));
+  } catch (error) {
+    console.error('AI insights generation failed:', error);
+    res.status(500).json({ error: 'Unable to generate AI insights right now.' });
+  }
+});
 
 const employeeFields = ['id', 'firstName', 'lastName', 'name', 'role', 'casualLeave', 'sickLeave', 'status', 'grossSalary', 'hoursWorked', 'hourlyRate', 'email', 'phone', 'address', 'identifiers'];
 
@@ -272,7 +290,7 @@ router.get('/employees', async (req, res) => {
         name: e.name,
         role: e.role,
         grossSalary: records.length ? calculatedGross : Number(e.grossSalary ?? 0),
-        hoursWorked: records.length ? hoursWorked : e.hoursWorked,
+        hoursWorked: records.length ? Math.round(hoursWorked * 100) / 100 : Math.round(Number(e.hoursWorked || 0) * 100) / 100,
         hourlyRate,
         payrollPeriodDays: 15,
         status: e.status,
@@ -629,7 +647,20 @@ router.post('/attendance/kiosk', async (req, res) => {
     const [probe] = normalizeFingerprintSamples(req.body?.fingerprintSamples, 1);
     const deviceUid = String(req.body?.deviceUid ?? '').trim().slice(0, 200);
     const templates = await db.collection('biometric_templates').find({}).toArray();
-    const matched = await findFingerprintMatch(probe, templates);
+    const matchStartedAt = Date.now();
+    const decision = await findFingerprintDecision(probe, templates);
+    const matched = decision.accepted ? decision.best : null;
+    const attemptTime = new Date();
+    try {
+      await db.collection('biometric_verification_attempts').insertOne({
+        mode: 'one-to-many', accepted: decision.accepted,
+        employeeId: matched?.employeeId || null, score: decision.best?.score ?? null,
+        threshold: decision.threshold, deviceUid: deviceUid || null,
+        responseTimeMs: Date.now() - matchStartedAt, createdAt: attemptTime,
+      });
+    } catch (attemptError) {
+      console.error('Fingerprint verification attempt could not be logged:', attemptError instanceof Error ? attemptError.message : attemptError);
+    }
     if (!matched) return res.status(404).json({ error: 'Fingerprint not recognized. Ask an administrator to register it again.' });
     const employeeId = matched.employeeId;
     const employee = await db.collection('employees').findOne({ id: employeeId, archived: { $ne: true }, status: { $ne: 'inactive' } });
