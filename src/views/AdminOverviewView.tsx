@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { 
   Users, 
+  UserPlus,
   UserCheck, 
   Clock, 
   Fingerprint, 
@@ -14,7 +15,6 @@ import {
   Gauge,
   Timer,
   WalletCards,
-  ShieldCheck,
   BookOpen,
 } from "lucide-react";
 import {
@@ -78,6 +78,8 @@ const cardColorStyles = {
    ========================================================================== */
 interface AdminOverviewProps {
   attendanceTrends: Record<ViewMode, TrendMetrics[]>;
+  viewMode: ViewMode;
+  onViewModeChange: (value: ViewMode) => void;
   auditTrail: AuditLogItem[];
   metrics: {
     totalStaff: number;
@@ -89,10 +91,14 @@ interface AdminOverviewProps {
   analytics: {
     attendanceRate: number;
     punctualityRate: number;
-    biometricCoverage: number;
     payrollCompletion: number;
   };
   latestAttendanceDate?: string;
+  workforceDate: string;
+  onWorkforceDateChange: (value: string) => void;
+  performanceDate: string;
+  onPerformanceDateChange: (value: string) => void;
+  employees: { createdAt?: string }[];
   leaveRequests: { id: string; employeeId?: string; startDate: string; endDate: string; totalDays: number; status: string }[];
   attendanceRecords: { date?: string; status: string }[];
   onStartGuide?: () => void;
@@ -103,10 +109,17 @@ interface AdminOverviewProps {
 
 export function AdminOverviewView({ 
   attendanceTrends, 
+  viewMode,
+  onViewModeChange,
   auditTrail = [], 
   metrics,
   analytics,
   latestAttendanceDate,
+  workforceDate,
+  onWorkforceDateChange,
+  performanceDate,
+  onPerformanceDateChange,
+  employees = [],
   leaveRequests = [],
   attendanceRecords = [],
   onStartGuide,
@@ -114,9 +127,6 @@ export function AdminOverviewView({
   auditLoading = false,
   auditError = '',
 }: AdminOverviewProps) {
-  const [viewMode, setViewMode] = useState<ViewMode>("weekly");
-  const [workforceDate, setWorkforceDate] = useState(latestAttendanceDate || new Date().toISOString().slice(0, 10));
-  const [performanceDate, setPerformanceDate] = useState(latestAttendanceDate || new Date().toISOString().slice(0, 10));
   const [systemHealth, setSystemHealth] = useState<{ api: "checking" | "online" | "offline"; database: "checking" | "connected" | "disconnected" }>({ api: "checking", database: "checking" });
   useEffect(() => {
     let cancelled = false;
@@ -132,6 +142,9 @@ export function AdminOverviewView({
     return () => { cancelled = true; window.clearTimeout(initial); window.clearInterval(interval); };
   }, []);
   const chartData = attendanceTrends?.[viewMode] || [];
+  const performanceDateLabel = new Date(`${performanceDate}T00:00:00Z`).toLocaleDateString("en-US", {
+    timeZone: "UTC", month: "short", day: "numeric", year: "numeric",
+  });
   const approvedLeavesForDate = leaveRequests.filter((leave) => {
     if (leave.status !== "approved") return false;
     return leave.startDate <= workforceDate && leave.endDate >= workforceDate;
@@ -145,6 +158,19 @@ export function AdminOverviewView({
   const expectedWorkforceForDate = Math.max(0, metrics.workforceEligible - performanceLeave);
   const attendanceRateForDate = expectedWorkforceForDate ? attendedForDate / expectedWorkforceForDate * 100 : 0;
   const punctualityRateForDate = attendedForDate ? onTimeForDate / attendedForDate * 100 : 0;
+  const registeredOnSelectedDate = employees.filter((employee) => {
+    if (!employee.createdAt) return false;
+    const createdAt = new Date(employee.createdAt);
+    if (Number.isNaN(createdAt.getTime())) return false;
+    const parts = new Intl.DateTimeFormat("en-US", {
+      timeZone: "Asia/Manila",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).formatToParts(createdAt);
+    const value = (type: "year" | "month" | "day") => parts.find((part) => part.type === type)?.value || "";
+    return `${value("year")}-${value("month")}-${value("day")}` === performanceDate;
+  }).length;
   const selectedBreakdown = [
     { name: "Present", value: onTimeForDate, color: "#10b981" },
     { name: "Late", value: performanceRecords.filter((record) => record.status === "Late").length, color: "#f59e0b" },
@@ -153,17 +179,16 @@ export function AdminOverviewView({
   ].filter((item) => item.value > 0);
   const failedAuditEvents = auditTrail.filter((event) => event.status === "Failed").length;
   const performanceMetrics = [
-    { label: "Attendance rate", value: attendanceRateForDate, icon: Gauge, color: "text-emerald-600", bar: "bg-emerald-500", hint: "Present and late on selected date" },
-    { label: "On-time arrival", value: punctualityRateForDate, icon: Timer, color: "text-sky-600", bar: "bg-sky-500", hint: "On time among selected-day attendees" },
-    { label: "Employees registered", value: analytics.biometricCoverage, icon: ShieldCheck, color: "text-violet-600", bar: "bg-violet-500", hint: "Staff with enrolled biometrics" },
-    { label: "Payroll completion", value: analytics.payrollCompletion, icon: WalletCards, color: "text-amber-600", bar: "bg-amber-500", hint: "Requests marked as paid" },
+    { label: "Attendance rate", value: attendanceRateForDate, icon: Gauge, color: "text-emerald-600", bar: "bg-emerald-500", hint: "Present and late on selected date", format: "percent" as const },
+    { label: "On-time arrival", value: punctualityRateForDate, icon: Timer, color: "text-sky-600", bar: "bg-sky-500", hint: "On time among selected-day attendees", format: "percent" as const },
+    { label: "New employees registered", value: registeredOnSelectedDate, icon: UserPlus, color: "text-violet-600", bar: "bg-violet-500", hint: "Created on the selected date", format: "count" as const },
+    { label: "Payroll completion", value: analytics.payrollCompletion, icon: WalletCards, color: "text-amber-600", bar: "bg-amber-500", hint: "Requests marked as paid", format: "percent" as const },
   ];
 
   const adminMetrics = [
     { label: "Total Registered Staff", value: metrics.totalStaff, progress: metrics.totalStaff ? 100 : 0, hint: "Employee records in the system", icon: Users, color: "text-[#8642ED]", bar: "bg-[#8642ED]" },
     { label: "Active Workforce", value: activeForDate, progress: metrics.totalStaff ? activeForDate / metrics.totalStaff * 100 : 0, hint: "Available on selected date", icon: UserCheck, color: "text-emerald-600", bar: "bg-emerald-500" },
     { label: "Pending Payroll Sign-offs", value: metrics.pendingPayrollCount, progress: metrics.totalStaff ? metrics.pendingPayrollCount / metrics.totalStaff * 100 : 0, hint: "Records awaiting admin action", icon: Clock, color: "text-amber-600", bar: "bg-amber-500" },
-    { label: "Biometric Keys Active", value: metrics.biometricKeysActive, progress: metrics.totalStaff ? metrics.biometricKeysActive / metrics.totalStaff * 100 : 0, hint: "Employees ready for biometric scans", icon: Fingerprint, color: "text-violet-600", bar: "bg-violet-500" },
     { label: "Employees on Leave", value: employeesOnLeave, progress: metrics.totalStaff ? employeesOnLeave / metrics.totalStaff * 100 : 0, hint: "Approved leave on selected date", icon: Calendar, color: "text-sky-600", bar: "bg-sky-500" },
   ];
 
@@ -187,7 +212,7 @@ export function AdminOverviewView({
           </div>
           <Tabs
             value={viewMode}
-            onValueChange={(v) => setViewMode(v as ViewMode)}
+            onValueChange={(v) => onViewModeChange(v as ViewMode)}
             items={[
               { value: "daily", label: "Daily" },
               { value: "weekly", label: "Weekly" },
@@ -205,11 +230,11 @@ export function AdminOverviewView({
               <CardTitle>Workforce Operations</CardTitle>
               <CardDescription>Current staffing, payroll, and biometric readiness</CardDescription>
             </div>
-            <DateNavigator label="Workforce date" value={workforceDate} onChange={setWorkforceDate} />
+            <DateNavigator label="Workforce date" value={workforceDate} onChange={onWorkforceDateChange} />
           </div>
         </CardHeader>
         <CardContent>
-          <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 xl:grid-cols-5">
+          <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 xl:grid-cols-4">
         {adminMetrics.map((m) => {
           const Icon = m.icon;
           const safeProgress = Math.max(0, Math.min(100, m.progress));
@@ -241,23 +266,28 @@ export function AdminOverviewView({
               <CardTitle>Workforce Performance Snapshot</CardTitle>
               <CardDescription>Operational rates calculated from current system records</CardDescription>
             </div>
-            <DateNavigator label="Performance date" value={performanceDate} onChange={setPerformanceDate} />
+            <DateNavigator label="Performance date" value={performanceDate} onChange={onPerformanceDateChange} />
           </div>
         </CardHeader>
         <CardContent>
           <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 xl:grid-cols-4">
             {performanceMetrics.map((metric) => {
               const Icon = metric.icon;
-              const safeValue = Math.max(0, Math.min(100, metric.value));
+              const safeValue = Math.max(0, metric.value);
+              const progressValue = metric.format === "count"
+                ? (metrics.totalStaff ? Math.min(100, safeValue / metrics.totalStaff * 100) : 0)
+                : Math.min(100, safeValue);
               return (
                 <div key={metric.label} className="rounded-xl border border-slate-200 bg-slate-50/60 p-4">
                   <div className="flex items-center justify-between">
                     <p className="text-xs font-medium text-slate-600">{metric.label}</p>
                     <Icon className={`h-4 w-4 ${metric.color}`} />
                   </div>
-                  <p className="mt-2 text-2xl font-bold text-slate-900">{safeValue.toFixed(1)}%</p>
+                  <p className="mt-2 text-2xl font-bold text-slate-900">
+                    {metric.format === "count" ? safeValue : `${safeValue.toFixed(1)}%`}
+                  </p>
                   <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-slate-200">
-                    <div className={`h-full rounded-full ${metric.bar}`} style={{ width: `${safeValue}%` }} />
+                    <div className={`h-full rounded-full ${metric.bar}`} style={{ width: `${progressValue}%` }} />
                   </div>
                   <p className="mt-2 text-[11px] text-slate-400">{metric.hint}</p>
                 </div>
@@ -272,7 +302,7 @@ export function AdminOverviewView({
         <Card data-guide="attendance-trends" className="lg:col-span-2">
           <CardHeader>
             <CardTitle>Workforce Attendance Trends</CardTitle>
-            <CardDescription>Present vs Late vs Absent — {viewMode} view</CardDescription>
+            <CardDescription>Present vs Late vs Absent — {viewMode} view ending {performanceDateLabel}</CardDescription>
           </CardHeader>
           <CardContent>
             <ResponsiveContainer width="100%" height={300}>
@@ -314,7 +344,7 @@ export function AdminOverviewView({
         <Card data-guide="today-breakdown">
           <CardHeader>
             <CardTitle>Selected Day Breakdown</CardTitle>
-            <CardDescription>{new Date(`${performanceDate}T00:00:00`).toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" })}</CardDescription>
+            <CardDescription>{performanceDateLabel}</CardDescription>
           </CardHeader>
           <CardContent>
             {selectedBreakdown.length ? <ResponsiveContainer width="100%" height={300}>
@@ -351,7 +381,7 @@ export function AdminOverviewView({
         <Card>
           <CardHeader>
             <CardTitle>Attendance Metrics Comparison</CardTitle>
-            <CardDescription>Performance trends comparison — {viewMode} view</CardDescription>
+            <CardDescription>Performance trends comparison — {viewMode} view ending {performanceDateLabel}</CardDescription>
           </CardHeader>
           <CardContent>
             <ResponsiveContainer width="100%" height={280}>

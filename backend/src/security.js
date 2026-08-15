@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
 import mongoose from 'mongoose';
+import { getSystemControls } from './system-controls.js';
 
 const SESSION_COOKIE = 'workpulse_session';
 const rateBuckets = new Map();
@@ -90,6 +91,10 @@ export async function authenticate(req, res, next) {
     const collection = accountType === 'employee' ? 'employee_accounts' : 'admin_accounts';
     const actor = await db.collection(collection).findOne({ _id: accountId, active: true });
     if (!actor) return res.status(401).json({ error: 'Account is unavailable' });
+    if (accountType === 'employee') {
+      const controls = await getSystemControls(db);
+      if (controls.maintenanceMode) return res.status(503).json({ error: 'WorkPulse is temporarily available to administrators only while maintenance is in progress.' });
+    }
     req.auth = { actor, session, accountType, tokenSource: requestToken.source };
     next();
   } catch { res.status(401).json({ error: 'Authentication failed' }); }

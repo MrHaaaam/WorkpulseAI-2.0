@@ -7,6 +7,7 @@ import {
 import { Badge } from "../components/ui/Badge";
 import { Button } from "../components/ui/Button";
 import { Card, CardContent } from "../components/ui/Card";
+import { FingerprintEvaluation, type EvaluationSummary } from "../components/biometric/FingerprintEvaluation";
 import { apiFetch } from "../lib/api";
 import { cn } from "../lib/util";
 
@@ -16,13 +17,13 @@ type ForecastDay = { date: string; expectedPresent: number; attendanceRate: numb
 type RiskEmployee = { employeeId: string; name: string; score: number; tier: "normal" | "mild" | "high" | "severe"; spells: number; weightedDays: number; absenceDays: number; lateDays: number };
 type Anomaly = { employeeId: string; name: string; date: string; time: string; score: number; deviationMinutes: number };
 type Scanner = { deviceUid: string; scans: number; averageScore: number; health: number; status: "healthy" | "attention" | "critical" };
-type RecentMatch = { employeeId: string | null; name: string; action: "time-in" | "time-out" | "recognized" | "no-match"; eventTime: string | null; scannedAt: string | null; deviceUid: string; score: number | null; matchStrength: number | null; accepted: boolean; responseTimeMs: number | null };
+type RecentMatch = { employeeId: string | null; name: string; action: "time-in" | "time-out" | "daily-limit" | "recognized" | "no-match"; eventTime: string | null; scannedAt: string | null; deviceUid: string; score: number | null; matchStrength: number | null; accepted: boolean; responseTimeMs: number | null };
 type Insights = {
   generatedAt: string;
   forecast: { version: string; status: Readiness; sampleDays: number; activeEmployees: number; summary: string; forecast: ForecastDay[] };
   risk: { version: string; status: Readiness; employeesAnalyzed: number; flagged: number; summary: string; employees: RiskEmployee[] };
   anomaly: { version: string; status: Readiness; sampleScans: number; medianTime: string; madMinutes: number; scaleMinutes: number; summary: string; anomalies: Anomaly[] };
-  verification: { version: string; status: Readiness; matchesAnalyzed: number; threshold: number; averageHealth: number; summary: string; scanners: Scanner[]; recentMatches: RecentMatch[] };
+  verification: { version: string; status: Readiness; matchesAnalyzed: number; threshold: number; averageHealth: number; summary: string; scanners: Scanner[]; recentMatches: RecentMatch[]; evaluation: EvaluationSummary };
   disclaimer: string;
 };
 
@@ -151,7 +152,7 @@ function arrivalDifference(minutes: number) {
   return `${hourText}${minuteText} ${direction}`;
 }
 
-function VerificationPanel({ data }: { data: Insights["verification"] }) {
+function VerificationPanel({ data, onTrialSaved }: { data: Insights["verification"]; onTrialSaved: () => void }) {
   return <div className="space-y-5">
     <div className="rounded-2xl bg-gradient-to-br from-emerald-600 to-teal-600 p-5 text-white shadow-lg shadow-emerald-100">
       <div className="flex items-end justify-between"><div><p className="text-sm text-emerald-100">Scanner match quality</p><p className="mt-1 text-4xl font-bold">{Math.min(99, data.averageHealth)}%</p></div><ShieldCheck size={38} className="text-emerald-100" /></div>
@@ -169,12 +170,13 @@ function VerificationPanel({ data }: { data: Insights["verification"] }) {
       </div>
       <div className="divide-y divide-slate-100">
         {data.recentMatches?.length ? data.recentMatches.map((match, index) => <div key={`${match.employeeId}-${match.scannedAt}-${index}`} className="flex flex-col gap-3 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
-          <div className="flex min-w-0 items-center gap-3"><span className={cn("grid h-10 w-10 shrink-0 place-items-center rounded-xl", match.accepted ? "bg-emerald-50 text-emerald-600" : "bg-red-50 text-red-500")}>{match.accepted ? <ShieldCheck size={18} /> : <AlertTriangle size={18} />}</span><div className="min-w-0"><p className="truncate text-sm font-semibold text-slate-900">{match.name}</p><p className="mt-0.5 text-xs text-slate-400">{match.action === "time-in" ? "Time in" : match.action === "time-out" ? "Time out" : match.accepted ? "Fingerprint recognized" : "No match"} · {match.eventTime || formatScanTime(match.scannedAt)} · {match.deviceUid}{match.responseTimeMs ? ` · ${(match.responseTimeMs / 1000).toFixed(2)}s` : ""}</p></div></div>
+          <div className="flex min-w-0 items-center gap-3"><span className={cn("grid h-10 w-10 shrink-0 place-items-center rounded-xl", match.accepted ? "bg-emerald-50 text-emerald-600" : "bg-red-50 text-red-500")}>{match.accepted ? <ShieldCheck size={18} /> : <AlertTriangle size={18} />}</span><div className="min-w-0"><p className="truncate text-sm font-semibold text-slate-900">{match.name}</p><p className="mt-0.5 text-xs text-slate-400">{match.action === "time-in" ? "Time in" : match.action === "time-out" ? "Time out" : match.action === "daily-limit" ? "Recognized — daily limit reached" : match.accepted ? "Fingerprint recognized" : "No match"} · {match.eventTime || formatScanTime(match.scannedAt)} · {match.deviceUid}{match.responseTimeMs ? ` · ${(match.responseTimeMs / 1000).toFixed(2)}s` : ""}</p></div></div>
           <div className="flex items-center gap-3 pl-[52px] sm:pl-0"><div className="text-right"><p className={cn("text-lg font-bold", match.matchStrength != null && match.matchStrength >= 95 ? "text-emerald-700" : "text-red-600")}>{match.matchStrength != null ? `${Math.min(99, match.matchStrength)}%` : "No match"}</p><p className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">{match.matchStrength != null && match.matchStrength >= 95 ? "Accepted" : "Needs attention"}</p></div>{match.matchStrength != null && <div className="h-9 w-1.5 overflow-hidden rounded-full bg-slate-100"><div className={cn("w-full rounded-full", match.matchStrength >= 95 ? "bg-emerald-500" : "bg-red-500")} style={{ height: `${match.matchStrength}%`, marginTop: `${100 - match.matchStrength}%` }} /></div>}</div>
         </div>) : <Empty text="Successful kiosk scans will appear here automatically." />}
       </div>
       <div className="border-t border-slate-100 bg-slate-50 px-5 py-3 text-xs leading-5 text-slate-500"><strong>95–99% means accepted.</strong> A result of 94% or below needs attention: clean the reader, place the finger flat and try again, or confirm that the finger is enrolled. This is a match-quality indicator, not certified accuracy.</div>
     </div>
+    <FingerprintEvaluation data={data.evaluation} onTrialSaved={onTrialSaved} />
   </div>;
 }
 
@@ -214,11 +216,11 @@ export function AIInsightsView() {
   if (!insights) return <Card className="mx-auto mt-12 max-w-lg p-8 text-center"><AlertTriangle className="mx-auto text-red-500" /><h2 className="mt-3 font-semibold text-slate-900">AI Insights could not load</h2><p className="mt-2 text-sm text-slate-500">{error}</p><Button className="mt-5" onClick={() => void loadInsights(true)}>Try again</Button></Card>;
 
   return <div className="mx-auto max-w-[1500px] space-y-6 pb-8">
-    <header data-guide="ai-heading" className="relative overflow-hidden rounded-3xl bg-slate-950 px-6 py-7 text-white shadow-xl sm:px-8">
-      <div className="absolute -right-16 -top-24 h-64 w-64 rounded-full bg-violet-500/25 blur-3xl" /><div className="absolute bottom-0 right-1/3 h-24 w-40 bg-cyan-400/10 blur-3xl" />
+    <header data-guide="ai-heading" className="relative overflow-hidden rounded-3xl border border-violet-200 bg-gradient-to-br from-white via-violet-50 to-purple-100 px-6 py-7 text-slate-900 shadow-sm sm:px-8">
+      <div className="absolute -right-16 -top-24 h-64 w-64 rounded-full bg-[#8642ED]/10 blur-3xl" /><div className="absolute bottom-0 right-1/3 h-24 w-40 bg-fuchsia-300/10 blur-3xl" />
       <div className="relative flex flex-col justify-between gap-5 sm:flex-row sm:items-center">
-        <div className="flex items-start gap-4"><span className="grid h-12 w-12 shrink-0 place-items-center rounded-2xl bg-gradient-to-br from-violet-500 to-fuchsia-500 shadow-lg shadow-violet-950"><Sparkles size={23} /></span><div><div className="flex flex-wrap items-center gap-2"><h1 className="text-2xl font-bold tracking-tight">AI Workforce Analytics</h1><Badge className="border-emerald-400/30 bg-emerald-400/10 text-emerald-300"><span className="h-1.5 w-1.5 rounded-full bg-emerald-400" /> Live data</Badge></div><p className="mt-1 max-w-2xl text-sm leading-6 text-slate-300">Quick summaries of attendance patterns and fingerprint scanner performance.</p></div></div>
-        <div className="flex items-center gap-3"><span className="text-xs text-slate-400">Updated {generated}</span><Button variant="outline" className="border-white/15 bg-white/10 text-white hover:bg-white/15" onClick={() => void loadInsights(true)} disabled={refreshing}><RefreshCw size={15} className={refreshing ? "animate-spin" : ""} /> Refresh</Button></div>
+        <div className="flex items-start gap-4"><span className="grid h-12 w-12 shrink-0 place-items-center rounded-2xl bg-[#8642ED] text-white shadow-lg shadow-violet-200"><Sparkles size={23} /></span><div><div className="flex flex-wrap items-center gap-2"><h1 className="text-2xl font-bold tracking-tight text-slate-950">AI Workforce Analytics</h1><Badge className="border-emerald-200 bg-emerald-50 text-emerald-700"><span className="h-1.5 w-1.5 rounded-full bg-emerald-500" /> Live data</Badge></div><p className="mt-1 max-w-2xl text-sm leading-6 text-slate-600">Quick summaries of attendance patterns and fingerprint scanner performance.</p></div></div>
+        <div className="flex items-center gap-3"><span className="text-xs text-slate-500">Updated {generated}</span><Button variant="outline" className="border-violet-200 bg-white text-[#8642ED] hover:bg-violet-50" onClick={() => void loadInsights(true)} disabled={refreshing}><RefreshCw size={15} className={refreshing ? "animate-spin" : ""} /> Refresh</Button></div>
       </div>
     </header>
 
@@ -228,7 +230,7 @@ export function AIInsightsView() {
     <div className="space-y-4">
       <Card className="overflow-hidden">
         <div className="border-b border-slate-200 bg-gradient-to-r from-slate-50 to-white px-5 py-4 sm:px-6"><div className="flex flex-wrap items-center justify-between gap-3"><div><p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-400">Summary</p><h2 className="mt-1 text-xl font-bold text-slate-900">{meta.title}</h2></div><ReadinessBadge status={insights[selected].status} /></div><p className="mt-2 text-sm text-slate-500">{insights[selected].summary}</p></div>
-        <CardContent className="p-5 pt-5 sm:p-6 sm:pt-6">{selected === "forecast" ? <ForecastPanel data={insights.forecast} /> : selected === "risk" ? <RiskPanel data={insights.risk} /> : selected === "anomaly" ? <AnomalyPanel data={insights.anomaly} /> : <VerificationPanel data={insights.verification} />}</CardContent>
+        <CardContent className="p-5 pt-5 sm:p-6 sm:pt-6">{selected === "forecast" ? <ForecastPanel data={insights.forecast} /> : selected === "risk" ? <RiskPanel data={insights.risk} /> : selected === "anomaly" ? <AnomalyPanel data={insights.anomaly} /> : <VerificationPanel data={insights.verification} onTrialSaved={() => void loadInsights()} />}</CardContent>
       </Card>
       <div data-guide="responsible-ai" className="flex gap-3 rounded-xl border border-violet-200 bg-violet-50 px-4 py-3"><Activity className="mt-0.5 shrink-0 text-violet-600" size={17} /><p className="text-xs leading-5 text-violet-900"><strong>Reminder:</strong> Use these summaries as a guide and review the employee records before making a decision. A “Limited data” result may change as more records are collected.</p></div>
     </div>

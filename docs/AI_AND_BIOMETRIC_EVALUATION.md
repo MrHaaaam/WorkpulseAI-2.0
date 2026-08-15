@@ -2,9 +2,11 @@
 
 ## Current truth
 
-The AI Insights screen explains four proposed statistical approaches: Holt-Winters forecasting, Bradford plus time decay, Modified Z-score anomaly detection, and rolling biometric confidence health. These explanations are useful, but the current backend does not train or execute those four models. Fingerprint registration currently records an enrollment status; it does not ingest fingerprint images/templates or produce match decisions.
+The AI Insights screen now executes four deterministic analytical methods against the live MongoDB records: additive Holt-Winters attendance forecasting, Bradford plus time decay, Modified Z-score arrival anomaly detection, and rolling FingerJet scanner health. The endpoint returns the model version, input volume, status, raw supporting values, and a human-review warning. Fingerprint enrollment and kiosk verification use protected fingerprint templates and record real matcher scores.
 
-Therefore WorkPulse must not claim measured accuracy, F1, MSE, FAR, or FRR yet. No metric should be invented.
+These implementations are operational analytics, not independently validated predictive or disciplinary systems. Bradford scoring is a policy formula rather than machine learning, and scanner health is an operational matching margin rather than identity probability or certified biometric accuracy.
+
+WorkPulse must not claim measured accuracy, F1, MSE, FAR, or FRR until the evaluation protocols below are completed. No metric should be invented.
 
 ## Metrics implemented for future evaluation
 

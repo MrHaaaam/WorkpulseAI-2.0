@@ -91,6 +91,7 @@ export function EmployeeDirectoryView({ employees: initialEmployees }: Partial<E
   const [fingerprintSamples, setFingerprintSamples] = useState<string[]>([]);
   const [fingerprintDeviceUid, setFingerprintDeviceUid] = useState("");
   const [saving, setSaving] = useState(false);
+  const [sendingLogin, setSendingLogin] = useState(false);
   const [formError, setFormError] = useState("");
   const [archiveTarget, setArchiveTarget] = useState<Employee | null>(null);
   const [archivePassword, setArchivePassword] = useState("");
@@ -217,9 +218,10 @@ export function EmployeeDirectoryView({ employees: initialEmployees }: Partial<E
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || 'Unable to save employee');
       if (fingerprintSamples.length === REQUIRED_FINGERPRINT_SCANS) data.biometricStatus = 'enrolled';
-      setEmployees((current) => editingId ? current.map((employee) => employee.id === editingId ? data : employee) : [...current, data]);
+      const { loginEmailSent, ...employeeData } = data;
+      setEmployees((current) => editingId ? current.map((employee) => employee.id === editingId ? employeeData : employee) : [...current, employeeData]);
       closeEditor();
-      toast({ title: editingId ? "Employee updated" : "Employee account created", description: `${data.name}'s record was saved successfully.`, variant: "success" });
+      toast({ title: editingId ? "Employee updated" : "Employee account created", description: editingId ? `${employeeData.name}'s record was saved successfully.` : loginEmailSent ? `Login details were sent to ${employeeData.email}.` : "The employee account was created.", variant: "success" });
     } catch (reason) { const message = reason instanceof Error ? reason.message : 'Unable to save employee'; setFormError(message); toast({ title: editingId ? "Update failed" : "Account creation failed", description: message, variant: "error" }); }
     finally { setSaving(false); }
   }
@@ -229,6 +231,26 @@ export function EmployeeDirectoryView({ employees: initialEmployees }: Partial<E
     if (!type || draft.identifiers?.some((identifier) => identifier.type.toLowerCase() === type.toLowerCase())) return;
     update("identifiers", [...(draft.identifiers ?? []), { type, value: "", amount: 0 }]);
     setCustomIdentifierType("");
+  }
+
+  async function sendNewLoginEmail() {
+    if (!editingId || !adminPassword) return;
+    setSendingLogin(true);
+    setFormError("");
+    try {
+      const response = await apiFetch(`/api/employees/${editingId}/send-login-email`, {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ adminPassword }),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.error || "Unable to send new login details");
+      toast({ title: "Login email sent", description: data.message, variant: "success" });
+    } catch (reason) {
+      const message = reason instanceof Error ? reason.message : "Unable to send new login details";
+      setFormError(message);
+      toast({ title: "Login email not sent", description: message, variant: "error" });
+    } finally {
+      setSendingLogin(false);
+    }
   }
 
   async function archiveEmployee(event: React.FormEvent) {
@@ -356,10 +378,11 @@ export function EmployeeDirectoryView({ employees: initialEmployees }: Partial<E
           </div>
           {!editingId && fingerprintSamples.length !== REQUIRED_FINGERPRINT_SCANS && <p className="mt-2 text-xs font-medium text-amber-600">Capture three scans; at least two must match accurately.</p>}
           </FormSection>
+          {!editingId && <FormSection icon={<KeyRound className="h-4 w-4" />} title="Employee login" description="A login account is created together with the employee record."><div className="rounded-xl border border-sky-200 bg-sky-50 p-4"><p className="text-sm font-semibold text-sky-900">Login email: {draft.email || "Enter the employee email above"}</p><p className="mt-1 text-xs leading-5 text-sky-700">WorkPulse generates a secure password and sends it directly to this email. The password is never displayed to the administrator.</p></div></FormSection>}
           {editingId && <FormSection icon={<KeyRound className="h-4 w-4" />} title="Confirm administrator changes" description="Your admin password is required before profile, role, or fingerprint changes can be saved."><Field label="Admin password" required><Input required type="password" autoComplete="current-password" disabled={passwordRetrySeconds > 0} placeholder={passwordRetrySeconds > 0 ? `Try again in ${passwordRetrySeconds}s` : "Enter your admin password"} value={adminPassword} onChange={(event) => { setAdminPassword(event.target.value); setFormError(""); }} /></Field>{passwordRetrySeconds > 0 && <p className="mt-2 text-xs font-medium text-amber-600">Password attempts locked for {passwordRetrySeconds} more seconds.</p>}</FormSection>}
           {formError && <p className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-medium text-rose-700">{formError}</p>}
           </div>
-          <div className="flex items-center justify-between border-t border-slate-200 bg-white px-6 py-4"><p className="hidden text-xs text-slate-400 sm:block"><span className="text-rose-500">*</span> Required fields</p><div className="ml-auto flex flex-wrap justify-end gap-2">{editingId && <Button type="button" variant="outline" onClick={revertChanges}>Revert changes</Button>}<Button type="button" variant="outline" onClick={closeEditor}>Cancel</Button><Button type="submit" disabled={saving || fingerprintRegistering || passwordRetrySeconds > 0 || (editingId ? !adminPassword : fingerprintSamples.length !== REQUIRED_FINGERPRINT_SCANS)}><Fingerprint className="h-4 w-4" /> {saving ? 'Saving...' : passwordRetrySeconds > 0 ? `Wait ${passwordRetrySeconds}s` : editingId ? "Save changes" : "Create employee"}</Button></div></div>
+          <div className="flex items-center justify-between border-t border-slate-200 bg-white px-6 py-4"><p className="hidden text-xs text-slate-400 sm:block"><span className="text-rose-500">*</span> Required fields</p><div className="ml-auto flex flex-wrap justify-end gap-2">{editingId && <Button type="button" variant="outline" disabled={!adminPassword || sendingLogin} onClick={sendNewLoginEmail}><Mail className="h-4 w-4" />{sendingLogin ? "Sending..." : "Send new login email"}</Button>}{editingId && <Button type="button" variant="outline" onClick={revertChanges}>Revert changes</Button>}<Button type="button" variant="outline" onClick={closeEditor}>Cancel</Button><Button type="submit" disabled={saving || fingerprintRegistering || passwordRetrySeconds > 0 || (editingId ? !adminPassword : fingerprintSamples.length !== REQUIRED_FINGERPRINT_SCANS)}><Fingerprint className="h-4 w-4" /> {saving ? 'Saving...' : passwordRetrySeconds > 0 ? `Wait ${passwordRetrySeconds}s` : editingId ? "Save changes" : "Create employee"}</Button></div></div>
         </form>
       </Dialog>
       <Dialog open={!!archiveTarget} onClose={() => setArchiveTarget(null)} className="max-w-sm"><DialogHeader><div><h3 className="flex items-center gap-2 text-base font-bold text-slate-900"><KeyRound className="h-4 w-4 text-rose-600" /> Archive employee</h3><p className="mt-1 text-xs text-slate-500">{archiveTarget?.name} will become inactive and move to Admin Controls.</p></div><DialogClose onClose={() => setArchiveTarget(null)} /></DialogHeader><form onSubmit={archiveEmployee} className="space-y-3 px-6 pb-6 pt-3"><Field label="Confirm your admin password" required><Input type="password" autoFocus value={archivePassword} onChange={(event) => { setArchivePassword(event.target.value); setArchiveError(""); }} placeholder="Enter your password" /></Field>{archiveError && <p className="text-xs font-medium text-rose-600">{archiveError}</p>}<div className="flex justify-end gap-2"><Button type="button" variant="outline" onClick={() => setArchiveTarget(null)}>Cancel</Button><Button type="submit" variant="destructive" disabled={archiving || !archivePassword}><Archive className="h-4 w-4" />{archiving ? "Archiving..." : "Archive employee"}</Button></div></form></Dialog>

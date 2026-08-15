@@ -166,7 +166,7 @@ function anomalyInsight(attendance, employees) {
   };
 }
 
-function verificationInsight(attendance, verificationAttempts, employees, threshold) {
+function verificationInsight(attendance, verificationAttempts, evaluationTrials, employees, threshold) {
   const matches = [];
   for (const record of attendance) {
     for (const session of sessionsFor(record)) {
@@ -210,7 +210,7 @@ function verificationInsight(attendance, verificationAttempts, employees, thresh
     return {
       employeeId: attempt.employeeId || null,
       name: attempt.accepted ? names.get(attempt.employeeId) || attempt.employeeId || 'Recognized employee' : 'Unrecognized fingerprint',
-      action: attempt.accepted ? 'recognized' : 'no-match', eventTime: null,
+      action: attempt.action || (attempt.accepted ? 'recognized' : 'no-match'), eventTime: attempt.eventTime || null,
       scannedAt: asDate(attempt.createdAt)?.toISOString() || null,
       deviceUid: attempt.deviceUid || 'Unknown reader', score,
       accepted: Boolean(attempt.accepted), responseTimeMs: Number(attempt.responseTimeMs) || null,
@@ -218,14 +218,40 @@ function verificationInsight(attendance, verificationAttempts, employees, thresh
     };
   }).sort((a, b) => String(b.scannedAt).localeCompare(String(a.scannedAt))).slice(0, 20);
   const recentMatches = loggedAttempts.length ? loggedAttempts : attendanceMatches;
+  const counts = { TA: 0, TR: 0, FA: 0, FR: 0 };
+  for (const trial of evaluationTrials) if (Object.hasOwn(counts, trial.classification)) counts[trial.classification] += 1;
+  const totalTrials = counts.TA + counts.TR + counts.FA + counts.FR;
+  const genuineTrials = counts.TA + counts.FR;
+  const impostorTrials = evaluationTrials.filter((trial) => trial.expectedType === 'impostor');
+  const impostorFalseAcceptances = impostorTrials.filter((trial) => trial.classification === 'FA').length;
+  const averageResponseTimeMs = totalTrials
+    ? Math.round(evaluationTrials.slice(0, totalTrials).reduce((sum, trial) => sum + Number(trial.responseTimeMs || 0), 0) / totalTrials) : 0;
+  const evaluation = {
+    counts, totalTrials,
+    accuracy: totalTrials ? round((counts.TA + counts.TR) / totalTrials * 100) : null,
+    far: impostorTrials.length ? round(impostorFalseAcceptances / impostorTrials.length * 100) : null,
+    frr: genuineTrials ? round(counts.FR / genuineTrials * 100) : null,
+    genuineTrialCount: evaluationTrials.filter((trial) => trial.expectedType === 'genuine').length,
+    impostorTrialCount: impostorTrials.length,
+    wrongIdentificationCount: evaluationTrials.filter((trial) => trial.wrongEmployeeMatch).length,
+    minimumRecommendedTrials: 40,
+    averageResponseTimeMs,
+    recentTrials: evaluationTrials.slice(0, 20).map((trial) => ({
+      id: trial.id || String(trial._id), classification: trial.classification,
+      expectedType: trial.expectedType, expectedEmployeeName: trial.expectedEmployeeName || null,
+      actualEmployeeName: trial.actualEmployeeName || null, accepted: Boolean(trial.accepted),
+      wrongEmployeeMatch: Boolean(trial.wrongEmployeeMatch), responseTimeMs: Number(trial.responseTimeMs || 0),
+      createdAt: asDate(trial.createdAt)?.toISOString() || null,
+    })),
+  };
   return {
     version: 'Rolling FingerJet operational health', status: recent.length ? 'ready' : 'limited', matchesAnalyzed: recent.length,
-    threshold, averageHealth, scanners, recentMatches,
+    threshold, averageHealth, scanners, recentMatches, evaluation,
     summary: recent.length ? `${averageHealth}% average scanner match quality` : 'No verified fingerprint matches recorded yet',
   };
 }
 
-export function buildAIInsights({ attendance = [], employees = [], leaveRequests = [], verificationAttempts = [], now = new Date(), fingerJetThreshold = 21_474 } = {}) {
+export function buildAIInsights({ attendance = [], employees = [], leaveRequests = [], verificationAttempts = [], evaluationTrials = [], now = new Date(), fingerJetThreshold = 21_474 } = {}) {
   const today = isoDate(now);
   const activeEmployees = employees.filter((employee) => employee.archived !== true && employee.status !== 'inactive');
   return {
@@ -233,7 +259,7 @@ export function buildAIInsights({ attendance = [], employees = [], leaveRequests
     forecast: forecastInsight(attendance, activeEmployees.length, today),
     risk: riskInsight(attendance, activeEmployees, leaveRequests, today),
     anomaly: anomalyInsight(attendance, activeEmployees),
-    verification: verificationInsight(attendance, verificationAttempts, activeEmployees, fingerJetThreshold),
+    verification: verificationInsight(attendance, verificationAttempts, evaluationTrials, activeEmployees, fingerJetThreshold),
     disclaimer: 'These signals support human review. They must not be used as the sole basis for discipline, payroll decisions, or employment action.',
   };
 }

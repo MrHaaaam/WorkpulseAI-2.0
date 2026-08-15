@@ -58,7 +58,7 @@ export function decryptFingerprintSamples(payload) {
   return normalizeFingerprintSamples(samples, samples.length);
 }
 
-function threshold() {
+export function fingerprintMatchThreshold() {
   const configured = Number.parseInt(String(process.env.FINGERPRINT_MATCH_THRESHOLD ?? ''), 10);
   return Number.isFinite(configured) && configured > 0 ? configured : DEFAULT_THRESHOLD;
 }
@@ -107,10 +107,10 @@ export async function extractFingerprintTemplates(samples) {
 }
 
 export async function validateEnrollmentSamples(samples) {
-  const matchThreshold = threshold();
+  const matchThreshold = fingerprintMatchThreshold();
   const extracted = await extractFingerprintTemplates(samples);
   const templates = extracted.templates;
-  const connected = samples.map((_, index) => new Set([index]));
+  const matchingPairs = [];
   let acceptedFormat = extracted.format;
 
   // Compare every pair instead of making the first impression mandatory. One
@@ -126,8 +126,7 @@ export async function validateEnrollmentSamples(samples) {
       if (!item.format || Number(item.score) > matchThreshold) continue;
       const candidateIndex = Number(String(item.employeeId).replace('capture-', ''));
       if (!Number.isInteger(candidateIndex) || candidateIndex < 0 || candidateIndex >= samples.length) continue;
-      connected[probeIndex].add(candidateIndex);
-      connected[candidateIndex].add(probeIndex);
+      matchingPairs.push({ first: probeIndex, second: candidateIndex, score: Number(item.score) });
     }
   }
 
@@ -135,19 +134,16 @@ export async function validateEnrollmentSamples(samples) {
     throw new BiometricError('The reader sample format is not supported by the installed HID FingerJet matcher. Recapture using a supported reader.', 422);
   }
 
-  const hasTwoConsistentScans = connected.some((_, start) => {
-    const visited = new Set([start]);
-    const queue = [start];
-    while (queue.length) {
-      const current = queue.shift();
-      for (const neighbor of connected[current]) {
-        if (!visited.has(neighbor)) { visited.add(neighbor); queue.push(neighbor); }
-      }
-    }
-    return visited.size >= 2;
-  });
-  if (!hasTwoConsistentScans) throw new BiometricError('The enrollment scans did not match closely enough. At least two of the three scans must come from the same finger.');
-  return { threshold: matchThreshold, format: acceptedFormat, templates };
+  if (!matchingPairs.length) throw new BiometricError('The enrollment scans did not match closely enough. At least two of the three scans must come from the same finger.');
+
+  // Store all three only when every pair agrees. Otherwise keep the closest
+  // matching pair and discard the outlier so it cannot cause kiosk false matches.
+  const pairKeys = new Set(matchingPairs.map((pair) => `${Math.min(pair.first, pair.second)}:${Math.max(pair.first, pair.second)}`));
+  const allThreeAgree = templates.length === 3 && pairKeys.has('0:1') && pairKeys.has('0:2') && pairKeys.has('1:2');
+  const consistentIndexes = allThreeAgree
+    ? [0, 1, 2]
+    : matchingPairs.sort((left, right) => left.score - right.score).slice(0, 1).flatMap((pair) => [pair.first, pair.second]);
+  return { threshold: matchThreshold, format: acceptedFormat, templates: consistentIndexes.map((index) => templates[index]) };
 }
 
 export async function findFingerprintDecision(probe, templateDocuments) {
@@ -156,10 +152,10 @@ export async function findFingerprintDecision(probe, templateDocuments) {
     try { candidates.push({ employeeId: template.employeeId, samples: decryptFingerprintSamples(template.protectedSamples) }); }
     catch (error) { console.error(`Biometric template ${template.employeeId} could not be decrypted:`, error instanceof Error ? error.message : error); }
   }
-  if (!candidates.length) return { accepted: false, best: null, threshold: threshold() };
+  if (!candidates.length) return { accepted: false, best: null, threshold: fingerprintMatchThreshold() };
   const result = await runFingerprintMatcher(probe, candidates);
   const best = result.best;
-  const matchThreshold = threshold();
+  const matchThreshold = fingerprintMatchThreshold();
   return {
     accepted: Boolean(best && Number(best.score) <= matchThreshold),
     best: best ? { employeeId: best.employeeId, score: Number(best.score), format: best.format } : null,
@@ -173,8 +169,16 @@ export async function findFingerprintMatch(probe, templateDocuments) {
 }
 
 export async function rejectDuplicateEnrollment(db, employeeId, enrollmentTemplates) {
-  const storedTemplates = await db.collection('biometric_templates').find({ employeeId: { $ne: employeeId } }).toArray();
+  const activeEmployees = await db.collection('employees').find(
+    { id: { $ne: employeeId }, archived: { $ne: true }, status: { $ne: 'inactive' } },
+    { projection: { id: 1 } },
+  ).toArray();
+  const activeEmployeeIds = activeEmployees.map((employee) => employee.id).filter(Boolean);
+  if (!activeEmployeeIds.length) return;
+  const storedTemplates = await db.collection('biometric_templates').find({ employeeId: { $in: activeEmployeeIds } }).toArray();
   if (!storedTemplates.length) return;
-  const duplicate = await findFingerprintMatch(enrollmentTemplates[0], storedTemplates);
-  if (duplicate) throw new BiometricError('This fingerprint is already registered to another employee', 409);
+  for (const enrollmentTemplate of enrollmentTemplates) {
+    const duplicate = await findFingerprintMatch(enrollmentTemplate, storedTemplates);
+    if (duplicate) throw new BiometricError('This fingerprint is already registered to another employee', 409);
+  }
 }

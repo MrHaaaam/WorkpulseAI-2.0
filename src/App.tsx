@@ -4,19 +4,22 @@ import AdminOverviewRedirect from './pages/AdminOverviewRedirect';
 import { restoreSession, storeSession } from './lib/api';
 import { EmployeePortal } from './views/EmployeePortal';
 import { AttendanceKioskView } from './views/AttendanceKioskView';
+import { InitialPasswordChangeView } from './views/InitialPasswordChangeView';
 
 function ProtectedDashboard() {
   const [authorized, setAuthorized] = useState<boolean | null>(null);
   const [role, setRole] = useState<string>('');
+  const [mustChangePassword, setMustChangePassword] = useState(false);
 
   useEffect(() => {
     restoreSession()
-      .then(({ response, data }) => { if (response.ok && data) { storeSession(data); setRole(data.role ?? ''); } setAuthorized(response.ok); })
+      .then(({ response, data }) => { if (response.ok && data) { storeSession(data); setRole(data.role ?? ''); setMustChangePassword(data.mustChangePassword === true); } setAuthorized(response.ok); })
       .catch(() => setAuthorized(false));
   }, []);
 
   if (authorized === null) return <div className="flex min-h-screen items-center justify-center bg-slate-50 text-sm text-slate-500">Verifying secure session...</div>;
   if (!authorized) return <Login />;
+  if ((role === 'regular' || role === 'extra') && mustChangePassword) return <InitialPasswordChangeView onComplete={() => setMustChangePassword(false)} />;
   if (role === 'regular' || role === 'extra') return <EmployeePortal />;
   return <AdminOverviewRedirect />;
 }

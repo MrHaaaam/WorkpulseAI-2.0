@@ -13,7 +13,7 @@ import { AdminView } from '../views/AdminView';
 import { AttendanceView } from '../views/AttendanceView';
 import { apiFetch } from '../lib/api';
 
-type OverviewEmployee = { status: string; biometricStatus: string };
+type OverviewEmployee = { status: string; biometricStatus: string; createdAt?: string };
 type OverviewPayroll = { status: string; periodStart?: string };
 type OverviewAttendance = { employeeId?: string; name?: string; role?: string; date?: string; checkIn?: string; checkOut?: string; status: string };
 type OverviewLeave = { id: string; employeeId?: string; startDate: string; endDate: string; totalDays: number; status: string };
@@ -34,50 +34,69 @@ function readableAuditAction(action = 'unknown', targetType = 'system') {
   return action.replace(/[._-]/g, ' ').replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
 
-function attendanceTrend(records: OverviewAttendance[], mode: 'daily' | 'weekly' | 'monthly') {
-  const parsed = records
-    .map((record) => ({ ...record, parsedDate: new Date(`${record.date}T00:00:00`) }))
-    .filter((record) => !Number.isNaN(record.parsedDate.getTime()))
-    .sort((a, b) => a.parsedDate.getTime() - b.parsedDate.getTime());
-  const buckets = new Map<string, { label: string; present: number; late: number; absent: number; order: number }>();
+function attendanceTrend(records: OverviewAttendance[], mode: 'daily' | 'weekly' | 'monthly', anchorDate: string) {
+  const anchor = new Date(`${anchorDate}T00:00:00Z`);
+  if (Number.isNaN(anchor.getTime())) return [];
 
-  parsed.forEach((record) => {
-    const date = record.parsedDate;
-    let key: string;
-    let label: string;
-    let order: number;
-    if (mode === 'daily') {
-      key = record.date!;
-      label = date.toLocaleDateString('en-US', { weekday: 'short' });
-      order = date.getTime();
-    } else if (mode === 'weekly') {
-      const monday = new Date(date);
-      monday.setDate(date.getDate() - ((date.getDay() + 6) % 7));
-      key = monday.toISOString().slice(0, 10);
-      label = monday.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-      order = monday.getTime();
-    } else {
-      key = `${date.getFullYear()}-${date.getMonth()}`;
-      label = date.toLocaleDateString('en-US', { month: 'short' });
-      order = new Date(date.getFullYear(), date.getMonth(), 1).getTime();
+  const buckets = new Map<string, { label: string; present: number; late: number; absent: number }>();
+  const dateKey = (date: Date) => date.toISOString().slice(0, 10);
+  const mondayFor = (date: Date) => {
+    const monday = new Date(date);
+    monday.setUTCDate(date.getUTCDate() - ((date.getUTCDay() + 6) % 7));
+    return monday;
+  };
+  const bucketKey = (date: Date) => {
+    if (mode === 'daily') return dateKey(date);
+    if (mode === 'weekly') return dateKey(mondayFor(date));
+    return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, '0')}`;
+  };
+
+  const bucketDates: Date[] = [];
+  const bucketCount = mode === 'daily' ? 7 : 6;
+  for (let index = bucketCount - 1; index >= 0; index -= 1) {
+    const date = mode === 'weekly' ? mondayFor(anchor) : new Date(anchor);
+    if (mode === 'daily') date.setUTCDate(anchor.getUTCDate() - index);
+    if (mode === 'weekly') date.setUTCDate(date.getUTCDate() - index * 7);
+    if (mode === 'monthly') {
+      date.setUTCDate(1);
+      date.setUTCMonth(anchor.getUTCMonth() - index);
     }
-    const bucket = buckets.get(key) ?? { label, present: 0, late: 0, absent: 0, order };
+    bucketDates.push(date);
+  }
+
+  bucketDates.forEach((date) => {
+    const label = mode === 'daily'
+      ? date.toLocaleDateString('en-US', { timeZone: 'UTC', weekday: 'short', month: 'numeric', day: 'numeric' })
+      : date.toLocaleDateString('en-US', { timeZone: 'UTC', month: 'short', ...(mode === 'weekly' ? { day: 'numeric' } : {}) });
+    buckets.set(bucketKey(date), { label, present: 0, late: 0, absent: 0 });
+  });
+
+  records.forEach((record) => {
+    if (!record.date) return;
+    const date = new Date(`${record.date}T00:00:00Z`);
+    if (Number.isNaN(date.getTime())) return;
+    if (date.getTime() > anchor.getTime()) return;
+    const bucket = buckets.get(bucketKey(date));
+    if (!bucket) return;
     if (record.status === 'Present') bucket.present += 1;
     if (record.status === 'Late') bucket.late += 1;
     if (record.status === 'Absent') bucket.absent += 1;
-    buckets.set(key, bucket);
   });
 
-  const limit = mode === 'daily' ? 7 : mode === 'weekly' ? 6 : 6;
-  return [...buckets.values()].sort((a, b) => a.order - b.order).slice(-limit).map((bucket) => ({
-    label: bucket.label, present: bucket.present, late: bucket.late, absent: bucket.absent,
-  }));
+  return [...buckets.values()];
 }
 
 function currentPayrollPeriodKey() {
   const now = new Date();
   const day = now.getDate() <= 15 ? 1 : 16;
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+}
+
+function manilaDateToday() {
+  const parts = Object.fromEntries(new Intl.DateTimeFormat('en-US', {
+    timeZone: 'Asia/Manila', year: 'numeric', month: '2-digit', day: '2-digit',
+  }).formatToParts(new Date()).filter((part) => part.type !== 'literal').map((part) => [part.type, part.value]));
+  return `${parts.year}-${parts.month}-${parts.day}`;
 }
 
 export function AppRoutes() {
@@ -88,6 +107,9 @@ export function AppRoutes() {
   const [active, setActive] = useState<ViewKey>(initialView);
   const [guideOpen, setGuideOpen] = useState(false);
   const [mobileNavigationOpen, setMobileNavigationOpen] = useState(false);
+  const [overviewWorkforceDate, setOverviewWorkforceDate] = useState(manilaDateToday);
+  const [overviewPerformanceDate, setOverviewPerformanceDate] = useState(manilaDateToday);
+  const [overviewViewMode, setOverviewViewMode] = useState<'daily' | 'weekly' | 'monthly'>('weekly');
 
   const [overviewEmployees, setOverviewEmployees] = useState<OverviewEmployee[]>([]);
   const [overviewPayroll, setOverviewPayroll] = useState<OverviewPayroll[]>([]);
@@ -153,10 +175,10 @@ export function AppRoutes() {
   }, [overviewEmployees, overviewPayroll]);
 
   const attendanceTrends = useMemo(() => ({
-    daily: attendanceTrend(overviewAttendance, 'daily'),
-    weekly: attendanceTrend(overviewAttendance, 'weekly'),
-    monthly: attendanceTrend(overviewAttendance, 'monthly'),
-  }), [overviewAttendance]);
+    daily: attendanceTrend(overviewAttendance, 'daily', overviewPerformanceDate),
+    weekly: attendanceTrend(overviewAttendance, 'weekly', overviewPerformanceDate),
+    monthly: attendanceTrend(overviewAttendance, 'monthly', overviewPerformanceDate),
+  }), [overviewAttendance, overviewPerformanceDate]);
 
   const latestAttendanceDate = useMemo(() => overviewAttendance.reduce((latest, record) =>
     record.date && record.date > latest ? record.date : latest, ''), [overviewAttendance]);
@@ -165,17 +187,14 @@ export function AppRoutes() {
     const total = overviewAttendance.length;
     const attended = overviewAttendance.filter((record) => record.status === 'Present' || record.status === 'Late').length;
     const onTime = overviewAttendance.filter((record) => record.status === 'Present').length;
-    const biometricCoverage = overviewEmployees.length
-      ? overviewEmployees.filter((employee) => employee.biometricStatus === 'enrolled').length / overviewEmployees.length * 100 : 0;
     return {
       attendanceRate: total ? attended / total * 100 : 0,
       punctualityRate: attended ? onTime / attended * 100 : 0,
-      biometricCoverage,
       payrollCompletion: overviewPayroll.filter((payroll) => payroll.periodStart === currentPayrollPeriodKey()).length
         ? overviewPayroll.filter((payroll) => payroll.periodStart === currentPayrollPeriodKey() && payroll.status === 'paid').length
           / overviewPayroll.filter((payroll) => payroll.periodStart === currentPayrollPeriodKey()).length * 100 : 0,
     };
-  }, [overviewAttendance, overviewEmployees, overviewPayroll]);
+  }, [overviewAttendance, overviewPayroll]);
 
   const auditTrail = useMemo(() => overviewAuditEvents.map((event) => {
     const occurredAt = event.occurredAt ? new Date(event.occurredAt) : null;
@@ -196,10 +215,17 @@ export function AppRoutes() {
     overview: (
       <AdminOverviewView 
         attendanceTrends={attendanceTrends}
+        viewMode={overviewViewMode}
+        onViewModeChange={setOverviewViewMode}
         auditTrail={auditTrail}
         metrics={adminMetricsData}
         analytics={attendanceAnalytics}
         latestAttendanceDate={latestAttendanceDate}
+        workforceDate={overviewWorkforceDate}
+        onWorkforceDateChange={setOverviewWorkforceDate}
+        performanceDate={overviewPerformanceDate}
+        onPerformanceDateChange={setOverviewPerformanceDate}
+        employees={overviewEmployees}
         leaveRequests={overviewLeaves}
         attendanceRecords={overviewAttendance}
         auditLoading={auditLoading}

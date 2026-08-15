@@ -159,9 +159,13 @@ code {
 }
 
 @media print {
-  body * { visibility: hidden !important; }
+  @page { size: A4 portrait; margin: 12mm; }
+  html, body { height: auto !important; min-height: 0 !important; overflow: visible !important; background: white !important; }
+  body:has(.print-payslip) *:not(:has(.print-payslip)):not(.print-payslip):not(.print-payslip *) { display: none !important; }
+  body:has(.print-payslip) *:has(.print-payslip) { min-height: 0 !important; height: auto !important; max-height: none !important; overflow: visible !important; margin: 0 !important; padding: 0 !important; }
   .print-payslip, .print-payslip * { visibility: visible !important; }
-  .print-payslip { position: absolute; inset: 0; width: 100%; padding: 24px; background: white; }
+  .print-payslip { position: static !important; inset: auto !important; width: 100%; max-width: none !important; padding: 0; background: white; color: #0f172a; print-color-adjust: exact; -webkit-print-color-adjust: exact; }
+  .print-payslip button { display: none !important; }
   .no-print { display: none !important; }
 }
 .animate-pulse-ring {

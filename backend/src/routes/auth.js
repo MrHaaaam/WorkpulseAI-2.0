@@ -4,6 +4,7 @@ import { promisify } from 'node:util';
 import mongoose from 'mongoose';
 import nodemailer from 'nodemailer';
 import { auditEvent, authenticate, clearSessionCookie, createCsrfToken, csrfProtection, getRequestToken, rateLimit, setSessionCookie } from '../security.js';
+import { getSystemControls } from '../system-controls.js';
 
 const router = Router();
 const scrypt = promisify(crypto.scrypt);
@@ -82,6 +83,10 @@ router.post('/login', loginLimit, async (request, response) => {
     let accountType = 'admin';
     if (!account) { account = await db.collection('employee_accounts').findOne({ email: normalizedEmail, active: true }); accountType = 'employee'; }
     if (!account || !(await verifySecret(password, account.passwordHash))) { await auditEvent({ req: request, actor: account, action: 'auth.login', targetType: 'session', outcome: 'failure', metadata: { reason: 'credentials' } }); return response.status(401).json({ error: 'Invalid email or password' }); }
+    if (accountType === 'employee' && (await getSystemControls(db)).maintenanceMode) {
+      await auditEvent({ req: request, actor: account, action: 'auth.login', targetType: 'session', outcome: 'failure', metadata: { reason: 'maintenance_mode' } });
+      return response.status(503).json({ error: 'WorkPulse is temporarily available to administrators only while maintenance is in progress.' });
+    }
 
     if (!process.env.SMTP_USER || !process.env.SMTP_APP_PASSWORD) return response.status(503).json({ error: 'Email OTP is not configured on the server' });
     const otp = String(crypto.randomInt(100000, 1_000_000));
@@ -122,8 +127,20 @@ router.post('/verify-otp', otpLimit, async (request, response) => {
   await db.collection('admin_sessions').insertOne({ tokenDigest, csrfDigest: csrf.tokenDigest, accountId, accountType, ...(accountType === 'admin' ? { adminId: accountId } : {}), createdAt: new Date(), expiresAt: new Date(Date.now() + 8 * 60 * 60_000) });
   setSessionCookie(response, token);
   const account = await db.collection(accountType === 'employee' ? 'employee_accounts' : 'admin_accounts').findOne({ _id: accountId });
+  if (accountType === 'employee' && account && typeof account.mustChangePassword !== 'boolean' && !account.passwordChangedAt) {
+    account.mustChangePassword = true;
+    await db.collection('employee_accounts').updateOne(
+      { _id: account._id, mustChangePassword: { $exists: false } },
+      { $set: { mustChangePassword: true, updatedAt: new Date() } },
+    );
+  }
   await auditEvent({ req: request, actor: account, action: 'auth.login', targetType: 'session', outcome: 'success' });
-  response.json({ csrfToken: csrf.token, role: account?.role ?? 'admin' });
+  response.json({
+    csrfToken: csrf.token,
+    role: account?.role ?? 'admin',
+    accountType,
+    mustChangePassword: accountType === 'employee' && account?.mustChangePassword === true,
+  });
 });
 
 router.get('/session', async (request, response) => {
@@ -138,7 +155,41 @@ router.get('/session', async (request, response) => {
   const accountType = session.accountType ?? 'admin';
   const account = await mongoose.connection.db.collection(accountType === 'employee' ? 'employee_accounts' : 'admin_accounts').findOne({ _id: accountId, active: true });
   if (!account) return response.status(401).json({ authenticated: false });
-  response.json({ authenticated: true, csrfToken: csrf.token, role: account.role, accountType });
+  if (accountType === 'employee' && (await getSystemControls(mongoose.connection.db)).maintenanceMode) {
+    return response.status(503).json({ authenticated: false, error: 'WorkPulse is temporarily available to administrators only while maintenance is in progress.' });
+  }
+  response.json({
+    authenticated: true,
+    csrfToken: csrf.token,
+    role: account.role,
+    accountType,
+    mustChangePassword: accountType === 'employee' && account.mustChangePassword === true,
+  });
+});
+
+router.post('/change-initial-password', authenticate, csrfProtection, async (request, response) => {
+  try {
+    if (request.auth?.accountType !== 'employee') return response.status(403).json({ error: 'Employee account required' });
+    const newPassword = request.body?.newPassword;
+    if (typeof newPassword !== 'string' || newPassword.length < 8 || newPassword.length > 32) {
+      return response.status(400).json({ error: 'Your new password must be between 8 and 32 characters.' });
+    }
+    const account = request.auth.actor;
+    if (account.mustChangePassword !== true) return response.status(409).json({ error: 'This temporary password has already been replaced.' });
+    if (await verifySecret(newPassword, account.passwordHash)) {
+      return response.status(400).json({ error: 'Choose a password different from your temporary password.' });
+    }
+    const changedAt = new Date();
+    await mongoose.connection.db.collection('employee_accounts').updateOne(
+      { _id: account._id, mustChangePassword: true },
+      { $set: { passwordHash: await hashSecret(newPassword), mustChangePassword: false, passwordChangedAt: changedAt, updatedAt: changedAt } },
+    );
+    await auditEvent({ req: request, actor: account, action: 'auth.initial_password_changed', targetType: 'employee_account', targetId: account.employeeId, outcome: 'success' });
+    response.json({ changed: true });
+  } catch (error) {
+    console.error('Initial password change failed:', error instanceof Error ? error.message : error);
+    response.status(500).json({ error: 'Unable to save your new password. Please try again.' });
+  }
 });
 
 router.post('/verify-password', authenticate, csrfProtection, async (request, response) => {

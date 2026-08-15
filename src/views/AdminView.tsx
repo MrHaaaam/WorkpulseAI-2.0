@@ -1,5 +1,5 @@
-import { useEffect, useState } from "react";
-import { Archive, Check, KeyRound, RotateCcw, ShieldCheck, X } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { Archive, Check, DatabaseBackup, KeyRound, LogOut, RotateCcw, ShieldCheck, Trash2, UserPlus, Wrench, X } from "lucide-react";
 
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "../components/ui/Card";
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from "../components/ui/Table";
@@ -20,34 +20,111 @@ const hoverScrollbarClasses =
 export function AdminView() {
   const { toast } = useToast();
   const [localEmployees, setLocalEmployees] = useState<(Employee & { banned?: boolean })[]>([]);
-  const [archivedAccounts, setArchivedAccounts] = useState<{ id: string; name: string; type: "Employee"; record: Employee & { banned?: boolean } }[]>([]);
+  const [archivedAccounts, setArchivedAccounts] = useState<{ id: string; name: string; type: "Employee"; record: Employee & { banned?: boolean; archivedAt?: string } }[]>([]);
   const [adminUnlocked, setAdminUnlocked] = useState(false);
   const [passwordPromptOpen, setPasswordPromptOpen] = useState(false);
   const [archiveOpen, setArchiveOpen] = useState(false);
   const [password, setPassword] = useState("");
   const [passwordError, setPasswordError] = useState("");
   const [passwordRetrySeconds, setPasswordRetrySeconds] = useState(0);
+  const [controls, setControls] = useState({ maintenanceMode: false, registrationOpen: true, updatedAt: null as string | null });
+  const [controlBusy, setControlBusy] = useState<string | null>(null);
+  const [archiveReferenceTime] = useState(() => Date.now());
+  const [archiveRange, setArchiveRange] = useState<"30d" | "1y" | "5y" | "all">("all");
+  const [deleteTarget, setDeleteTarget] = useState<(typeof archivedAccounts)[number] | null>(null);
+  const [deletePassword, setDeletePassword] = useState("");
+  const [deleteError, setDeleteError] = useState("");
+  const [deleting, setDeleting] = useState(false);
+
+  const filteredArchivedAccounts = useMemo(() => {
+    if (archiveRange === "all") return archivedAccounts;
+    const rangeDays = archiveRange === "30d" ? 30 : archiveRange === "1y" ? 365 : 365 * 5;
+    const cutoff = archiveReferenceTime - rangeDays * 86400000;
+    return archivedAccounts.filter((account) => {
+      const archivedAt = new Date(account.record.archivedAt ?? "").getTime();
+      return Number.isFinite(archivedAt) && archivedAt >= cutoff;
+    });
+  }, [archiveRange, archiveReferenceTime, archivedAccounts]);
 
   useEffect(() => {
     if (passwordRetrySeconds <= 0) return;
     const timer = window.setInterval(() => setPasswordRetrySeconds((seconds) => Math.max(0, seconds - 1)), 1000);
     return () => window.clearInterval(timer);
-  }, [passwordRetrySeconds > 0]);
+  }, [passwordRetrySeconds]);
 
   useEffect(() => {
-    Promise.all([apiFetch('/api/employees'), apiFetch('/api/archived-employees')]).then(async ([activeResponse, archivedResponse]) => {
+    Promise.all([apiFetch('/api/employees'), apiFetch('/api/archived-employees'), apiFetch('/api/admin/system-controls')]).then(async ([activeResponse, archivedResponse, controlsResponse]) => {
       if (activeResponse.ok) setLocalEmployees(await activeResponse.json());
       if (archivedResponse.ok) {
         const archived = await archivedResponse.json() as (Employee & { banned?: boolean })[];
         setArchivedAccounts(archived.map((record) => ({ id: record.id, name: record.name, type: 'Employee' as const, record })));
       }
+      if (controlsResponse.ok) setControls(await controlsResponse.json());
     }).catch(() => {});
   }, []);
 
-  function toggleBanEmployee(id: string) {
+  async function toggleBanEmployee(id: string) {
     const employee = localEmployees.find((item) => item.id === id);
-    setLocalEmployees((prev) => prev.map((e) => (e.id === id ? { ...e, banned: !(e as any).banned } : e)));
-    if (employee) toast({ title: (employee as any).banned ? "Account access restored" : "Account access blocked", description: `${employee.name}'s access was updated.`, variant: (employee as any).banned ? "success" : "info" });
+    if (!employee) return;
+    const banned = !employee.banned;
+    if (!window.confirm(`${banned ? "Block" : "Restore"} ${employee.name}'s account access?${banned ? " Any active employee session will be signed out." : ""}`)) return;
+    const response = await apiFetch(`/api/admin/employees/${id}/access`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ banned }) });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) return toast({ title: "Access was not updated", description: data.error || "Please try again.", variant: "error" });
+    setLocalEmployees((current) => current.map((item) => item.id === id ? { ...item, banned } : item));
+    toast({ title: banned ? "Account access blocked" : "Account access restored", description: `${employee.name}'s access was updated.`, variant: banned ? "info" : "success" });
+  }
+
+  async function updateControl(key: "maintenanceMode" | "registrationOpen", value: boolean) {
+    const message = key === "maintenanceMode"
+      ? value ? "Turn on maintenance mode? All employee users will be locked out until it is turned off." : "Turn off maintenance mode and restore employee access?"
+      : value ? "Open new employee registration?" : "Restrict new employee registration? Administrators will not be able to create employees until it is reopened.";
+    if (!window.confirm(message)) return;
+    setControlBusy(key);
+    try {
+      const response = await apiFetch('/api/admin/system-controls', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ [key]: value }) });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.error || 'Control was not updated');
+      setControls(data);
+      toast({ title: "System control updated", description: key === "maintenanceMode" ? `Maintenance mode is now ${value ? "on" : "off"}.` : `Registration is now ${value ? "open" : "restricted"}.`, variant: "success" });
+    } catch (reason) { toast({ title: "Control was not updated", description: reason instanceof Error ? reason.message : "Please try again.", variant: "error" }); }
+    finally { setControlBusy(null); }
+  }
+
+  async function forceClockOut() {
+    if (!window.confirm("Force clock out every employee who is currently clocked in? This will close their open attendance session using the current time.")) return;
+    setControlBusy("clock-out");
+    try {
+      const response = await apiFetch('/api/admin/force-clock-out', { method: 'POST' });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.error || 'Force clock out failed');
+      toast({ title: "Force clock out complete", description: `${data.clockedOut} open ${data.clockedOut === 1 ? "session was" : "sessions were"} closed at ${data.time}.`, variant: "success" });
+    } catch (reason) { toast({ title: "Employees were not clocked out", description: reason instanceof Error ? reason.message : "Please try again.", variant: "error" }); }
+    finally { setControlBusy(null); }
+  }
+
+  async function createBackup() {
+    const suggestedName = `workpulse-backup-${new Date().toISOString().slice(0, 10)}.json`;
+    const picker = (window as Window & { showSaveFilePicker?: (options: unknown) => Promise<{ createWritable: () => Promise<{ write: (data: Blob) => Promise<void>; close: () => Promise<void> }> }> }).showSaveFilePicker;
+    let handle: Awaited<ReturnType<NonNullable<typeof picker>>> | null = null;
+    if (picker) {
+      try {
+        handle = await picker({ suggestedName, types: [{ description: 'WorkPulse JSON backup', accept: { 'application/json': ['.json'] } }] });
+      } catch (reason) {
+        if (reason instanceof DOMException && reason.name === 'AbortError') return;
+        return toast({ title: "Backup location was not selected", description: "No database data was downloaded.", variant: "info" });
+      }
+    } else if (!window.confirm("Your browser cannot show a folder picker. It will use your browser's Downloads location instead. Continue?")) return;
+    setControlBusy("backup");
+    try {
+      const response = await apiFetch('/api/admin/backup');
+      if (!response.ok) { const data = await response.json().catch(() => ({})); throw new Error(data.error || 'Backup could not be generated'); }
+      const blob = await response.blob();
+      if (handle) { const writable = await handle.createWritable(); await writable.write(blob); await writable.close(); }
+      else { const url = URL.createObjectURL(blob); const link = document.createElement('a'); link.href = url; link.download = suggestedName; link.click(); window.setTimeout(() => URL.revokeObjectURL(url), 1000); }
+      toast({ title: "Backup saved", description: "The WorkPulse business-data backup was saved to the location you approved.", variant: "success" });
+    } catch (reason) { toast({ title: "Backup was not saved", description: reason instanceof Error ? reason.message : "Please try again.", variant: "error" }); }
+    finally { setControlBusy(null); }
   }
 
   async function unlockAdminControls(event: React.FormEvent) {
@@ -82,6 +159,30 @@ export function AdminView() {
     setLocalEmployees((current) => [...current, { ...restored, banned: false }]);
     setArchivedAccounts((current) => current.filter((item) => item.id !== id));
     toast({ title: "Account restored", description: `${account.name} returned to the employee directory.`, variant: "success" });
+  }
+
+  async function permanentlyDeleteAccount(event: React.FormEvent) {
+    event.preventDefault();
+    if (!deleteTarget || !deletePassword) return;
+    setDeleting(true);
+    setDeleteError("");
+    try {
+      const response = await apiFetch(`/api/employees/${deleteTarget.id}/permanent`, {
+        method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ password: deletePassword }),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.error || "Permanent deletion failed");
+      setArchivedAccounts((current) => current.filter((account) => account.id !== deleteTarget.id));
+      toast({ title: "Employee permanently deleted", description: `${deleteTarget.name} and all linked database records were deleted.`, variant: "success" });
+      setDeleteTarget(null);
+      setDeletePassword("");
+    } catch (reason) {
+      const message = reason instanceof Error ? reason.message : "Permanent deletion failed";
+      setDeleteError(message);
+      toast({ title: "Employee was not deleted", description: message, variant: "error" });
+    } finally {
+      setDeleting(false);
+    }
   }
 
   if (!adminUnlocked) return (
@@ -131,15 +232,15 @@ export function AdminView() {
                       </TableCell>
                       <TableCell className="capitalize text-slate-600">{e.role}</TableCell>
                       <TableCell>
-                        {(e as any).banned ? (
+                        {e.banned ? (
                           <Badge variant="danger">Banned</Badge>
                         ) : (
                           <Badge variant="success">Active</Badge>
                         )}
                       </TableCell>
                       <TableCell className="text-right">
-                        <Button size="sm" variant={(e as any).banned ? "outline" : undefined} onClick={() => toggleBanEmployee(e.id)}>
-                          {(e as any).banned ? (
+                        <Button size="sm" variant={e.banned ? "outline" : undefined} onClick={() => void toggleBanEmployee(e.id)}>
+                          {e.banned ? (
                             <><Check className="mr-1.5 h-3.5 w-3.5" />Unban</>
                           ) : (
                             <><X className="mr-1.5 h-3.5 w-3.5" />Ban</>
@@ -175,22 +276,28 @@ export function AdminView() {
               </TableHeader>
               <TableBody>
                 <TableRow>
-                  <TableCell className="font-medium text-slate-900">Maintenance Mode</TableCell>
+                  <TableCell className="font-medium text-slate-900"><span className="flex items-center gap-2"><Wrench className="h-4 w-4 text-slate-400" />Maintenance Mode</span></TableCell>
                   <TableCell className="text-slate-500 text-sm">Lock out all non-admin users instantly</TableCell>
-                  <TableCell><Badge variant="neutral">Off</Badge></TableCell>
-                  <TableCell className="text-right"><Button size="sm" variant="outline">Toggle</Button></TableCell>
+                  <TableCell><Badge variant={controls.maintenanceMode ? "warning" : "neutral"}>{controls.maintenanceMode ? "On" : "Off"}</Badge></TableCell>
+                  <TableCell className="text-right"><Button size="sm" variant="outline" disabled={controlBusy === "maintenanceMode"} onClick={() => void updateControl("maintenanceMode", !controls.maintenanceMode)}>{controls.maintenanceMode ? "Turn Off" : "Turn On"}</Button></TableCell>
                 </TableRow>
                 <TableRow>
-                  <TableCell className="font-medium text-slate-900">Automated Backups</TableCell>
-                  <TableCell className="text-slate-500 text-sm">Daily database snapshots at 00:00 UTC</TableCell>
-                  <TableCell><Badge variant="success">Active</Badge></TableCell>
-                  <TableCell className="text-right"><Button size="sm" variant="outline">Configure</Button></TableCell>
+                  <TableCell className="font-medium text-slate-900"><span className="flex items-center gap-2"><DatabaseBackup className="h-4 w-4 text-slate-400" />Database Backup</span></TableCell>
+                  <TableCell className="text-slate-500 text-sm">Save business records and encrypted biometric templates to a location you approve</TableCell>
+                  <TableCell><Badge variant="info">Manual</Badge></TableCell>
+                  <TableCell className="text-right"><Button size="sm" variant="outline" disabled={controlBusy === "backup"} onClick={() => void createBackup()}>{controlBusy === "backup" ? "Saving…" : "Choose & Save"}</Button></TableCell>
                 </TableRow>
                 <TableRow>
-                  <TableCell className="font-medium text-slate-900">New User Registration</TableCell>
-                  <TableCell className="text-slate-500 text-sm">Allow new employees to sign up</TableCell>
-                  <TableCell><Badge variant="success">Open</Badge></TableCell>
-                  <TableCell className="text-right"><Button size="sm" variant="outline">Restrict</Button></TableCell>
+                  <TableCell className="font-medium text-slate-900"><span className="flex items-center gap-2"><UserPlus className="h-4 w-4 text-slate-400" />New Employee Registration</span></TableCell>
+                  <TableCell className="text-slate-500 text-sm">Allow administrators to create new employee records</TableCell>
+                  <TableCell><Badge variant={controls.registrationOpen ? "success" : "danger"}>{controls.registrationOpen ? "Open" : "Restricted"}</Badge></TableCell>
+                  <TableCell className="text-right"><Button size="sm" variant="outline" disabled={controlBusy === "registrationOpen"} onClick={() => void updateControl("registrationOpen", !controls.registrationOpen)}>{controls.registrationOpen ? "Restrict" : "Open"}</Button></TableCell>
+                </TableRow>
+                <TableRow>
+                  <TableCell className="font-medium text-slate-900"><span className="flex items-center gap-2"><LogOut className="h-4 w-4 text-red-500" />Force Clock Out</span></TableCell>
+                  <TableCell className="text-slate-500 text-sm">Close every attendance session that is currently clocked in</TableCell>
+                  <TableCell><Badge variant="neutral">On demand</Badge></TableCell>
+                  <TableCell className="text-right"><Button size="sm" variant="destructive" disabled={controlBusy === "clock-out"} onClick={() => void forceClockOut()}>{controlBusy === "clock-out" ? "Clocking out…" : "Force Clock Out"}</Button></TableCell>
                 </TableRow>
               </TableBody>
             </Table>
@@ -200,12 +307,27 @@ export function AdminView() {
 
       {archiveOpen && (
         <Card className="border-violet-200">
-          <CardHeader><div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between"><div><CardTitle className="flex items-center gap-2"><Archive className="h-5 w-5 text-[#8642ED]" /> Archive</CardTitle><CardDescription>Protected archived accounts. Restore records when needed.</CardDescription></div><Button className="w-full sm:w-auto" size="sm" variant="outline" onClick={() => setArchiveOpen(false)}>Close &amp; Lock</Button></div></CardHeader>
-          <CardContent className="p-0"><Table><TableHeader><TableRow><TableHead>Account</TableHead><TableHead>Type</TableHead><TableHead className="text-right">Action</TableHead></TableRow></TableHeader><TableBody>
-            {archivedAccounts.map((account) => <TableRow key={account.id}><TableCell><div className="font-medium text-slate-900">{account.name}</div><div className="text-xs text-slate-400">{account.id}</div></TableCell><TableCell><Badge variant="neutral">{account.type}</Badge></TableCell><TableCell className="text-right"><Button size="sm" variant="outline" onClick={() => restoreAccount(account.id)}><RotateCcw className="h-3.5 w-3.5" /> Restore</Button></TableCell></TableRow>)}
-          </TableBody></Table>{archivedAccounts.length === 0 && <div className="py-10 text-center text-sm text-slate-400">The archive is empty.</div>}</CardContent>
+          <CardHeader><div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between"><div><CardTitle className="flex items-center gap-2"><Archive className="h-5 w-5 text-[#8642ED]" /> Archived Employees</CardTitle><CardDescription>Restore employees or permanently delete an individual employee and all linked database records.</CardDescription></div><div className="flex flex-col gap-2 sm:flex-row sm:items-center"><div className="flex flex-wrap rounded-xl border border-slate-200 bg-slate-50 p-1">{([['30d','30 days'],['1y','1 year'],['5y','5 years'],['all','All']] as const).map(([value,label]) => <button key={value} type="button" onClick={() => setArchiveRange(value)} className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition ${archiveRange === value ? 'bg-white text-violet-700 shadow-sm' : 'text-slate-500 hover:text-slate-800'}`}>{label}</button>)}</div><Button className="w-full sm:w-auto" size="sm" variant="outline" onClick={() => setArchiveOpen(false)}>Close</Button></div></div></CardHeader>
+          <CardContent className="p-0"><div className="overflow-x-auto"><Table className="min-w-[720px]"><TableHeader><TableRow><TableHead>Employee</TableHead><TableHead>Archived date</TableHead><TableHead>Age</TableHead><TableHead className="text-right">Actions</TableHead></TableRow></TableHeader><TableBody>
+            {filteredArchivedAccounts.map((account) => {
+              const archivedAt = account.record.archivedAt ? new Date(account.record.archivedAt) : null;
+              const validDate = archivedAt && !Number.isNaN(archivedAt.getTime());
+              const ageDays = validDate ? Math.max(0, Math.floor((archiveReferenceTime - archivedAt.getTime()) / 86400000)) : null;
+              return <TableRow key={account.id}><TableCell><div className="font-medium text-slate-900">{account.name}</div><div className="text-xs text-slate-400">{account.id}</div></TableCell><TableCell className="text-slate-600">{validDate ? archivedAt.toLocaleDateString('en-PH', { month: 'short', day: 'numeric', year: 'numeric' }) : 'Date unavailable'}</TableCell><TableCell><Badge variant="neutral">{ageDays == null ? 'Unknown' : ageDays === 0 ? 'Today' : `${ageDays} ${ageDays === 1 ? 'day' : 'days'}`}</Badge></TableCell><TableCell><div className="flex justify-end gap-2"><Button size="sm" variant="outline" onClick={() => restoreAccount(account.id)}><RotateCcw className="h-3.5 w-3.5" /> Restore</Button><Button size="sm" variant="destructive" onClick={() => { setDeleteTarget(account); setDeletePassword(''); setDeleteError(''); }}><Trash2 className="h-3.5 w-3.5" /> Delete permanently</Button></div></TableCell></TableRow>;
+            })}
+          </TableBody></Table></div>{filteredArchivedAccounts.length === 0 && <div className="py-10 text-center text-sm text-slate-400">{archivedAccounts.length ? 'No archived employees match this time filter.' : 'The archive is empty.'}</div>}</CardContent>
         </Card>
       )}
+
+      <Dialog open={Boolean(deleteTarget)} onClose={() => !deleting && setDeleteTarget(null)} className="max-w-md">
+        <DialogHeader><div><h3 className="flex items-center gap-2 text-base font-bold text-rose-700"><Trash2 className="h-4 w-4" /> Permanently delete employee</h3><p className="mt-1 text-xs leading-5 text-slate-500">This permanently deletes {deleteTarget?.name} and their login, fingerprint, attendance, leave, payroll, and biometric test records from MongoDB. This cannot be undone.</p></div><DialogClose onClose={() => !deleting && setDeleteTarget(null)} /></DialogHeader>
+        <form onSubmit={permanentlyDeleteAccount} className="space-y-4 px-6 pb-6 pt-3">
+          <div className="rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm text-rose-800"><p className="font-semibold">Employee: {deleteTarget?.name}</p><p className="mt-1 text-xs">ID: {deleteTarget?.id}</p></div>
+          <label className="block space-y-1.5"><span className="text-xs font-semibold text-slate-700">Confirm your administrator password</span><Input type="password" autoFocus value={deletePassword} disabled={deleting} onChange={(event) => { setDeletePassword(event.target.value); setDeleteError(''); }} placeholder="Enter admin password" /></label>
+          {deleteError && <p className="rounded-lg bg-rose-50 px-3 py-2 text-xs font-medium text-rose-700">{deleteError}</p>}
+          <div className="flex justify-end gap-2"><Button type="button" variant="outline" disabled={deleting} onClick={() => setDeleteTarget(null)}>Cancel</Button><Button type="submit" variant="destructive" disabled={deleting || !deletePassword}><Trash2 className="h-4 w-4" />{deleting ? 'Deleting…' : 'Delete permanently'}</Button></div>
+        </form>
+      </Dialog>
 
     </div>
   );

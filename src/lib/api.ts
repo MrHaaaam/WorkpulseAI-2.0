@@ -1,4 +1,4 @@
-type SessionData = { authenticated?: boolean; token?: string; csrfToken?: string; role?: string; accountType?: string }
+type SessionData = { authenticated?: boolean; token?: string; csrfToken?: string; role?: string; accountType?: string; mustChangePassword?: boolean }
 
 let csrfRefreshPromise: Promise<string | null> | null = null
 let sessionRestorePromise: Promise<{ response: Response; data: SessionData | null }> | null = null

@@ -3,11 +3,13 @@ import mongoose from 'mongoose';
 import nodemailer from 'nodemailer';
 import crypto from 'node:crypto';
 import { buildAIInsights } from '../ai-insights.js';
-import { verifyAdminPassword, verifySecret } from './auth.js';
+import { hashSecret, verifyAdminPassword, verifySecret } from './auth.js';
+import { getSystemControls, updateSystemControls } from '../system-controls.js';
 import { auditEvent, authenticate, csrfProtection, pick, requireRole } from '../security.js';
 import {
   BiometricError,
   encryptFingerprintSamples,
+  fingerprintMatchThreshold,
   findFingerprintDecision,
   findFingerprintMatch,
   normalizeFingerprintSamples,
@@ -17,6 +19,66 @@ import {
 
 const router = Router();
 const MAX_DAILY_ATTENDANCE_SESSIONS = 3;
+
+async function visibleEmployeeIds(db) {
+  const employees = await db.collection('employees').find(
+    { archived: { $ne: true } },
+    { projection: { id: 1 } },
+  ).toArray();
+  return employees.map((employee) => employee.id).filter(Boolean);
+}
+
+async function activeBiometricTemplates(db) {
+  const employees = await db.collection('employees').find(
+    { archived: { $ne: true }, status: { $ne: 'inactive' } },
+    { projection: { id: 1 } },
+  ).toArray();
+  const employeeIds = employees.map((employee) => employee.id).filter(Boolean);
+  if (!employeeIds.length) return [];
+  return db.collection('biometric_templates').find({ employeeId: { $in: employeeIds } }).toArray();
+}
+
+function generateTemporaryPassword() {
+  const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789';
+  return Array.from(crypto.randomBytes(14), (byte) => alphabet[byte % alphabet.length]).join('');
+}
+
+function monthKeyInManila(date = new Date()) {
+  const parts = Object.fromEntries(new Intl.DateTimeFormat('en-US', {
+    timeZone: 'Asia/Manila', year: 'numeric', month: '2-digit',
+  }).formatToParts(date).filter((part) => part.type !== 'literal').map((part) => [part.type, part.value]));
+  return `${parts.year}-${parts.month}`;
+}
+
+function leaveDaysInMonth(request, monthKey) {
+  const monthStart = new Date(`${monthKey}-01T00:00:00Z`);
+  const monthEnd = new Date(monthStart);
+  monthEnd.setUTCMonth(monthEnd.getUTCMonth() + 1);
+  monthEnd.setUTCDate(0);
+  const requestStart = new Date(`${request.startDate}T00:00:00Z`);
+  const requestEnd = new Date(`${request.endDate}T00:00:00Z`);
+  if ([monthStart, monthEnd, requestStart, requestEnd].some((date) => Number.isNaN(date.getTime()))) return 0;
+  const overlapStart = Math.max(monthStart.getTime(), requestStart.getTime());
+  const overlapEnd = Math.min(monthEnd.getTime(), requestEnd.getTime());
+  return overlapEnd < overlapStart ? 0 : Math.floor((overlapEnd - overlapStart) / 86400000) + 1;
+}
+
+function monthlyLeaveSummary(requests, monthlyCredits, month = monthKeyInManila()) {
+  const used = requests.filter((request) => request.status === 'approved').reduce((total, request) => total + leaveDaysInMonth(request, month), 0);
+  const allowance = Math.max(0, Number(monthlyCredits || 0));
+  return { month, total: allowance, used, remaining: Math.max(0, allowance - used) };
+}
+
+function monthKeysForRange(startDate, endDate) {
+  const start = new Date(`${String(startDate).slice(0, 7)}-01T00:00:00Z`);
+  const end = new Date(`${String(endDate).slice(0, 7)}-01T00:00:00Z`);
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || end < start) return [];
+  const months = [];
+  for (const cursor = new Date(start); cursor <= end; cursor.setUTCMonth(cursor.getUTCMonth() + 1)) {
+    months.push(cursor.toISOString().slice(0, 7));
+  }
+  return months;
+}
 
 router.use(authenticate, csrfProtection);
 router.use((req, res, next) => {
@@ -34,6 +96,15 @@ router.use((req, res, next) => {
   });
   next();
 });
+router.use((req, res, next) => {
+  if (req.auth?.accountType === 'employee' && req.auth.actor?.mustChangePassword === true) {
+    return res.status(403).json({
+      error: 'Change your temporary password before continuing.',
+      code: 'PASSWORD_CHANGE_REQUIRED',
+    });
+  }
+  next();
+});
 
 router.get('/employee/me', requireRole('regular', 'extra'), async (req, res) => {
   try {
@@ -41,17 +112,19 @@ router.get('/employee/me', requireRole('regular', 'extra'), async (req, res) => 
     const employeeId = req.auth.actor.employeeId;
     const employee = await db.collection('employees').findOne({ id: employeeId, archived: { $ne: true } });
     if (!employee) return res.status(404).json({ error: 'Employee profile not found' });
-    const [attendance, leaveRequests, payroll, biometricTemplate] = await Promise.all([
+    const [attendance, leaveRequests, payroll, biometricTemplate, settings] = await Promise.all([
       db.collection('attendance').find({ employeeId }).sort({ date: -1 }).limit(60).toArray(),
       db.collection('leave_requests').find({ employeeId }).sort({ createdAt: -1, _id: -1 }).toArray(),
       db.collection('payroll_requests').find({ employeeId }).sort({ createdAt: -1, _id: -1 }).limit(12).toArray(),
       db.collection('biometric_templates').findOne({ employeeId }, { projection: { _id: 1 } }),
+      getSettings(db),
     ]);
+    const monthlyLeaveCredits = monthlyLeaveSummary(leaveRequests, settings.leave.monthlyCredits);
     res.json({
-      profile: { id: employee.id, name: employee.name, email: employee.email, phone: employee.phone, address: employee.address, role: employee.role, status: employee.status, biometricStatus: biometricTemplate ? 'enrolled' : 'none', casualLeave: employee.casualLeave, sickLeave: employee.sickLeave, hourlyRate: employee.hourlyRate, grossSalary: employee.grossSalary, createdAt: employee.createdAt },
+      profile: { id: employee.id, name: employee.name, email: employee.email, phone: employee.phone, address: employee.address, role: employee.role, status: employee.status, biometricStatus: biometricTemplate ? 'enrolled' : 'none', monthlyLeaveCredits, hourlyRate: employee.hourlyRate, grossSalary: employee.grossSalary, createdAt: employee.createdAt },
       attendance: attendance.map(({ _id, ...record }) => record),
       leaveRequests: leaveRequests.map(({ _id, ...record }) => record),
-      payroll: payroll.map(({ _id, ...record }) => ({ id: record.id, amount: record.amount, currentAmount: record.currentAmount, carryOverAmount: record.carryOverAmount, status: record.status, periodStart: record.periodStart, createdAt: record.createdAt })),
+      payroll: payroll.map(({ _id, ...record }) => ({ id: record.id, amount: record.amount, currentAmount: record.currentAmount, carryOverAmount: record.carryOverAmount, status: record.status, periodStart: payrollPeriodKeyForRecord(record), createdAt: record.createdAt })),
     });
   } catch { res.status(500).json({ error: 'Unable to load employee workspace' }); }
 });
@@ -85,19 +158,151 @@ router.post('/employee/me/leave-requests', requireRole('regular', 'extra'), asyn
 
 router.use(requireRole('admin'));
 
+router.get('/admin/system-controls', async (_req, res) => {
+  try { res.json(await getSystemControls(mongoose.connection.db)); }
+  catch { res.status(500).json({ error: 'Unable to load system controls' }); }
+});
+
+router.patch('/admin/system-controls', async (req, res) => {
+  try {
+    const changes = {};
+    if (Object.hasOwn(req.body ?? {}, 'maintenanceMode')) changes.maintenanceMode = Boolean(req.body.maintenanceMode);
+    if (Object.hasOwn(req.body ?? {}, 'registrationOpen')) changes.registrationOpen = Boolean(req.body.registrationOpen);
+    if (!Object.keys(changes).length) return res.status(400).json({ error: 'No supported control was provided' });
+    res.json(await updateSystemControls(mongoose.connection.db, changes, req.auth.actor.email));
+  } catch { res.status(500).json({ error: 'Unable to update system controls' }); }
+});
+
+router.patch('/admin/employees/:id/access', async (req, res) => {
+  try {
+    const banned = Boolean(req.body?.banned);
+    const db = mongoose.connection.db;
+    const employee = await db.collection('employees').findOneAndUpdate(
+      { id: req.params.id, archived: { $ne: true } },
+      { $set: { banned, updatedAt: new Date() } }, { returnDocument: 'after' },
+    );
+    if (!employee) return res.status(404).json({ error: 'Employee not found' });
+    await db.collection('employee_accounts').updateMany({ employeeId: employee.id }, { $set: { active: !banned, updatedAt: new Date() } });
+    if (banned) {
+      const accounts = await db.collection('employee_accounts').find({ employeeId: employee.id }, { projection: { _id: 1 } }).toArray();
+      if (accounts.length) await db.collection('admin_sessions').deleteMany({ accountType: 'employee', accountId: { $in: accounts.map((account) => account._id) } });
+    }
+    res.json({ id: employee.id, banned });
+  } catch { res.status(500).json({ error: 'Unable to update employee access' }); }
+});
+
+router.post('/admin/force-clock-out', async (req, res) => {
+  try {
+    const db = mongoose.connection.db;
+    const stamp = kioskTimestamp();
+    const openRecords = await db.collection('attendance').find({ $or: [
+      { sessions: { $elemMatch: { $or: [{ checkOut: null }, { checkOut: '' }, { checkOut: { $exists: false } }] } } },
+      { sessions: { $exists: false }, checkIn: { $nin: [null, ''] }, $or: [{ checkOut: null }, { checkOut: '' }, { checkOut: { $exists: false } }] },
+    ] }).toArray();
+    const operations = [];
+    for (const record of openRecords) {
+      const sessions = attendanceSessions(record);
+      const openIndex = sessions.findLastIndex((session) => !session.checkOut);
+      if (openIndex < 0) continue;
+      sessions[openIndex] = { ...sessions[openIndex], checkOut: stamp.time, checkOutAt: stamp.now, forcedClockOut: true, forcedClockOutBy: req.auth.actor.email };
+      operations.push({ updateOne: { filter: { _id: record._id }, update: { $set: { sessions, sessionCount: sessions.length, checkOut: stamp.time, lastAction: 'time-out', forcedClockOut: true, forcedClockOutAt: stamp.now, forcedClockOutBy: req.auth.actor.email, updatedAt: stamp.now } } } });
+    }
+    if (operations.length) await db.collection('attendance').bulkWrite(operations);
+    res.json({ clockedOut: operations.length, time: stamp.time, date: stamp.date });
+  } catch (error) {
+    console.error('Force clock out failed:', error instanceof Error ? error.message : error);
+    res.status(500).json({ error: 'Unable to force clock out active employees' });
+  }
+});
+
+router.get('/admin/backup', async (req, res) => {
+  try {
+    const db = mongoose.connection.db;
+    const collectionNames = [
+      'employees', 'attendance', 'leave_requests', 'payroll_requests', 'settings', 'system_controls',
+      'biometric_templates', 'biometric_verification_attempts', 'biometric_evaluation_trials',
+    ];
+    const collections = {};
+    for (const name of collectionNames) {
+      collections[name] = (await db.collection(name).find({}).toArray()).map(({ _id, ...document }) => document);
+    }
+    const createdAt = new Date();
+    const backup = { format: 'workpulse-json-backup', version: 1, createdAt, createdBy: req.auth.actor.email, collections };
+    const filename = `workpulse-backup-${createdAt.toISOString().replace(/[:.]/g, '-')}.json`;
+    await auditEvent({ req, actor: req.auth.actor, action: 'admin.backup_created', targetType: 'database_backup', outcome: 'success', metadata: { collections: collectionNames, filename } });
+    res.setHeader('Content-Type', 'application/json; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.send(JSON.stringify(backup, null, 2));
+  } catch (error) {
+    console.error('Backup generation failed:', error instanceof Error ? error.message : error);
+    res.status(500).json({ error: 'Unable to generate the database backup' });
+  }
+});
+
 router.get('/ai-insights', async (_req, res) => {
   try {
     const db = mongoose.connection.db;
-    const [attendance, employees, leaveRequests, verificationAttempts] = await Promise.all([
-      db.collection('attendance').find({}).sort({ date: 1 }).toArray(),
-      db.collection('employees').find({ archived: { $ne: true } }).toArray(),
-      db.collection('leave_requests').find({ status: 'approved' }).toArray(),
+    const employeeIds = await visibleEmployeeIds(db);
+    const employeeIdSet = new Set(employeeIds);
+    const [attendance, employees, leaveRequests, verificationAttempts, evaluationTrials] = await Promise.all([
+      db.collection('attendance').find({ employeeId: { $in: employeeIds } }).sort({ date: 1 }).toArray(),
+      db.collection('employees').find({ id: { $in: employeeIds } }).toArray(),
+      db.collection('leave_requests').find({ employeeId: { $in: employeeIds }, status: 'approved' }).toArray(),
       db.collection('biometric_verification_attempts').find({}).sort({ createdAt: -1 }).limit(500).toArray(),
+      db.collection('biometric_evaluation_trials').find({}).sort({ createdAt: -1 }).limit(1000).toArray(),
     ]);
-    res.json(buildAIInsights({ attendance, employees, leaveRequests, verificationAttempts }));
+    const visibleVerificationAttempts = verificationAttempts.filter((attempt) => !attempt.employeeId || employeeIdSet.has(attempt.employeeId));
+    const visibleEvaluationTrials = evaluationTrials.filter((trial) =>
+      (!trial.expectedEmployeeId || employeeIdSet.has(trial.expectedEmployeeId))
+      && (!trial.actualEmployeeId || employeeIdSet.has(trial.actualEmployeeId)));
+    res.json(buildAIInsights({ attendance, employees, leaveRequests, verificationAttempts: visibleVerificationAttempts, evaluationTrials: visibleEvaluationTrials, fingerJetThreshold: fingerprintMatchThreshold() }));
   } catch (error) {
     console.error('AI insights generation failed:', error);
     res.status(500).json({ error: 'Unable to generate AI insights right now.' });
+  }
+});
+
+router.post('/biometric-evaluation-trials', async (req, res) => {
+  try {
+    const db = mongoose.connection?.db;
+    if (!db) return res.status(503).json({ error: 'MongoDB connection not ready' });
+    const expectedType = req.body?.expectedType === 'impostor' ? 'impostor' : req.body?.expectedType === 'genuine' ? 'genuine' : null;
+    const expectedEmployeeId = String(req.body?.expectedEmployeeId ?? '').trim();
+    if (!expectedType) return res.status(400).json({ error: 'Choose an enrolled employee or a non-enrolled finger test' });
+    if (expectedType === 'genuine' && !expectedEmployeeId) return res.status(400).json({ error: 'Choose the employee expected to match' });
+    const [probe] = normalizeFingerprintSamples(req.body?.fingerprintSamples, 1);
+    const deviceUid = String(req.body?.deviceUid ?? '').trim().slice(0, 200);
+    const templates = await activeBiometricTemplates(db);
+    if (expectedType === 'genuine' && !templates.some((template) => template.employeeId === expectedEmployeeId)) {
+      return res.status(400).json({ error: 'The selected employee does not have an active fingerprint enrollment.' });
+    }
+    const startedAt = Date.now();
+    const decision = await findFingerprintDecision(probe, templates);
+    const responseTimeMs = Date.now() - startedAt;
+    const actualEmployeeId = decision.accepted ? decision.best?.employeeId || null : null;
+    let classification;
+    if (expectedType === 'impostor') classification = decision.accepted ? 'FA' : 'TR';
+    else if (!decision.accepted) classification = 'FR';
+    else classification = actualEmployeeId === expectedEmployeeId ? 'TA' : 'FA';
+    const expectedEmployee = expectedType === 'genuine' ? await db.collection('employees').findOne({ id: expectedEmployeeId }) : null;
+    const actualEmployee = actualEmployeeId ? await db.collection('employees').findOne({ id: actualEmployeeId }) : null;
+    const trial = {
+      id: crypto.randomUUID(), mode: 'one-to-many', expectedType,
+      expectedEmployeeId: expectedType === 'genuine' ? expectedEmployeeId : null,
+      expectedEmployeeName: expectedEmployee?.name || null,
+      actualEmployeeId, actualEmployeeName: actualEmployee?.name || null,
+      accepted: decision.accepted, classification,
+      wrongEmployeeMatch: expectedType === 'genuine' && decision.accepted && actualEmployeeId !== expectedEmployeeId,
+      score: decision.best?.score ?? null, threshold: decision.threshold,
+      deviceUid: deviceUid || null, responseTimeMs, createdAt: new Date(),
+      createdBy: req.auth.actor.email,
+    };
+    await db.collection('biometric_evaluation_trials').insertOne(trial);
+    res.status(201).json(trial);
+  } catch (error) {
+    if (error instanceof BiometricError) return res.status(error.status).json({ error: error.message });
+    console.error('Biometric evaluation failed:', error instanceof Error ? error.message : error);
+    res.status(500).json({ error: 'Unable to record the fingerprint evaluation trial' });
   }
 });
 
@@ -148,18 +353,35 @@ function normalizedEmployee(input) {
 }
 
 async function nextEmployeeId(db) {
-  const records = await db.collection('employees').find({}, { projection: { id: 1 } }).toArray();
-  const highest = records.reduce((maximum, record) => {
-    const match = /^EMP-(\d+)$/i.exec(String(record.id ?? ''));
+  // Treat IDs in linked collections as reserved too. This prevents a manually
+  // deleted employee profile from reusing an ID that still has a login,
+  // fingerprint, attendance, leave, or payroll record attached to it.
+  const idLists = await Promise.all([
+    db.collection('employees').distinct('id'),
+    db.collection('employee_accounts').distinct('employeeId'),
+    db.collection('biometric_templates').distinct('employeeId'),
+    db.collection('attendance').distinct('employeeId'),
+    db.collection('leave_requests').distinct('employeeId'),
+    db.collection('payroll_requests').distinct('employeeId'),
+  ]);
+  const highest = idLists.flat().reduce((maximum, id) => {
+    const match = /^EMP-(\d+)$/i.exec(String(id ?? ''));
     return match ? Math.max(maximum, Number(match[1])) : maximum;
   }, 0);
   return `EMP-${String(highest + 1).padStart(3, '0')}`;
 }
 
+function duplicateEmployeeMessage(error) {
+  const fields = Object.keys(error?.keyPattern ?? error?.keyValue ?? {});
+  if (fields.includes('email')) return 'This email address is already used by another WorkPulse account.';
+  if (fields.includes('employeeId')) return 'The generated employee ID is still reserved by linked account or fingerprint data. Refresh the form and try again.';
+  if (fields.includes('id')) return 'The generated employee ID is already in use. Refresh the form and try again.';
+  return 'A unique employee account value already exists. Refresh the form and try again.';
+}
+
 const defaultSettings = {
-  shift: { enabled: false, startTime: '09:00', maxHours: 8, breakMinutes: 60, workDays: 5 },
-  lateness: { enabled: false, graceMinutes: 15, lateThresholdMinutes: 30, penaltyRate: 1 },
-  leave: { enabled: false, casualDays: 10, sickDays: 10, frequency: 'monthly', carryOverDays: 5 },
+  shift: { enabled: false, startTime: '09:00', maxHours: 8, workDays: 5 },
+  leave: { monthlyCredits: 10 },
 };
 
 function parseAttendanceTime(date, time) {
@@ -198,16 +420,20 @@ function attendanceHoursForRecord(record, settings) {
     return total + Math.max(0, (checkOut.getTime() - checkIn.getTime()) / 3600000);
   }, 0);
   const maxHours = settings.shift.enabled ? Number(settings.shift.maxHours) : Infinity;
-  const breakHours = settings.shift.enabled ? Number(settings.shift.breakMinutes || 0) / 60 : 0;
-  return Math.max(0, Math.min(rawHours, maxHours) - breakHours);
+  return Math.max(0, Math.min(rawHours, maxHours));
 }
 
 export async function getSettings(db) {
   const stored = await db.collection('settings').findOne({ key: 'company' });
+  const storedShift = stored?.shift ?? {};
   return {
-    shift: { ...defaultSettings.shift, ...(stored?.shift ?? {}) },
-    lateness: { ...defaultSettings.lateness, ...(stored?.lateness ?? {}) },
-    leave: { ...defaultSettings.leave, ...(stored?.leave ?? {}) },
+    shift: {
+      enabled: Boolean(storedShift.enabled ?? defaultSettings.shift.enabled),
+      startTime: storedShift.startTime ?? defaultSettings.shift.startTime,
+      maxHours: Number(storedShift.maxHours ?? defaultSettings.shift.maxHours),
+      workDays: Number(storedShift.workDays ?? defaultSettings.shift.workDays),
+    },
+    leave: { monthlyCredits: Number(stored?.leave?.monthlyCredits ?? stored?.leave?.casualDays ?? defaultSettings.leave.monthlyCredits) },
   };
 }
 
@@ -247,11 +473,10 @@ router.put('/settings', async (req, res) => {
       return Number.isFinite(number) ? Math.min(maximum, Math.max(minimum, number)) : fallback;
     };
     const normalized = {
-      shift: { enabled: Boolean(incoming.shift?.enabled), startTime: /^([01]\d|2[0-3]):[0-5]\d$/.test(incoming.shift?.startTime) ? incoming.shift.startTime : defaultSettings.shift.startTime, maxHours: numberInRange(incoming.shift?.maxHours, 8, 1, 24), breakMinutes: numberInRange(incoming.shift?.breakMinutes, 60, 0, 240), workDays: numberInRange(incoming.shift?.workDays, 5, 1, 7) },
-      lateness: { enabled: Boolean(incoming.lateness?.enabled), graceMinutes: numberInRange(incoming.lateness?.graceMinutes, 15, 0, 240), lateThresholdMinutes: numberInRange(incoming.lateness?.lateThresholdMinutes, 30, 0, 480), penaltyRate: numberInRange(incoming.lateness?.penaltyRate, 1, 0, 100) },
-      leave: { enabled: Boolean(incoming.leave?.enabled), casualDays: numberInRange(incoming.leave?.casualDays, 10, 0, 365), sickDays: numberInRange(incoming.leave?.sickDays, 10, 0, 365), frequency: ['monthly', 'quarterly', 'annual'].includes(incoming.leave?.frequency) ? incoming.leave.frequency : 'monthly', carryOverDays: numberInRange(incoming.leave?.carryOverDays, 5, 0, 365) },
+      shift: { enabled: Boolean(incoming.shift?.enabled), startTime: /^([01]\d|2[0-3]):[0-5]\d$/.test(incoming.shift?.startTime) ? incoming.shift.startTime : defaultSettings.shift.startTime, maxHours: numberInRange(incoming.shift?.maxHours, 8, 1, 24), workDays: numberInRange(incoming.shift?.workDays, 5, 1, 7) },
+      leave: { monthlyCredits: numberInRange(incoming.leave?.monthlyCredits, 10, 0, 31) },
     };
-    await mongoose.connection.db.collection('settings').updateOne({ key: 'company' }, { $set: { ...normalized, updatedAt: new Date() } }, { upsert: true });
+    await mongoose.connection.db.collection('settings').updateOne({ key: 'company' }, { $set: { ...normalized, updatedAt: new Date() }, $unset: { lateness: '' } }, { upsert: true });
     await enforceAutomaticClockOut(mongoose.connection.db, normalized);
     res.json(normalized);
   } catch { res.status(500).json({ error: 'Failed to save settings' }); }
@@ -268,9 +493,7 @@ router.get('/employees', async (req, res) => {
     const settings = await getSettings(db);
     await enforceAutomaticClockOut(db, settings);
     const employees = await db.collection('employees').find({ archived: { $ne: true } }).toArray();
-    const periodStart = new Date();
-    periodStart.setDate(periodStart.getDate() - 14);
-    periodStart.setHours(0, 0, 0, 0);
+    const periodStart = currentPayrollPeriodStart();
     const [attendance, biometricTemplates] = await Promise.all([
       db.collection('attendance').find({}).toArray(),
       db.collection('biometric_templates').find({}, { projection: { employeeId: 1 } }).toArray(),
@@ -294,6 +517,7 @@ router.get('/employees', async (req, res) => {
         hourlyRate,
         payrollPeriodDays: 15,
         status: e.status,
+        banned: Boolean(e.banned),
         casualLeave: e.casualLeave ?? { total: 10, used: 0 },
         sickLeave: e.sickLeave ?? { total: 10, used: 0 },
         biometricStatus: enrolledEmployeeIds.has(e.id) ? 'enrolled' : 'none',
@@ -316,34 +540,90 @@ router.get('/employees-next-id', async (_req, res) => {
 
 router.post('/employees', async (req, res) => {
   try {
-    const fingerprintSamples = normalizeFingerprintSamples(req.body?.fingerprintSamples, 3);
-    const deviceUid = String(req.body?.fingerprintDeviceUid ?? '').trim().slice(0, 200);
-    const enrollment = await validateEnrollmentSamples(fingerprintSamples);
+    if (!(await getSystemControls(mongoose.connection.db)).registrationOpen) return res.status(403).json({ error: 'New employee registration is currently restricted in Admin Controls' });
     const employee = normalizedEmployee(req.body);
     if (!employee.firstName || !employee.lastName) return res.status(400).json({ error: 'First name and last name are required' });
     if (!employee.email || !employee.phone || !employee.address) return res.status(400).json({ error: 'Email, phone number, and address are required' });
     if (!/^\+639\d{9}$/.test(employee.phone)) return res.status(400).json({ error: 'Phone number must use +639XXXXXXXXX with no spaces' });
+    if (!process.env.SMTP_USER || !process.env.SMTP_APP_PASSWORD) return res.status(503).json({ error: 'Employee email delivery is not configured. Ask the system owner to configure SMTP before creating an account.' });
     const db = mongoose.connection.db;
+    const [adminEmail, employeeAccountEmail, employeeRecordEmail] = await Promise.all([
+      db.collection('admin_accounts').findOne({ email: employee.email }, { projection: { _id: 1 }, collation: { locale: 'en', strength: 2 } }),
+      db.collection('employee_accounts').findOne({ email: employee.email }, { projection: { _id: 1 }, collation: { locale: 'en', strength: 2 } }),
+      db.collection('employees').findOne({ email: employee.email }, { projection: { _id: 1 }, collation: { locale: 'en', strength: 2 } }),
+    ]);
+    if (adminEmail || employeeAccountEmail || employeeRecordEmail) return res.status(409).json({ error: 'This email address is already used by another WorkPulse account.' });
+    const transport = nodemailer.createTransport({ service: 'gmail', auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_APP_PASSWORD } });
+    try { await transport.verify(); }
+    catch (emailError) {
+      console.error('Employee email service verification failed:', emailError instanceof Error ? emailError.message : emailError);
+      return res.status(503).json({ error: 'The employee email service is unavailable. No account was created. Check the Gmail App Password and restart the backend.' });
+    }
+    const fingerprintSamples = normalizeFingerprintSamples(req.body?.fingerprintSamples, 3);
+    const deviceUid = String(req.body?.fingerprintDeviceUid ?? '').trim().slice(0, 200);
+    const enrollment = await validateEnrollmentSamples(fingerprintSamples);
     employee.id = await nextEmployeeId(db);
     await rejectDuplicateEnrollment(db, employee.id, enrollment.templates);
     const createdAt = new Date();
+    const generatedPassword = generateTemporaryPassword();
+    const passwordHash = await hashSecret(generatedPassword);
     const session = await mongoose.startSession();
     try {
       await session.withTransaction(async () => {
         await db.collection('employees').insertOne({ ...employee, biometricStatus: 'enrolled', createdAt, updatedAt: createdAt }, { session });
+        await db.collection('employee_accounts').insertOne({
+          employeeId: employee.id, email: employee.email, passwordHash,
+          role: employee.role, active: true, mustChangePassword: true, createdAt, updatedAt: createdAt,
+        }, { session });
         await db.collection('biometric_templates').insertOne({
           employeeId: employee.id,
           protectedSamples: encryptFingerprintSamples(enrollment.templates),
           sampleFormat: 'ansi-378-fmd', sampleCount: enrollment.templates.length,
-          matcher: 'HID FingerJet', matcherFormat: enrollment.format, deviceUid: deviceUid || null,
+          matcher: 'HID FingerJet', matcherFormat: enrollment.format, matchThreshold: enrollment.threshold, deviceUid: deviceUid || null,
           enrolledAt: createdAt, enrolledBy: req.auth.actor.email, version: 2,
         }, { session });
       });
     } finally { await session.endSession(); }
-    res.status(201).json({ ...employee, biometricStatus: 'enrolled', createdAt });
+    try {
+      const loginUrl = String(process.env.APP_URL || process.env.FRONTEND_URL || 'http://localhost:5173').replace(/\/$/, '');
+      const delivery = await transport.sendMail({
+          from: `WorkPulseAI <${process.env.SMTP_USER}>`,
+          to: employee.email,
+          subject: 'Your WorkPulseAI employee login details',
+          text: [
+            `Hello ${employee.firstName},`,
+            '',
+            'Your WorkPulseAI employee account is ready.',
+            `Employee ID: ${employee.id}`,
+            `Login page: ${loginUrl}`,
+            `Email: ${employee.email}`,
+            `Generated password: ${generatedPassword}`,
+            '',
+            'After entering these details, complete the verification code sent to this email address.',
+            'You will be required to create a new password before opening your workspace.',
+            'Keep this message private and do not share your password.',
+          ].join('\n'),
+      });
+      const accepted = (delivery.accepted ?? []).map((address) => String(address).toLowerCase());
+      if (!accepted.includes(employee.email)) throw new Error('The recipient address was not accepted by the mail service');
+    } catch (emailError) {
+      console.error('Employee login details email failed:', emailError instanceof Error ? emailError.message : emailError);
+      const cleanupSession = await mongoose.startSession();
+      try {
+        await cleanupSession.withTransaction(async () => {
+          await db.collection('employees').deleteOne({ id: employee.id, createdAt }, { session: cleanupSession });
+          await db.collection('employee_accounts').deleteOne({ employeeId: employee.id, createdAt }, { session: cleanupSession });
+          await db.collection('biometric_templates').deleteOne({ employeeId: employee.id, enrolledAt: createdAt }, { session: cleanupSession });
+        });
+      } finally {
+        await cleanupSession.endSession();
+      }
+      return res.status(502).json({ error: 'The login email could not be delivered, so no employee account was created. Check the address and try again.' });
+    }
+    res.status(201).json({ ...employee, biometricStatus: 'enrolled', createdAt, loginEmailSent: true });
   } catch (error) {
     if (error instanceof BiometricError) return res.status(error.status).json({ error: error.message });
-    if (error?.code === 11000) return res.status(409).json({ error: 'Employee ID or fingerprint enrollment already exists' });
+    if (error?.code === 11000) return res.status(409).json({ error: duplicateEmployeeMessage(error) });
     console.error('Employee creation failed:', error instanceof Error ? error.message : error);
     res.status(500).json({ error: 'Failed to create employee' });
   }
@@ -365,10 +645,21 @@ router.put('/employees/:id', async (req, res) => {
     const existing = await mongoose.connection.db.collection('employees').findOne({ id: req.params.id });
     if (!existing) return res.status(404).json({ error: 'Employee not found' });
     employee.biometricStatus = existing.biometricStatus ?? 'none';
-    const result = await mongoose.connection.db.collection('employees').updateOne({ id: req.params.id }, { $set: { ...employee, updatedAt: new Date() } });
+    const db = mongoose.connection.db;
+    const [adminEmail, employeeAccountEmail, employeeRecordEmail] = await Promise.all([
+      db.collection('admin_accounts').findOne({ email: employee.email }, { projection: { _id: 1 }, collation: { locale: 'en', strength: 2 } }),
+      db.collection('employee_accounts').findOne({ email: employee.email, employeeId: { $ne: employee.id } }, { projection: { _id: 1 }, collation: { locale: 'en', strength: 2 } }),
+      db.collection('employees').findOne({ email: employee.email, id: { $ne: employee.id } }, { projection: { _id: 1 }, collation: { locale: 'en', strength: 2 } }),
+    ]);
+    if (adminEmail || employeeAccountEmail || employeeRecordEmail) return res.status(409).json({ error: 'This email address is already used by another WorkPulse account.' });
+    const result = await db.collection('employees').updateOne({ id: req.params.id }, { $set: { ...employee, updatedAt: new Date() } });
     if (!result.matchedCount) return res.status(404).json({ error: 'Employee not found' });
+    await db.collection('employee_accounts').updateOne({ employeeId: employee.id }, { $set: { email: employee.email, role: employee.role, updatedAt: new Date() } });
     res.json({ ...employee, createdAt: existing.createdAt });
-  } catch { res.status(500).json({ error: 'Failed to update employee' }); }
+  } catch (error) {
+    if (error?.code === 11000) return res.status(409).json({ error: 'This email address is already used by another WorkPulse account.' });
+    res.status(500).json({ error: 'Failed to update employee' });
+  }
 });
 
 router.put('/employees/:id/fingerprint', async (req, res) => {
@@ -393,7 +684,7 @@ router.put('/employees/:id/fingerprint', async (req, res) => {
         await db.collection('biometric_templates').updateOne({ employeeId: employee.id }, { $set: {
           protectedSamples: encryptFingerprintSamples(enrollment.templates),
           sampleFormat: 'ansi-378-fmd', sampleCount: enrollment.templates.length,
-          matcher: 'HID FingerJet', matcherFormat: enrollment.format, deviceUid: deviceUid || null,
+          matcher: 'HID FingerJet', matcherFormat: enrollment.format, matchThreshold: enrollment.threshold, deviceUid: deviceUid || null,
           enrolledAt: now, enrolledBy: req.auth.actor.email, version: 2,
         } }, { upsert: true, session });
         await db.collection('employees').updateOne({ id: employee.id }, { $set: { biometricStatus: 'enrolled', updatedAt: now } }, { session });
@@ -404,6 +695,43 @@ router.put('/employees/:id/fingerprint', async (req, res) => {
     if (error instanceof BiometricError) return res.status(error.status).json({ error: error.message });
     console.error('Fingerprint registration failed:', error instanceof Error ? error.message : error);
     res.status(500).json({ error: 'Failed to register fingerprint' });
+  }
+});
+
+router.post('/employees/:id/send-login-email', async (req, res) => {
+  try {
+    const verification = await verifyAdminPassword(req, req.body?.adminPassword);
+    if (!verification.valid) {
+      if (verification.retryAfterSeconds) res.setHeader('Retry-After', String(verification.retryAfterSeconds));
+      return res.status(verification.forbidden ? 403 : verification.retryAfterSeconds ? 429 : 401).json({ error: verification.forbidden ? 'Administrator access required' : verification.retryAfterSeconds ? `Incorrect admin password. Try again in ${verification.retryAfterSeconds} seconds.` : 'Incorrect admin password', ...(verification.retryAfterSeconds ? { retryAfterSeconds: verification.retryAfterSeconds } : {}) });
+    }
+    if (!process.env.SMTP_USER || !process.env.SMTP_APP_PASSWORD) return res.status(503).json({ error: 'Employee email delivery is not configured.' });
+    const db = mongoose.connection.db;
+    const employee = await db.collection('employees').findOne({ id: req.params.id, archived: { $ne: true } });
+    const account = await db.collection('employee_accounts').findOne({ employeeId: req.params.id, active: true });
+    if (!employee || !account) return res.status(404).json({ error: 'Active employee login account not found.' });
+    const generatedPassword = generateTemporaryPassword();
+    const passwordHash = await hashSecret(generatedPassword);
+    const transport = nodemailer.createTransport({ service: 'gmail', auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_APP_PASSWORD } });
+    try {
+      await transport.verify();
+      const loginUrl = String(process.env.APP_URL || process.env.FRONTEND_URL || 'http://localhost:5173').replace(/\/$/, '');
+      const delivery = await transport.sendMail({
+        from: `WorkPulseAI <${process.env.SMTP_USER}>`, to: employee.email,
+        subject: 'Your new WorkPulseAI login details',
+        text: [`Hello ${employee.firstName || employee.name},`, '', 'A new WorkPulseAI password was requested for your employee account.', `Employee ID: ${employee.id}`, `Login page: ${loginUrl}`, `Email: ${employee.email}`, `New generated password: ${generatedPassword}`, '', 'Complete the verification code sent to this email after signing in.', 'You will be required to create a new password before opening your workspace.', 'Keep this message private.'].join('\n'),
+      });
+      const accepted = (delivery.accepted ?? []).map((address) => String(address).toLowerCase());
+      if (!accepted.includes(employee.email)) throw new Error('The recipient address was not accepted by the mail service');
+    } catch (emailError) {
+      console.error('Replacement employee login email failed:', emailError instanceof Error ? emailError.message : emailError);
+      return res.status(502).json({ error: 'The new login email could not be delivered. The existing password was not changed.' });
+    }
+    await db.collection('employee_accounts').updateOne({ _id: account._id }, { $set: { passwordHash, email: employee.email, mustChangePassword: true, updatedAt: new Date() }, $unset: { passwordChangedAt: '' } });
+    res.json({ message: `New login details were sent to ${employee.email}.` });
+  } catch (error) {
+    console.error('Employee login email reset failed:', error instanceof Error ? error.message : error);
+    res.status(500).json({ error: 'Unable to send new employee login details.' });
   }
 });
 
@@ -418,9 +746,17 @@ router.post('/employees/:id/archive', async (req, res) => {
   try {
     if (!(await authenticatedAdmin(req, true))) return res.status(401).json({ error: 'Incorrect password or expired session' });
     const db = mongoose.connection.db;
-    const result = await db.collection('employees').findOneAndUpdate({ id: req.params.id, archived: { $ne: true } }, { $set: { archived: true, status: 'inactive', biometricStatus: 'none', archivedAt: new Date(), updatedAt: new Date() } }, { returnDocument: 'after' });
+    const result = await db.collection('employees').findOneAndUpdate({ id: req.params.id, archived: { $ne: true } }, { $set: { archived: true, status: 'inactive', archivedAt: new Date(), updatedAt: new Date() } }, { returnDocument: 'after' });
     if (!result) return res.status(404).json({ error: 'Employee not found or already archived' });
-    await db.collection('biometric_templates').deleteOne({ employeeId: req.params.id });
+    const accounts = await db.collection('employee_accounts').find({ employeeId: req.params.id }, { projection: { _id: 1 } }).toArray();
+    await db.collection('employee_accounts').updateMany({ employeeId: req.params.id }, { $set: { active: false, updatedAt: new Date() } });
+    if (accounts.length) {
+      const accountIds = accounts.map((account) => account._id);
+      await Promise.all([
+        db.collection('admin_sessions').deleteMany({ accountType: 'employee', accountId: { $in: accountIds } }),
+        db.collection('login_otps').deleteMany({ accountId: { $in: accountIds } }),
+      ]);
+    }
     res.json({ id: result.id, status: result.status, archived: true });
   } catch { res.status(500).json({ error: 'Failed to archive employee' }); }
 });
@@ -435,10 +771,48 @@ router.get('/archived-employees', async (req, res) => {
 router.post('/employees/:id/unarchive', async (req, res) => {
   try {
     if (!(await authenticatedAdmin(req))) return res.status(401).json({ error: 'Unauthorized' });
-    const result = await mongoose.connection.db.collection('employees').findOneAndUpdate({ id: req.params.id, archived: true }, { $set: { archived: false, status: 'active', unarchivedAt: new Date(), updatedAt: new Date() }, $unset: { archivedAt: '' } }, { returnDocument: 'after' });
+    const db = mongoose.connection.db;
+    const hasFingerprint = Boolean(await db.collection('biometric_templates').findOne({ employeeId: req.params.id }, { projection: { _id: 1 } }));
+    const result = await db.collection('employees').findOneAndUpdate({ id: req.params.id, archived: true }, { $set: { archived: false, status: 'active', biometricStatus: hasFingerprint ? 'enrolled' : 'none', unarchivedAt: new Date(), updatedAt: new Date() }, $unset: { archivedAt: '' } }, { returnDocument: 'after' });
     if (!result) return res.status(404).json({ error: 'Archived employee not found' });
+    await db.collection('employee_accounts').updateOne({ employeeId: req.params.id }, { $set: { active: true, updatedAt: new Date() } });
     res.json(result);
   } catch { res.status(500).json({ error: 'Failed to restore employee' }); }
+});
+
+router.delete('/employees/:id/permanent', async (req, res) => {
+  try {
+    if (!(await authenticatedAdmin(req, true))) return res.status(401).json({ error: 'Incorrect password or expired session' });
+    const db = mongoose.connection.db;
+    const employee = await db.collection('employees').findOne({ id: req.params.id, archived: true });
+    if (!employee) return res.status(404).json({ error: 'Archived employee not found. Only archived employees can be permanently deleted.' });
+    const accounts = await db.collection('employee_accounts').find({ employeeId: employee.id }, { projection: { _id: 1 } }).toArray();
+    const accountIds = accounts.map((account) => account._id);
+    const session = await mongoose.startSession();
+    const deleted = {};
+    try {
+      await session.withTransaction(async () => {
+        deleted.attendance = (await db.collection('attendance').deleteMany({ employeeId: employee.id }, { session })).deletedCount;
+        deleted.leaveRequests = (await db.collection('leave_requests').deleteMany({ employeeId: employee.id }, { session })).deletedCount;
+        deleted.payrollRequests = (await db.collection('payroll_requests').deleteMany({ employeeId: employee.id }, { session })).deletedCount;
+        deleted.biometricTemplates = (await db.collection('biometric_templates').deleteMany({ employeeId: employee.id }, { session })).deletedCount;
+        deleted.verificationAttempts = (await db.collection('biometric_verification_attempts').deleteMany({ employeeId: employee.id }, { session })).deletedCount;
+        deleted.evaluationTrials = (await db.collection('biometric_evaluation_trials').deleteMany({ $or: [{ expectedEmployeeId: employee.id }, { actualEmployeeId: employee.id }] }, { session })).deletedCount;
+        deleted.loginOtps = accountIds.length ? (await db.collection('login_otps').deleteMany({ accountId: { $in: accountIds } }, { session })).deletedCount : 0;
+        deleted.sessions = accountIds.length ? (await db.collection('admin_sessions').deleteMany({ accountType: 'employee', accountId: { $in: accountIds } }, { session })).deletedCount : 0;
+        deleted.auditEvents = (await db.collection('audit_events').deleteMany({ $or: [{ targetId: employee.id }, ...(accountIds.length ? [{ actorId: { $in: accountIds } }] : [])] }, { session })).deletedCount;
+        deleted.employeeAccounts = (await db.collection('employee_accounts').deleteMany({ employeeId: employee.id }, { session })).deletedCount;
+        deleted.employee = (await db.collection('employees').deleteOne({ _id: employee._id, archived: true }, { session })).deletedCount;
+        if (deleted.employee !== 1) throw new Error('Archived employee changed while deletion was in progress');
+      });
+    } finally {
+      await session.endSession();
+    }
+    res.json({ id: employee.id, name: employee.name, deleted });
+  } catch (error) {
+    console.error('Permanent employee deletion failed:', error instanceof Error ? error.message : error);
+    res.status(500).json({ error: 'The archived employee and linked records could not be deleted.' });
+  }
 });
 
 router.get('/payroll-requests', async (req, res) => {
@@ -446,7 +820,8 @@ router.get('/payroll-requests', async (req, res) => {
     const db = mongoose.connection?.db;
     if (!db) return res.status(500).json({ error: 'MongoDB connection not ready' });
 
-    const payrollRequests = await db.collection('payroll_requests').find({}).sort({ createdAt: -1, _id: -1 }).toArray();
+    const employeeIds = await visibleEmployeeIds(db);
+    const payrollRequests = await db.collection('payroll_requests').find({ employeeId: { $in: employeeIds } }).sort({ createdAt: -1, _id: -1 }).toArray();
 
     res.json(
       payrollRequests.map((p) => ({
@@ -457,7 +832,14 @@ router.get('/payroll-requests', async (req, res) => {
         status: p.status,
         currentAmount: p.currentAmount,
         carryOverAmount: p.carryOverAmount,
-        periodStart: p.periodStart,
+        periodStart: payrollPeriodKeyForRecord(p),
+        grossAmount: p.grossAmount,
+        additions: p.additions,
+        hoursWorked: p.hoursWorked,
+        hourlyRate: p.hourlyRate,
+        createdAt: p.createdAt,
+        paidAt: p.paidAt,
+        rejectedAt: p.rejectedAt,
       }))
     );
   } catch (err) {
@@ -465,25 +847,45 @@ router.get('/payroll-requests', async (req, res) => {
   }
 });
 
+function payrollPeriodKey(date = new Date()) {
+  const parts = Object.fromEntries(new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Manila', year: 'numeric', month: '2-digit', day: '2-digit',
+  }).formatToParts(date).filter((part) => part.type !== 'literal').map((part) => [part.type, part.value]));
+  const startDay = Number(parts.day) <= 15 ? '01' : '16';
+  return `${parts.year}-${parts.month}-${startDay}`;
+}
+
+function payrollPeriodKeyForRecord(record) {
+  const stored = String(record?.periodStart ?? '');
+  if (/^\d{4}-\d{2}-(01|16)$/.test(stored)) return stored;
+  const createdAt = record?.createdAt ? new Date(record.createdAt) : null;
+  if (createdAt && !Number.isNaN(createdAt.getTime())) return payrollPeriodKey(createdAt);
+  return stored;
+}
+
 function currentPayrollPeriodStart() {
-  const now = new Date();
-  const start = new Date(now.getFullYear(), now.getMonth(), now.getDate() <= 15 ? 1 : 16);
-  start.setHours(0, 0, 0, 0);
-  return start;
+  return new Date(`${payrollPeriodKey()}T00:00:00+08:00`);
 }
 
 router.post('/payroll-requests', async (req, res) => {
   try {
     const { employeeId } = req.body ?? {};
     const currentAmount = Math.max(0, Number(req.body?.currentAmount || 0));
+    const grossAmount = Math.max(0, Number(req.body?.grossAmount || 0));
+    const hoursWorked = Math.max(0, Number(req.body?.hoursWorked || 0));
+    const hourlyRate = Math.max(0, Number(req.body?.hourlyRate || 0));
+    const additions = Array.isArray(req.body?.additions) ? req.body.additions.slice(0, 20).map((item) => ({
+      label: String(item?.label ?? '').trim().slice(0, 80),
+      value: Math.max(0, Number(item?.value || 0)),
+    })).filter((item) => item.label && item.value > 0) : [];
     if (!employeeId) return res.status(400).json({ error: 'Employee ID is required' });
     const db = mongoose.connection.db;
-    const employee = await db.collection('employees').findOne({ id: employeeId });
+    const employee = await db.collection('employees').findOne({ id: employeeId, archived: { $ne: true } });
     if (!employee) return res.status(404).json({ error: 'Employee not found' });
-    const periodStartDate = currentPayrollPeriodStart();
-    const periodStart = periodStartDate.toISOString().slice(0, 10);
-    const existing = await db.collection('payroll_requests').findOne({ employeeId, periodStart });
-    if (existing) return res.json(existing);
+    const periodStart = payrollPeriodKey();
+    const legacyPeriodStart = currentPayrollPeriodStart().toISOString().slice(0, 10);
+    const existing = await db.collection('payroll_requests').findOne({ employeeId, periodStart: { $in: [...new Set([periodStart, legacyPeriodStart])] } });
+    if (existing) return res.json({ ...existing, periodStart: payrollPeriodKeyForRecord(existing) });
 
     const outstanding = await db.collection('payroll_requests').find({
       employeeId,
@@ -493,41 +895,102 @@ router.post('/payroll-requests', async (req, res) => {
     }).toArray();
     const carryOverAmount = outstanding.reduce((sum, payroll) => sum + Number(payroll.amount || 0), 0);
     const id = `PR-${Date.now()}-${employeeId}`;
-    const payroll = { id, employeeId, employeeName: employee.name, currentAmount, carryOverAmount, amount: currentAmount + carryOverAmount, periodStart, periodDays: 15, status: 'processing', createdAt: new Date() };
+    const payroll = {
+      id, employeeId, employeeName: employee.name, employeeEmail: employee.email,
+      grossAmount, additions, hoursWorked, hourlyRate,
+      currentAmount, carryOverAmount, amount: currentAmount + carryOverAmount,
+      periodStart, periodDays: 15, status: 'processing', createdAt: new Date(),
+    };
     await db.collection('payroll_requests').insertOne(payroll);
-    if (outstanding.length) await db.collection('payroll_requests').updateMany({ _id: { $in: outstanding.map((item) => item._id) } }, { $set: { status: 'carried_over', rolledInto: id, rolledAt: new Date() } });
+    if (outstanding.length) await db.collection('payroll_requests').updateMany({ _id: { $in: outstanding.map((item) => item._id) } }, { $set: { rolledInto: id, rolledAt: new Date() } });
     res.status(201).json(payroll);
   } catch { res.status(500).json({ error: 'Failed to process payroll' }); }
 });
 
 router.patch('/payroll-requests/:id/confirm-payment', async (req, res) => {
   try {
-    const result = await mongoose.connection.db.collection('payroll_requests').findOneAndUpdate(
-      { id: req.params.id, status: 'processing' },
-      { $set: { status: 'paid', paidAt: new Date() } },
+    const verification = await verifyAdminPassword(req, req.body?.password);
+    if (!verification.valid) {
+      if (verification.retryAfterSeconds) res.setHeader('Retry-After', String(verification.retryAfterSeconds));
+      return res.status(verification.forbidden ? 403 : verification.retryAfterSeconds ? 429 : 401).json({ error: verification.forbidden ? 'Administrator access required' : verification.retryAfterSeconds ? `Incorrect admin password. Try again in ${verification.retryAfterSeconds} seconds.` : 'Incorrect admin password', ...(verification.retryAfterSeconds ? { retryAfterSeconds: verification.retryAfterSeconds } : {}) });
+    }
+    const db = mongoose.connection.db;
+    const paidAt = new Date();
+    const result = await db.collection('payroll_requests').findOneAndUpdate(
+      { id: req.params.id, status: { $in: ['processing', 'rejected'] } },
+      { $set: { status: 'paid', paidAt, approvedBy: req.auth.actor.email }, $unset: { rejectedAt: '', rejectedBy: '' } },
       { returnDocument: 'after' },
     );
-    if (!result) return res.status(404).json({ error: 'Processing payroll record not found' });
-    res.json({ id: result.id, status: result.status });
+    if (!result) return res.status(404).json({ error: 'Unpaid payroll record not found' });
+    await db.collection('payroll_requests').updateMany(
+      {
+        employeeId: result.employeeId,
+        rolledInto: { $exists: true },
+        status: { $in: ['processing', 'rejected', 'carried_over'] },
+        ...(result.periodStart ? { periodStart: { $lte: result.periodStart } } : {}),
+      },
+      { $set: { status: 'paid', paidAt, settledBy: result.id, approvedBy: req.auth.actor.email } },
+    );
+    res.json({ id: result.id, status: result.status, paidAt: result.paidAt });
   } catch { res.status(500).json({ error: 'Failed to confirm payment' }); }
 });
 
 router.patch('/payroll-requests/:id/reject-payment', async (req, res) => {
   try {
+    const verification = await verifyAdminPassword(req, req.body?.password);
+    if (!verification.valid) {
+      if (verification.retryAfterSeconds) res.setHeader('Retry-After', String(verification.retryAfterSeconds));
+      return res.status(verification.forbidden ? 403 : verification.retryAfterSeconds ? 429 : 401).json({ error: verification.forbidden ? 'Administrator access required' : verification.retryAfterSeconds ? `Incorrect admin password. Try again in ${verification.retryAfterSeconds} seconds.` : 'Incorrect admin password', ...(verification.retryAfterSeconds ? { retryAfterSeconds: verification.retryAfterSeconds } : {}) });
+    }
     const result = await mongoose.connection.db.collection('payroll_requests').findOneAndUpdate(
       { id: req.params.id, status: 'processing' },
-      { $set: { status: 'rejected', rejectedAt: new Date() } },
+      { $set: { status: 'rejected', rejectedAt: new Date(), rejectedBy: req.auth.actor.email } },
       { returnDocument: 'after' },
     );
     if (!result) return res.status(404).json({ error: 'Processing payroll record not found' });
-    res.json({ id: result.id, status: result.status });
+    res.json({ id: result.id, status: result.status, rejectedAt: result.rejectedAt });
   } catch { res.status(500).json({ error: 'Failed to mark payroll as not paid' }); }
+});
+
+router.post('/payroll-requests/:id/email', async (req, res) => {
+  try {
+    if (!process.env.SMTP_USER || !process.env.SMTP_APP_PASSWORD) return res.status(503).json({ error: 'Email delivery is not configured' });
+    const db = mongoose.connection.db;
+    const payroll = await db.collection('payroll_requests').findOne({ id: req.params.id });
+    if (!payroll) return res.status(404).json({ error: 'Payslip not found' });
+    const employee = await db.collection('employees').findOne({ id: payroll.employeeId, archived: { $ne: true } });
+    if (!employee) return res.status(404).json({ error: 'Active employee not found' });
+    if (!employee.email) return res.status(400).json({ error: 'Add an email address to this employee profile first' });
+    const money = (value) => new Intl.NumberFormat('en-PH', { style: 'currency', currency: 'PHP' }).format(Number(value || 0));
+    const additions = Array.isArray(payroll.additions) ? payroll.additions : [];
+    const text = [
+      'WorkPulseAI Payslip',
+      `Pay period: ${payroll.periodStart}`,
+      `Employee: ${employee.name}`,
+      `Employee ID: ${employee.id}`,
+      '',
+      `Hours worked: ${Number(payroll.hoursWorked || 0).toFixed(2)}`,
+      `Hourly rate: ${money(payroll.hourlyRate)}`,
+      `Attendance-based pay: ${money(payroll.grossAmount ?? payroll.currentAmount)}`,
+      ...additions.map((item) => `${item.label}: +${money(item.value)}`),
+      ...(Number(payroll.carryOverAmount || 0) > 0 ? [`Unpaid balance carried forward: +${money(payroll.carryOverAmount)}`] : []),
+      '',
+      `Total payroll: ${money(payroll.amount)}`,
+      `Status: ${payroll.status === 'paid' ? 'Paid' : payroll.status === 'rejected' ? 'Unpaid - carries forward' : 'Awaiting approval'}`,
+    ].join('\n');
+    const transport = nodemailer.createTransport({ service: 'gmail', auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_APP_PASSWORD } });
+    await transport.sendMail({ from: `Workpulse AI <${process.env.SMTP_USER}>`, to: employee.email, subject: `Payslip ${payroll.periodStart} - ${employee.name}`, text });
+    res.json({ message: `Payslip sent to ${employee.email}` });
+  } catch (error) {
+    console.error('Payslip email failed:', error instanceof Error ? error.message : error);
+    res.status(500).json({ error: 'Failed to email the payslip' });
+  }
 });
 
 router.post('/payroll/:employeeId/email-summary', async (req, res) => {
   try {
     if (!process.env.SMTP_USER || !process.env.SMTP_APP_PASSWORD) return res.status(503).json({ error: 'Email delivery is not configured' });
-    const employee = await mongoose.connection.db.collection('employees').findOne({ id: req.params.employeeId });
+    const employee = await mongoose.connection.db.collection('employees').findOne({ id: req.params.employeeId, archived: { $ne: true } });
     if (!employee) return res.status(404).json({ error: 'Employee not found' });
     if (!employee.email) return res.status(400).json({ error: 'Add an email address to this employee profile first' });
     const settings = await getSettings(mongoose.connection.db);
@@ -545,7 +1008,9 @@ router.post('/payroll/:employeeId/email-summary', async (req, res) => {
     const total = additionLines.reduce((sum, item) => sum + item[1], 0);
     const money = (value) => new Intl.NumberFormat('en-PH', { style: 'currency', currency: 'PHP' }).format(value);
     const identifierText = identifiers.length ? `\nProfile identifiers:\n${identifiers.map((item) => `${item.type}: ${item.value}`).join('\n')}` : '';
-    const activePayroll = await mongoose.connection.db.collection('payroll_requests').findOne({ employeeId: employee.id, periodStart: currentPayrollPeriodStart().toISOString().slice(0, 10) });
+    const activePeriodStart = payrollPeriodKey();
+    const legacyActivePeriodStart = currentPayrollPeriodStart().toISOString().slice(0, 10);
+    const activePayroll = await mongoose.connection.db.collection('payroll_requests').findOne({ employeeId: employee.id, periodStart: { $in: [...new Set([activePeriodStart, legacyActivePeriodStart])] } });
     const carryOver = Number(activePayroll?.carryOverAmount || 0);
     const text = `Payroll Summary (15-day period)\nEmployee: ${employee.name}\nEmployee ID: ${employee.id}${identifierText}\nHours Worked: ${hoursWorked.toFixed(2)}\nHourly Rate: ${money(hourlyRate)}\n\nGross Salary: ${money(gross)}\n${additionLines.map(([label, value]) => `${label}: +${money(value)}`).join('\n')}\nTotal Additions: +${money(total)}\nUnpaid Balance Carried Forward: +${money(carryOver)}\nNet Salary: ${money(gross + total + carryOver)}`;
     const transport = nodemailer.createTransport({ service: 'gmail', auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_APP_PASSWORD } });
@@ -562,7 +1027,8 @@ router.get('/leave-requests', async (req, res) => {
     const db = mongoose.connection?.db;
     if (!db) return res.status(500).json({ error: 'MongoDB connection not ready' });
 
-    const leaveRequests = await db.collection('leave_requests').find({}).toArray();
+    const employeeIds = await visibleEmployeeIds(db);
+    const leaveRequests = await db.collection('leave_requests').find({ employeeId: { $in: employeeIds } }).toArray();
 
     res.json(
       leaveRequests.map((r) => ({
@@ -590,6 +1056,23 @@ router.patch('/leave-requests/:id/status', async (req, res) => {
     const status = req.body?.status;
     if (!['approved', 'rejected'].includes(status)) return res.status(400).json({ error: 'Status must be approved or rejected' });
     const db = mongoose.connection.db;
+    const employeeIds = await visibleEmployeeIds(db);
+    const pendingRequest = await db.collection('leave_requests').findOne({ id: req.params.id, employeeId: { $in: employeeIds }, status: 'pending' });
+    if (!pendingRequest) return res.status(404).json({ error: 'Pending leave request not found' });
+    if (status === 'approved' && pendingRequest.employeeId) {
+      const [settings, approvedRequests] = await Promise.all([
+        getSettings(db),
+        db.collection('leave_requests').find({ employeeId: pendingRequest.employeeId, status: 'approved' }).toArray(),
+      ]);
+      for (const month of monthKeysForRange(pendingRequest.startDate, pendingRequest.endDate)) {
+        const current = monthlyLeaveSummary(approvedRequests, settings.leave.monthlyCredits, month);
+        const requested = leaveDaysInMonth(pendingRequest, month);
+        if (current.used + requested > current.total) {
+          const monthLabel = new Date(`${month}-01T00:00:00Z`).toLocaleDateString('en-US', { timeZone: 'UTC', month: 'long', year: 'numeric' });
+          return res.status(409).json({ error: `Not enough leave credits for ${monthLabel}. ${current.remaining} of ${current.total} credits remain.` });
+        }
+      }
+    }
     const request = await db.collection('leave_requests').findOneAndUpdate({ id: req.params.id, status: 'pending' }, { $set: { status, reviewedAt: new Date() } }, { returnDocument: 'after' });
     if (!request) return res.status(404).json({ error: 'Pending leave request not found' });
     if (status === 'approved' && request.employeeId) await db.collection('employees').updateOne({ id: request.employeeId, archived: { $ne: true } }, { $set: { status: 'on-leave', updatedAt: new Date() } });
@@ -605,7 +1088,8 @@ router.get('/attendance', async (req, res) => {
 
     const settings = await getSettings(db);
     await enforceAutomaticClockOut(db, settings);
-    const attendance = await db.collection('attendance').find({}).toArray();
+    const employeeIds = await visibleEmployeeIds(db);
+    const attendance = await db.collection('attendance').find({ employeeId: { $in: employeeIds } }).toArray();
 
     res.json(
       attendance.map((a) => ({
@@ -630,13 +1114,11 @@ function kioskTimestamp() {
   const now = new Date();
   const parts = Object.fromEntries(new Intl.DateTimeFormat('en-CA', {
     timeZone: 'Asia/Manila', year: 'numeric', month: '2-digit', day: '2-digit',
-    hour: '2-digit', minute: '2-digit', hour12: false,
   }).formatToParts(now).filter((part) => part.type !== 'literal').map((part) => [part.type, part.value]));
   return {
     now,
     date: `${parts.year}-${parts.month}-${parts.day}`,
     time: new Intl.DateTimeFormat('en-US', { timeZone: 'Asia/Manila', hour: '2-digit', minute: '2-digit', hour12: true }).format(now),
-    minuteOfDay: (Number(parts.hour) % 24) * 60 + Number(parts.minute),
   };
 }
 
@@ -646,18 +1128,20 @@ router.post('/attendance/kiosk', async (req, res) => {
     if (!db) return res.status(503).json({ error: 'MongoDB connection not ready' });
     const [probe] = normalizeFingerprintSamples(req.body?.fingerprintSamples, 1);
     const deviceUid = String(req.body?.deviceUid ?? '').trim().slice(0, 200);
-    const templates = await db.collection('biometric_templates').find({}).toArray();
+    const templates = await activeBiometricTemplates(db);
     const matchStartedAt = Date.now();
     const decision = await findFingerprintDecision(probe, templates);
     const matched = decision.accepted ? decision.best : null;
     const attemptTime = new Date();
+    let verificationAttemptId = null;
     try {
-      await db.collection('biometric_verification_attempts').insertOne({
+      const insertedAttempt = await db.collection('biometric_verification_attempts').insertOne({
         mode: 'one-to-many', accepted: decision.accepted,
         employeeId: matched?.employeeId || null, score: decision.best?.score ?? null,
         threshold: decision.threshold, deviceUid: deviceUid || null,
-        responseTimeMs: Date.now() - matchStartedAt, createdAt: attemptTime,
+        responseTimeMs: Date.now() - matchStartedAt, action: matched ? 'recognized' : 'no-match', createdAt: attemptTime,
       });
+      verificationAttemptId = insertedAttempt.insertedId;
     } catch (attemptError) {
       console.error('Fingerprint verification attempt could not be logged:', attemptError instanceof Error ? attemptError.message : attemptError);
     }
@@ -669,17 +1153,12 @@ router.post('/attendance/kiosk', async (req, res) => {
     const stamp = kioskTimestamp();
     const existing = await db.collection('attendance').findOne({ employeeId, date: stamp.date });
     if (!existing) {
-      const settings = await getSettings(db);
-      const shiftMatch = /^([01]\d|2[0-3]):([0-5]\d)$/.exec(String(settings.shift.startTime ?? ''));
-      const lateAfterMinute = settings.shift.enabled && shiftMatch
-        ? Number(shiftMatch[1]) * 60 + Number(shiftMatch[2]) + Number(settings.lateness.graceMinutes || 0)
-        : null;
       const record = {
         employeeId, name: employee.name, role: employee.role === 'extra' ? 'Extra' : 'Regular',
         date: stamp.date, checkIn: stamp.time, checkOut: null,
         sessions: [{ checkIn: stamp.time, checkOut: null, checkInAt: stamp.now, deviceUid: deviceUid || null, matchScore: matched.score }],
         sessionCount: 1, lastAction: 'time-in',
-        status: lateAfterMinute !== null && stamp.minuteOfDay > lateAfterMinute ? 'Late' : 'Present',
+        status: 'Present',
         captureMethod: 'digitalpersona-fingerjet', deviceUid: deviceUid || null,
         identityVerified: true, matchScore: matched.score, matcherFormat: matched.format,
         createdAt: stamp.now, updatedAt: stamp.now,
@@ -689,6 +1168,7 @@ router.post('/attendance/kiosk', async (req, res) => {
         if (error?.code === 11000) return res.status(409).json({ error: 'Attendance was already recorded for this employee today' });
         throw error;
       }
+      if (verificationAttemptId) await db.collection('biometric_verification_attempts').updateOne({ _id: verificationAttemptId }, { $set: { action: 'time-in', eventTime: stamp.time, attendanceDate: stamp.date } });
       return res.status(201).json({ action: 'time-in', record: { ...record, eventTime: stamp.time, _id: undefined } });
     }
 
@@ -719,6 +1199,7 @@ router.post('/attendance/kiosk', async (req, res) => {
       };
     } else {
       if (sessions.length >= MAX_DAILY_ATTENDANCE_SESSIONS) {
+        if (verificationAttemptId) await db.collection('biometric_verification_attempts').updateOne({ _id: verificationAttemptId }, { $set: { action: 'daily-limit', eventTime: stamp.time, attendanceDate: stamp.date } });
         return res.status(409).json({ error: 'Daily attendance limit reached: three time-in/time-out sessions are already complete.' });
       }
       sessions.push({ checkIn: stamp.time, checkOut: null, checkInAt: stamp.now, deviceUid: deviceUid || null, matchScore: matched.score });
@@ -731,6 +1212,7 @@ router.post('/attendance/kiosk', async (req, res) => {
 
     const updated = await db.collection('attendance').findOneAndUpdate(versionFilter, { $set: update }, { returnDocument: 'after' });
     if (!updated) return res.status(409).json({ error: 'Attendance was updated by another request' });
+    if (verificationAttemptId) await db.collection('biometric_verification_attempts').updateOne({ _id: verificationAttemptId }, { $set: { action, eventTime: stamp.time, attendanceDate: stamp.date } });
     return res.json({ action, record: { ...updated, eventTime: stamp.time, _id: undefined } });
   } catch (error) {
     if (error instanceof BiometricError) return res.status(error.status).json({ error: error.message });
