@@ -79,13 +79,13 @@ router.post('/login', loginLimit, async (request, response) => {
     if (String(email).length > 254 || String(password).length > 200 || String(captchaAnswer).length > 20) return response.status(400).json({ error: 'Invalid login input' });
     const db = mongoose.connection.db;
     const captcha = await db.collection('login_captchas').findOneAndDelete({ captchaId });
-    if (!captcha || captcha.expiresAt < new Date() || !(await verifySecret(String(captchaAnswer).trim(), captcha.answerHash))) { await auditEvent({ req: request, action: 'auth.login', targetType: 'session', outcome: 'failure', metadata: { reason: 'captcha' } }); return response.status(400).json({ error: 'Invalid or expired CAPTCHA' }); }
+    if (!captcha || captcha.expiresAt < new Date() || !(await verifySecret(String(captchaAnswer).trim(), captcha.answerHash))) { await auditEvent({ req: request, action: 'auth.login', targetType: 'session', outcome: 'failure', metadata: { reason: 'captcha', attemptedEmail: email } }); return response.status(400).json({ error: 'Invalid or expired CAPTCHA' }); }
 
     const normalizedEmail = String(email).trim().toLowerCase();
     let account = await db.collection('admin_accounts').findOne({ email: normalizedEmail, active: true });
     let accountType = 'admin';
     if (!account) { account = await db.collection('employee_accounts').findOne({ email: normalizedEmail, active: true }); accountType = 'employee'; }
-    if (!account || !(await verifySecret(password, account.passwordHash))) { await auditEvent({ req: request, actor: account, action: 'auth.login', targetType: 'session', outcome: 'failure', metadata: { reason: 'credentials' } }); return response.status(401).json({ error: 'Invalid email or password' }); }
+    if (!account || !(await verifySecret(password, account.passwordHash))) { await auditEvent({ req: request, actor: account, action: 'auth.login', targetType: 'session', outcome: 'failure', metadata: { reason: 'credentials', attemptedEmail: email } }); return response.status(401).json({ error: 'Invalid email or password' }); }
     if (accountType === 'employee' && (await getSystemControls(db)).maintenanceMode) {
       await auditEvent({ req: request, actor: account, action: 'auth.login', targetType: 'session', outcome: 'failure', metadata: { reason: 'maintenance_mode' } });
       return response.status(503).json({ error: 'WorkPulse is temporarily available to administrators only while maintenance is in progress.' });

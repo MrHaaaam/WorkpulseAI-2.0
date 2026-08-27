@@ -17,6 +17,8 @@ const hoverScrollbarClasses =
   "[&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:bg-transparent " +
   "hover:[&::-webkit-scrollbar-thumb]:bg-slate-300 [&::-webkit-scrollbar-thumb]:rounded-full transition-colors duration-300";
 
+type ConfirmationRequest = { title: string; description: string; confirmLabel: string; destructive?: boolean; resolve: (confirmed: boolean) => void };
+
 export function AdminView() {
   const { toast } = useToast();
   const [localEmployees, setLocalEmployees] = useState<(Employee & { banned?: boolean })[]>([]);
@@ -41,6 +43,16 @@ export function AdminView() {
   const [confirmPassword, setConfirmPassword] = useState("");
   const [credentialError, setCredentialError] = useState("");
   const [credentialSaving, setCredentialSaving] = useState(false);
+  const [confirmation, setConfirmation] = useState<ConfirmationRequest | null>(null);
+
+  function askForConfirmation(details: Omit<ConfirmationRequest, "resolve">) {
+    return new Promise<boolean>((resolve) => setConfirmation({ ...details, resolve }));
+  }
+
+  function closeConfirmation(confirmed: boolean) {
+    confirmation?.resolve(confirmed);
+    setConfirmation(null);
+  }
 
   const filteredArchivedAccounts = useMemo(() => {
     if (archiveRange === "all") return archivedAccounts;
@@ -75,6 +87,8 @@ export function AdminView() {
     setCredentialError("");
     if (!currentPassword) return setCredentialError("Enter your current administrator password.");
     if (newPassword && newPassword !== confirmPassword) return setCredentialError("The new passwords do not match.");
+    const credentialChanges = [adminEmail ? "administrator email" : "", newPassword ? "administrator password" : ""].filter(Boolean).join(" and ");
+    if (!await askForConfirmation({ title: "Update administrator credentials?", description: `This will update the ${credentialChanges || "administrator credentials"}. All other administrator sessions will be signed out.`, confirmLabel: "Update Credentials" })) return;
     setCredentialSaving(true);
     try {
       const response = await apiFetch('/api/admin/account-security', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: adminEmail, currentPassword, newPassword }) });
@@ -96,7 +110,7 @@ export function AdminView() {
     const employee = localEmployees.find((item) => item.id === id);
     if (!employee) return;
     const banned = !employee.banned;
-    if (!window.confirm(`${banned ? "Block" : "Restore"} ${employee.name}'s account access?${banned ? " Any active employee session will be signed out." : ""}`)) return;
+    if (!await askForConfirmation({ title: `${banned ? "Block" : "Restore"} employee access?`, description: `${employee.name}'s account will be ${banned ? "blocked and any active session will be signed out" : "restored so they can sign in again"}.`, confirmLabel: banned ? "Block Access" : "Restore Access", destructive: banned })) return;
     const response = await apiFetch(`/api/admin/employees/${id}/access`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ banned }) });
     const data = await response.json().catch(() => ({}));
     if (!response.ok) return toast({ title: "Access was not updated", description: data.error || "Please try again.", variant: "error" });
@@ -108,7 +122,7 @@ export function AdminView() {
     const message = key === "maintenanceMode"
       ? value ? "Turn on maintenance mode? All employee users will be locked out until it is turned off." : "Turn off maintenance mode and restore employee access?"
       : value ? "Open new employee registration?" : "Restrict new employee registration? Administrators will not be able to create employees until it is reopened.";
-    if (!window.confirm(message)) return;
+    if (!await askForConfirmation({ title: "Confirm system control change", description: message, confirmLabel: key === "maintenanceMode" ? value ? "Turn On Maintenance" : "Turn Off Maintenance" : value ? "Open Registration" : "Restrict Registration", destructive: (key === "maintenanceMode" && value) || (key === "registrationOpen" && !value) })) return;
     setControlBusy(key);
     try {
       const response = await apiFetch('/api/admin/system-controls', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ [key]: value }) });
@@ -121,7 +135,7 @@ export function AdminView() {
   }
 
   async function forceClockOut() {
-    if (!window.confirm("Force clock out every employee who is currently clocked in? This will close their open attendance session using the current time.")) return;
+    if (!await askForConfirmation({ title: "Force clock out all active employees?", description: "This will close every currently open attendance session using the current time.", confirmLabel: "Force Clock Out", destructive: true })) return;
     setControlBusy("clock-out");
     try {
       const response = await apiFetch('/api/admin/force-clock-out', { method: 'POST' });
@@ -133,6 +147,7 @@ export function AdminView() {
   }
 
   async function createBackup() {
+    if (!await askForConfirmation({ title: "Create a system backup?", description: "A new backup containing business records and encrypted biometric templates will be saved to the location you select.", confirmLabel: "Choose Save Location" })) return;
     const suggestedName = `workpulse-backup-${new Date().toISOString().slice(0, 10)}.json`;
     const picker = (window as Window & { showSaveFilePicker?: (options: unknown) => Promise<{ createWritable: () => Promise<{ write: (data: Blob) => Promise<void>; close: () => Promise<void> }> }> }).showSaveFilePicker;
     let handle: Awaited<ReturnType<NonNullable<typeof picker>>> | null = null;
@@ -143,7 +158,7 @@ export function AdminView() {
         if (reason instanceof DOMException && reason.name === 'AbortError') return;
         return toast({ title: "Backup location was not selected", description: "No database data was downloaded.", variant: "info" });
       }
-    } else if (!window.confirm("Your browser cannot show a folder picker. It will use your browser's Downloads location instead. Continue?")) return;
+    }
     setControlBusy("backup");
     try {
       const response = await apiFetch('/api/admin/backup');
@@ -182,12 +197,20 @@ export function AdminView() {
   async function restoreAccount(id: string) {
     const account = archivedAccounts.find((item) => item.id === id);
     if (!account) return;
+    if (!await askForConfirmation({ title: "Restore archived employee?", description: `${account.name} will return to the active employee directory and can be given account access again.`, confirmLabel: "Restore Employee" })) return;
     const response = await apiFetch(`/api/employees/${id}/unarchive`, { method: 'POST' });
     if (!response.ok) { toast({ title: "Account was not restored", description: "Please try again.", variant: "error" }); return; }
     const restored = await response.json();
     setLocalEmployees((current) => [...current, { ...restored, banned: false }]);
     setArchivedAccounts((current) => current.filter((item) => item.id !== id));
     toast({ title: "Account restored", description: `${account.name} returned to the employee directory.`, variant: "success" });
+  }
+
+  async function lockAdminControls() {
+    if (!await askForConfirmation({ title: "Lock Admin Controls?", description: "Your administrator password will be required to open these protected controls again.", confirmLabel: "Lock Controls" })) return;
+    setArchiveOpen(false);
+    setAdminUnlocked(false);
+    toast({ title: "Admin controls locked", description: "Protected administrative actions now require password verification again.", variant: "info" });
   }
 
   async function permanentlyDeleteAccount(event: React.FormEvent) {
@@ -230,7 +253,7 @@ export function AdminView() {
             <h2 className="text-2xl font-bold text-slate-900">Admin Control Panel</h2>
             <p className="text-sm text-slate-500">Manage user access, bans, and global system configuration</p>
           </div>
-          <div className="flex w-full flex-wrap gap-2 sm:w-auto sm:justify-end"><Button className="flex-1 sm:flex-none" variant="outline" onClick={() => setArchiveOpen(true)}><Archive className="h-4 w-4" /> Archive</Button><Button className="flex-1 sm:flex-none" variant="outline" onClick={() => { setArchiveOpen(false); setAdminUnlocked(false); }}><KeyRound className="h-4 w-4" /> Lock</Button></div>
+          <div className="flex w-full flex-wrap gap-2 sm:w-auto sm:justify-end"><Button className="flex-1 sm:flex-none" variant="outline" onClick={() => setArchiveOpen(true)}><Archive className="h-4 w-4" /> Archive</Button><Button className="flex-1 sm:flex-none" variant="outline" onClick={lockAdminControls}><KeyRound className="h-4 w-4" /> Lock</Button></div>
         </div>
       </div>
 
@@ -366,6 +389,11 @@ export function AdminView() {
           </TableBody></Table></div>{filteredArchivedAccounts.length === 0 && <div className="py-10 text-center text-sm text-slate-400">{archivedAccounts.length ? 'No archived employees match this time filter.' : 'The archive is empty.'}</div>}</CardContent>
         </Card>
       )}
+
+      <Dialog open={Boolean(confirmation)} onClose={() => closeConfirmation(false)} className="max-w-md">
+        <DialogHeader><div><div className={`mb-3 grid h-10 w-10 place-items-center rounded-xl ${confirmation?.destructive ? "bg-rose-100 text-rose-700" : "bg-violet-100 text-violet-700"}`}><ShieldCheck className="h-5 w-5" /></div><h3 className="text-lg font-bold text-slate-950">{confirmation?.title}</h3><p className="mt-2 text-sm leading-6 text-slate-600">{confirmation?.description}</p></div><DialogClose onClose={() => closeConfirmation(false)} /></DialogHeader>
+        <div className="flex justify-end gap-2 px-6 pb-6 pt-3"><Button type="button" variant="outline" onClick={() => closeConfirmation(false)}>Cancel</Button><Button type="button" variant={confirmation?.destructive ? "destructive" : undefined} onClick={() => closeConfirmation(true)}>{confirmation?.confirmLabel || "Confirm"}</Button></div>
+      </Dialog>
 
       <Dialog open={Boolean(deleteTarget)} onClose={() => !deleting && setDeleteTarget(null)} className="max-w-md">
         <DialogHeader><div><h3 className="flex items-center gap-2 text-base font-bold text-rose-700"><Trash2 className="h-4 w-4" /> Permanently delete employee</h3><p className="mt-1 text-xs leading-5 text-slate-500">This permanently deletes {deleteTarget?.name} and their login, fingerprint, attendance, leave, payroll, and biometric test records from MongoDB. This cannot be undone.</p></div><DialogClose onClose={() => !deleting && setDeleteTarget(null)} /></DialogHeader>

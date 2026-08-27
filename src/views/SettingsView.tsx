@@ -11,7 +11,7 @@ import { Dialog, DialogClose, DialogHeader } from "../components/ui/Dialog";
 type Settings = {
   shift: { enabled: boolean; startTime: string; lateGraceMinutes: number | ""; maxHours: number; workDays: number; workWeekdays: number[]; scheduleOverrides: { date: string; working: boolean }[] };
   leave: { monthlyCredits: number | "" };
-  payroll: { hourlyRates: { regular: number; extra: number } };
+  payroll: { hourlyRates: { regular: number | ""; extra: number | "" } };
 };
 
 function isoDate(date: Date) {
@@ -65,8 +65,8 @@ export function SettingsView() {
 
   const save = async () => {
     if (!adminPassword) return;
-    if (settings.shift.lateGraceMinutes === "" || settings.leave.monthlyCredits === "") {
-      toast({ title: "Complete the number fields", description: "Enter a late-arrival grace period and monthly leave credits before saving.", variant: "error" });
+    if (settings.shift.lateGraceMinutes === "" || settings.leave.monthlyCredits === "" || settings.payroll.hourlyRates.regular === "" || settings.payroll.hourlyRates.extra === "") {
+      toast({ title: "Complete the number fields", description: "Enter the attendance, leave-credit, and hourly-rate values before saving.", variant: "error" });
       return;
     }
     setSaving(true);
@@ -220,8 +220,8 @@ export function SettingsView() {
               New rates update future and unpaid payroll calculations. Paid payroll remains unchanged.
             </div>
             <div className="grid gap-4 sm:grid-cols-2">
-              <div className="space-y-2"><Label htmlFor="regular-hourly-rate">Regular employee rate</Label><div className="relative"><span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-slate-500">₱</span><Input id="regular-hourly-rate" className="no-number-arrows pl-8 pr-16" type="number" min="1" max="10000" step="0.01" value={settings.payroll.hourlyRates.regular} onChange={(event) => setSettings((current) => ({ ...current, payroll: { hourlyRates: { ...current.payroll.hourlyRates, regular: Number(event.target.value) } } }))} /><span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-xs text-slate-400">/ hour</span></div></div>
-              <div className="space-y-2"><Label htmlFor="extra-hourly-rate">Extra employee rate</Label><div className="relative"><span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-slate-500">₱</span><Input id="extra-hourly-rate" className="no-number-arrows pl-8 pr-16" type="number" min="1" max="10000" step="0.01" value={settings.payroll.hourlyRates.extra} onChange={(event) => setSettings((current) => ({ ...current, payroll: { hourlyRates: { ...current.payroll.hourlyRates, extra: Number(event.target.value) } } }))} /><span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-xs text-slate-400">/ hour</span></div></div>
+              <div className="space-y-2"><Label htmlFor="regular-hourly-rate">Regular employee rate</Label><div className="relative"><span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-slate-500">₱</span><Input id="regular-hourly-rate" className="no-number-arrows pl-8 pr-16" type="number" min="1" max="10000" step="0.01" value={settings.payroll.hourlyRates.regular} onChange={(event) => setSettings((current) => ({ ...current, payroll: { hourlyRates: { ...current.payroll.hourlyRates, regular: event.target.value === "" ? "" : Number(event.target.value) } } }))} /><span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-xs text-slate-400">/ hour</span></div></div>
+              <div className="space-y-2"><Label htmlFor="extra-hourly-rate">Extra employee rate</Label><div className="relative"><span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-slate-500">₱</span><Input id="extra-hourly-rate" className="no-number-arrows pl-8 pr-16" type="number" min="1" max="10000" step="0.01" value={settings.payroll.hourlyRates.extra} onChange={(event) => setSettings((current) => ({ ...current, payroll: { hourlyRates: { ...current.payroll.hourlyRates, extra: event.target.value === "" ? "" : Number(event.target.value) } } }))} /><span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-xs text-slate-400">/ hour</span></div></div>
             </div>
             <div className="grid gap-3 sm:grid-cols-2" role="status" aria-live="polite">
               <div className="rounded-xl border border-violet-100 bg-violet-50 p-3"><p className="text-xs font-semibold text-violet-700">Regular employee example</p><p className="mt-1 text-sm text-violet-950">8 completed hours × ₱{Number(settings.payroll.hourlyRates.regular || 0).toFixed(2)} = <strong>₱{(8 * Number(settings.payroll.hourlyRates.regular || 0)).toFixed(2)}</strong></p></div>
@@ -235,7 +235,6 @@ export function SettingsView() {
       <div className="flex flex-col-reverse gap-3 rounded-2xl border border-slate-200 bg-white p-4 sm:flex-row sm:items-center sm:justify-between">
         <p className="text-xs text-slate-500">Changes only take effect after you select Save Settings.</p>
         <div className="flex gap-3">
-          <Button variant="outline" onClick={() => setSettings(defaults)}>Reset</Button>
           <Button onClick={() => setPasswordDialogOpen(true)} disabled={saving}><Save className="h-4 w-4" />Save Settings</Button>
         </div>
       </div>

@@ -5,7 +5,7 @@ import crypto from 'node:crypto';
 import { buildAIInsights } from '../ai-insights.js';
 import { hashSecret, verifyAdminPassword, verifySecret } from './auth.js';
 import { getSystemControls, updateSystemControls } from '../system-controls.js';
-import { auditEvent, authenticate, csrfProtection, pick, requireRole } from '../security.js';
+import { auditEvent, auditScreenName, authenticate, csrfProtection, pick, requireRole } from '../security.js';
 import {
   BiometricError,
   encryptFingerprintSamples,
@@ -95,6 +95,9 @@ router.use(authenticate, csrfProtection);
 router.use((req, res, next) => {
   if (!['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method)) return next();
   res.on('finish', () => {
+    const body = req.body ?? {};
+    const changedFields = Object.keys(body).filter((key) => !['adminPassword', 'password', 'fingerprintSamples', 'template', 'captchaAnswer'].includes(key)).slice(0, 30);
+    const targetName = String(body.employeeName || body.name || [body.firstName, body.lastName].filter(Boolean).join(' ') || '').trim().slice(0, 120) || null;
     void auditEvent({
       req,
       actor: req.auth?.actor,
@@ -102,7 +105,22 @@ router.use((req, res, next) => {
       targetType: req.path.split('/').filter(Boolean)[0] ?? 'api',
       targetId: req.params?.id ?? req.params?.employeeId ?? null,
       outcome: res.statusCode < 400 ? 'success' : 'failure',
-      metadata: { path: req.path, statusCode: res.statusCode },
+      metadata: {
+        path: req.path, method: req.method, statusCode: res.statusCode, changedFields, targetName,
+        requestedStatus: typeof body.status === 'string' ? body.status : null,
+        payrollContext: /payroll/.test(req.path) ? {
+          scope: body.scope, amount: body.amount, periodStart: body.periodStart,
+          selectedCount: Array.isArray(body.ids) ? body.ids.length : undefined,
+          printScope: body.printScope, employeeName: body.employeeName, recordCount: body.recordCount,
+        } : null,
+        settingsValues: req.path === '/settings' ? {
+          workStart: body.shift?.startTime, lateGraceMinutes: body.shift?.lateGraceMinutes,
+          maximumHours: body.shift?.maxHours, workDays: body.shift?.workDays,
+          monthlyLeaveCredits: body.leave?.monthlyCredits,
+          regularHourlyRate: body.payroll?.hourlyRates?.regular, extraHourlyRate: body.payroll?.hourlyRates?.extra,
+        } : null,
+        ...(res.locals.auditMetadata || {}),
+      },
     });
   });
   next();
@@ -208,6 +226,7 @@ router.post('/employee/me/leave-requests', requireRole('regular', 'extra'), asyn
     const initials = employee.name.split(/\s+/).filter(Boolean).map((part) => part[0]).join('').slice(0, 2).toUpperCase();
     const request = { id, employeeId, employeeName: employee.name, role: employee.role === 'extra' ? 'Extra' : 'Regular', leaveType, startDate, endDate, requestedDates, approvedDates: [], totalDays, reason, status: 'pending', initials, createdAt: new Date() };
     await db.collection('leave_requests').insertOne(request);
+    res.locals.auditMetadata = { targetName: employee.name, employeeId, leaveType, requestedDates, leaveAction: 'submitted' };
     res.status(201).json({ ...request, _id: undefined });
   } catch { res.status(500).json({ error: 'Unable to submit leave request' }); }
 });
@@ -270,6 +289,7 @@ router.patch('/admin/account-security', async (req, res) => {
     const revoked = await db.collection('admin_sessions').deleteMany({ _id: { $ne: req.auth.session._id }, $or: [{ accountType: 'admin', accountId: admin._id }, { adminId: admin._id }] });
     await db.collection('login_otps').deleteMany({ $or: [{ accountType: 'admin', accountId: admin._id }, { adminId: admin._id }] });
     await auditEvent({ req, actor: { ...admin, email }, action: 'auth.admin_credentials_changed', targetType: 'admin_account', targetId: String(admin._id), outcome: 'success', metadata: { emailChanged, passwordChanged, revokedSessions: revoked.deletedCount } });
+    res.locals.auditMetadata = { adminAction: 'credentials-updated', emailChanged, passwordChanged, revokedSessions: revoked.deletedCount };
     res.json({ email, emailChanged, passwordChanged, revokedSessions: revoked.deletedCount });
   } catch (error) {
     if (error?.code === 11000) return res.status(409).json({ error: 'That email address is already used by another WorkPulse account.' });
@@ -289,6 +309,7 @@ router.patch('/admin/system-controls', async (req, res) => {
     if (Object.hasOwn(req.body ?? {}, 'maintenanceMode')) changes.maintenanceMode = Boolean(req.body.maintenanceMode);
     if (Object.hasOwn(req.body ?? {}, 'registrationOpen')) changes.registrationOpen = Boolean(req.body.registrationOpen);
     if (!Object.keys(changes).length) return res.status(400).json({ error: 'No supported control was provided' });
+    res.locals.auditMetadata = { adminAction: 'system-control-updated', controlChanges: changes };
     res.json(await updateSystemControls(mongoose.connection.db, changes, req.auth.actor.email));
   } catch { res.status(500).json({ error: 'Unable to update system controls' }); }
 });
@@ -307,6 +328,7 @@ router.patch('/admin/employees/:id/access', async (req, res) => {
       const accounts = await db.collection('employee_accounts').find({ employeeId: employee.id }, { projection: { _id: 1 } }).toArray();
       if (accounts.length) await db.collection('admin_sessions').deleteMany({ accountType: 'employee', accountId: { $in: accounts.map((account) => account._id) } });
     }
+    res.locals.auditMetadata = { adminAction: banned ? 'employee-access-blocked' : 'employee-access-restored', targetName: employee.name, employeeId: employee.id };
     res.json({ id: employee.id, banned });
   } catch { res.status(500).json({ error: 'Unable to update employee access' }); }
 });
@@ -328,6 +350,7 @@ router.post('/admin/force-clock-out', async (req, res) => {
       operations.push({ updateOne: { filter: { _id: record._id }, update: { $set: { sessions, sessionCount: sessions.length, checkOut: stamp.time, lastAction: 'time-out', forcedClockOut: true, forcedClockOutAt: stamp.now, forcedClockOutBy: req.auth.actor.email, updatedAt: stamp.now } } } });
     }
     if (operations.length) await db.collection('attendance').bulkWrite(operations);
+    res.locals.auditMetadata = { adminAction: 'force-clock-out', recordCount: operations.length, eventTime: stamp.time };
     res.json({ clockedOut: operations.length, time: stamp.time, date: stamp.date });
   } catch (error) {
     console.error('Force clock out failed:', error instanceof Error ? error.message : error);
@@ -441,16 +464,26 @@ router.get('/audit-events', async (req, res) => {
     if (!db) return res.status(503).json({ error: 'Database is unavailable' });
     const requestedLimit = Number.parseInt(String(req.query.limit ?? '20'), 10);
     const limit = Number.isFinite(requestedLimit) ? Math.max(1, Math.min(100, requestedLimit)) : 20;
-    const events = await db.collection('audit_events').find({}).sort({ occurredAt: -1, _id: -1 }).limit(limit).toArray();
+    const date = String(req.query.date ?? '').trim();
+    const filter = {};
+    if (date) {
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return res.status(400).json({ error: 'Audit date must use YYYY-MM-DD format' });
+      const start = new Date(`${date}T00:00:00+08:00`);
+      const end = new Date(start.getTime() + 86_400_000);
+      filter.occurredAt = { $gte: start, $lt: end };
+    }
+    const events = await db.collection('audit_events').find(filter).sort({ occurredAt: -1, _id: -1 }).limit(limit).toArray();
     res.json(events.map((event) => ({
       id: String(event._id),
       occurredAt: event.occurredAt,
       actorEmail: event.actorEmail ?? null,
       actorRole: event.actorRole ?? 'anonymous',
+      screenName: event.screenName ?? auditScreenName(event.action, event.targetType, event.metadata),
       action: event.action ?? 'unknown',
       targetType: event.targetType ?? 'system',
       targetId: event.targetId ?? null,
       outcome: event.outcome ?? 'unknown',
+      metadata: event.metadata ?? {},
     })));
   } catch (error) {
     console.error('Audit event fetch failed:', error instanceof Error ? error.message : error);
@@ -891,6 +924,7 @@ router.post('/employees', async (req, res) => {
       }
       return res.status(502).json({ error: 'The login email could not be delivered, so no employee account was created. Check the address and try again.' });
     }
+    res.locals.auditMetadata = { targetName: employee.name, employeeId: employee.id, employeeAction: 'created' };
     res.status(201).json({ ...employee, biometricStatus: 'enrolled', createdAt, loginEmailSent: true });
   } catch (error) {
     if (error instanceof BiometricError) return res.status(error.status).json({ error: error.message });
@@ -915,6 +949,7 @@ router.put('/employees/:id', async (req, res) => {
     if (employee.phone && !/^\+639\d{9}$/.test(employee.phone)) return res.status(400).json({ error: 'Phone number must use +639XXXXXXXXX with no spaces' });
     const existing = await mongoose.connection.db.collection('employees').findOne({ id: req.params.id });
     if (!existing) return res.status(404).json({ error: 'Employee not found' });
+    res.locals.auditMetadata = { targetName: employee.name || existing.name, employeeId: req.params.id, employeeAction: 'edited' };
     employee.biometricStatus = existing.biometricStatus ?? 'none';
     const db = mongoose.connection.db;
     const [adminEmail, employeeAccountEmail, employeeRecordEmail] = await Promise.all([
@@ -1019,6 +1054,7 @@ router.post('/employees/:id/archive', async (req, res) => {
     const db = mongoose.connection.db;
     const result = await db.collection('employees').findOneAndUpdate({ id: req.params.id, archived: { $ne: true } }, { $set: { archived: true, status: 'inactive', archivedAt: new Date(), updatedAt: new Date() } }, { returnDocument: 'after' });
     if (!result) return res.status(404).json({ error: 'Employee not found or already archived' });
+    res.locals.auditMetadata = { targetName: result.name, employeeId: result.id, employeeAction: 'archived' };
     const accounts = await db.collection('employee_accounts').find({ employeeId: req.params.id }, { projection: { _id: 1 } }).toArray();
     await db.collection('employee_accounts').updateMany({ employeeId: req.params.id }, { $set: { active: false, updatedAt: new Date() } });
     if (accounts.length) {
@@ -1046,6 +1082,7 @@ router.post('/employees/:id/unarchive', async (req, res) => {
     const hasFingerprint = Boolean(await db.collection('biometric_templates').findOne({ employeeId: req.params.id }, { projection: { _id: 1 } }));
     const result = await db.collection('employees').findOneAndUpdate({ id: req.params.id, archived: true }, { $set: { archived: false, status: 'active', biometricStatus: hasFingerprint ? 'enrolled' : 'none', unarchivedAt: new Date(), updatedAt: new Date() }, $unset: { archivedAt: '' } }, { returnDocument: 'after' });
     if (!result) return res.status(404).json({ error: 'Archived employee not found' });
+    res.locals.auditMetadata = { targetName: result.name, employeeId: result.id, employeeAction: 'unarchived' };
     await db.collection('employee_accounts').updateOne({ employeeId: req.params.id }, { $set: { active: true, updatedAt: new Date() } });
     res.json(result);
   } catch { res.status(500).json({ error: 'Failed to restore employee' }); }
@@ -1247,6 +1284,17 @@ router.post('/payroll-requests/prepare-bulk', async (req, res) => {
   }
 });
 
+router.post('/payroll/audit-print', async (req, res) => {
+  const printScope = req.body?.printScope === 'individual-payslip' ? 'individual-payslip' : 'paid-list';
+  res.locals.auditMetadata = {
+    payrollAction: 'printed', printScope,
+    targetName: String(req.body?.employeeName || '').trim().slice(0, 120) || null,
+    periodStart: String(req.body?.periodStart || '').slice(0, 10) || null,
+    recordCount: Math.max(0, Math.min(1000, Number(req.body?.recordCount || 0))),
+  };
+  res.status(204).end();
+});
+
 router.patch('/payroll-requests/bonus', async (req, res) => {
   try {
     const amount = Math.round(Number(req.body?.amount) * 100) / 100;
@@ -1266,6 +1314,7 @@ router.patch('/payroll-requests/bonus', async (req, res) => {
       return { updateOne: { filter: { _id: record._id, status: { $in: ['processing', 'rejected'] } }, update: { $set: { bonusAmount, additions, currentAmount: Math.round((Number(record.currentAmount || 0) + amount) * 100) / 100, amount: Math.round((Number(record.amount || 0) + amount) * 100) / 100, bonusUpdatedAt: new Date(), bonusUpdatedBy: req.auth.actor.email } } } };
     });
     const result = await db.collection('payroll_requests').bulkWrite(operations);
+    res.locals.auditMetadata = { payrollAction: 'bonus-added', scope, amount, recordCount: result.modifiedCount, targetName: scope === 'individual' ? records[0]?.employeeName : null, periodStart };
     res.json({ updated: result.modifiedCount, amount, scope });
   } catch (error) {
     console.error('Payroll bonus update failed:', error instanceof Error ? error.message : error);
@@ -1296,6 +1345,7 @@ router.patch('/payroll-requests/pay-bulk', async (req, res) => {
       }, { $set: { status: 'paid', paidAt, settledBy: record.id, approvedBy: req.auth.actor.email, paymentActionId } });
     }
     const total = ready.reduce((sum, item) => sum + Number(item.amount || 0), 0);
+    res.locals.auditMetadata = { payrollAction: ready.length === 1 ? 'individual-paid' : 'bulk-paid', recordCount: ready.length, targetName: ready.length === 1 ? ready[0].employeeName : null, total, periodStart };
     res.json({ paid: ready.length, skipped: ids.length - ready.length, total, ids: ready.map((item) => item.id), paidAt });
   } catch (error) {
     console.error('Bulk payroll payment failed:', error instanceof Error ? error.message : error);
@@ -1393,6 +1443,7 @@ router.patch('/payroll-requests/:id/confirm-payment', async (req, res) => {
       { returnDocument: 'after' },
     );
     if (!result) return res.status(404).json({ error: 'Unpaid payroll record not found' });
+    res.locals.auditMetadata = { payrollAction: 'individual-paid', targetName: result.employeeName, employeeId: result.employeeId, amount: result.amount, periodStart: result.periodStart };
     await db.collection('payroll_requests').updateMany(
       {
         employeeId: result.employeeId,
@@ -1419,6 +1470,7 @@ router.patch('/payroll-requests/:id/reject-payment', async (req, res) => {
       { returnDocument: 'after' },
     );
     if (!result) return res.status(404).json({ error: 'Processing payroll record not found' });
+    res.locals.auditMetadata = { payrollAction: 'payment-held', targetName: result.employeeName, employeeId: result.employeeId, amount: result.amount, periodStart: result.periodStart };
     res.json({ id: result.id, status: result.status, rejectedAt: result.rejectedAt });
   } catch { res.status(500).json({ error: 'Failed to mark payroll as not paid' }); }
 });
@@ -1436,6 +1488,7 @@ router.patch('/payroll-requests/:id/remove-hold', async (req, res) => {
       { returnDocument: 'after' },
     );
     if (!result) return res.status(404).json({ error: 'Held payroll record not found' });
+    res.locals.auditMetadata = { payrollAction: 'hold-removed', targetName: result.employeeName, employeeId: result.employeeId, amount: result.amount, periodStart: result.periodStart };
     res.json({ id: result.id, status: result.status });
   } catch { res.status(500).json({ error: 'Failed to remove payroll hold' }); }
 });
@@ -1468,6 +1521,7 @@ router.post('/payroll-requests/:id/email', async (req, res) => {
     ].join('\n');
     const transport = nodemailer.createTransport({ service: 'gmail', auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_APP_PASSWORD } });
     await transport.sendMail({ from: `Workpulse AI <${process.env.SMTP_USER}>`, to: employee.email, subject: `Payslip ${payroll.periodStart} - ${employee.name}`, text });
+    res.locals.auditMetadata = { payrollAction: 'payslip-emailed', targetName: employee.name, employeeId: employee.id, periodStart: payroll.periodStart };
     res.json({ message: `Payslip sent to ${employee.email}` });
   } catch (error) {
     console.error('Payslip email failed:', error instanceof Error ? error.message : error);
@@ -1503,6 +1557,7 @@ router.post('/payroll/:employeeId/email-summary', async (req, res) => {
     const text = `Payroll Summary (15-day period)\nEmployee: ${employee.name}\nEmployee ID: ${employee.id}${identifierText}\nHours Worked: ${hoursWorked.toFixed(2)}\nHourly Rate: ${money(hourlyRate)}\n\nGross Salary: ${money(gross)}\n${additionLines.map(([label, value]) => `${label}: +${money(value)}`).join('\n')}\nTotal Additions: +${money(total)}\nUnpaid Balance Carried Forward: +${money(carryOver)}\nNet Salary: ${money(gross + total + carryOver)}`;
     const transport = nodemailer.createTransport({ service: 'gmail', auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_APP_PASSWORD } });
     await transport.sendMail({ from: `Workpulse AI <${process.env.SMTP_USER}>`, to: employee.email, subject: `Payroll Summary - ${employee.name}`, text });
+    res.locals.auditMetadata = { payrollAction: 'summary-emailed', targetName: employee.name, employeeId: employee.id };
     res.json({ message: `Payroll summary sent to ${employee.email}` });
   } catch (error) {
     console.error('Payroll email failed:', error instanceof Error ? error.message : error);
@@ -1550,6 +1605,7 @@ router.patch('/leave-requests/:id/status', async (req, res) => {
     const employeeIds = await visibleEmployeeIds(db);
     const pendingRequest = await db.collection('leave_requests').findOne({ id: req.params.id, employeeId: { $in: employeeIds }, status: 'pending' });
     if (!pendingRequest) return res.status(404).json({ error: 'Pending leave request not found' });
+    res.locals.auditMetadata = { targetName: pendingRequest.employeeName, employeeId: pendingRequest.employeeId, requestedStatus: status, leaveAction: status };
     const requestedDates = Array.isArray(pendingRequest.requestedDates) && pendingRequest.requestedDates.length ? pendingRequest.requestedDates : [];
     const approvedDates = status === 'approved' ? [...new Set((Array.isArray(req.body?.approvedDates) ? req.body.approvedDates : requestedDates).map(String))].sort() : [];
     if (status === 'approved' && (!approvedDates.length || approvedDates.some((date) => !requestedDates.includes(date)))) return res.status(400).json({ error: 'Select at least one date from the employee request.' });
@@ -1647,6 +1703,7 @@ function kioskTimestamp() {
 
 router.post('/attendance/kiosk', async (req, res) => {
   try {
+    res.locals.auditMetadata = { kioskAction: 'fingerprint scan' };
     const db = mongoose.connection?.db;
     if (!db) return res.status(503).json({ error: 'MongoDB connection not ready' });
     const [probe] = normalizeFingerprintSamples(req.body?.fingerprintSamples, 1);
@@ -1672,6 +1729,7 @@ router.post('/attendance/kiosk', async (req, res) => {
     const employeeId = matched.employeeId;
     const employee = await db.collection('employees').findOne({ id: employeeId, archived: { $ne: true }, status: { $ne: 'inactive' } });
     if (!employee) return res.status(404).json({ error: 'Active employee not found' });
+    res.locals.auditMetadata = { ...res.locals.auditMetadata, targetName: employee.name, employeeId };
 
     const stamp = kioskTimestamp();
     const existing = await db.collection('attendance').findOne({ employeeId, date: stamp.date });
@@ -1703,6 +1761,7 @@ router.post('/attendance/kiosk', async (req, res) => {
         throw error;
       }
       if (verificationAttemptId) await db.collection('biometric_verification_attempts').updateOne({ _id: verificationAttemptId }, { $set: { action: 'time-in', eventTime: stamp.time, attendanceDate: stamp.date } });
+      res.locals.auditMetadata = { ...res.locals.auditMetadata, kioskAction: 'time-in', eventTime: stamp.time };
       return res.status(201).json({ action: 'time-in', record: { ...record, eventTime: stamp.time, _id: undefined } });
     }
 
@@ -1747,6 +1806,7 @@ router.post('/attendance/kiosk', async (req, res) => {
     const updated = await db.collection('attendance').findOneAndUpdate(versionFilter, { $set: update }, { returnDocument: 'after' });
     if (!updated) return res.status(409).json({ error: 'Attendance was updated by another request' });
     if (verificationAttemptId) await db.collection('biometric_verification_attempts').updateOne({ _id: verificationAttemptId }, { $set: { action, eventTime: stamp.time, attendanceDate: stamp.date } });
+    res.locals.auditMetadata = { ...res.locals.auditMetadata, kioskAction: action, eventTime: stamp.time };
     return res.json({ action, record: { ...updated, eventTime: stamp.time, _id: undefined } });
   } catch (error) {
     if (error instanceof BiometricError) return res.status(error.status).json({ error: error.message });

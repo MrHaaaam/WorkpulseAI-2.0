@@ -16,7 +16,7 @@ type OverviewEmployee = { status: string; biometricStatus: string; createdAt?: s
 type OverviewPayroll = { status: string; periodStart?: string };
 type OverviewAttendance = { employeeId?: string; name?: string; role?: string; date?: string; checkIn?: string; checkOut?: string; status: string };
 type OverviewLeave = { id: string; employeeId?: string; startDate: string; endDate: string; approvedDates?: string[]; totalDays: number; status: string };
-type OverviewAuditEvent = { id: string; occurredAt?: string; actorEmail?: string | null; actorRole?: string; action?: string; targetType?: string; outcome?: string };
+type OverviewAuditEvent = { id: string; occurredAt?: string; actorEmail?: string | null; actorRole?: string; screenName?: string; action?: string; targetType?: string; targetId?: string | null; outcome?: string; metadata?: Record<string, unknown> };
 
 function readableAuditAction(action = 'unknown', targetType = 'system') {
   const labels: Record<string, string> = {
@@ -31,6 +31,97 @@ function readableAuditAction(action = 'unknown', targetType = 'system') {
     return `${verbs[apiMatch[1]]} ${targetType.replace(/[-_]/g, ' ')}`;
   }
   return action.replace(/[._-]/g, ' ').replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function auditActionLabel(event: OverviewAuditEvent) {
+  const path = String(event.metadata?.path || '');
+  if (path.includes('/admin/') || event.action === 'auth.admin_credentials_changed' || event.action === 'admin.backup_created') {
+    const adminAction = String(event.metadata?.adminAction || '');
+    if (adminAction === 'credentials-updated' || path.endsWith('/account-security')) {
+      const emailChanged = event.metadata?.emailChanged === true;
+      const passwordChanged = event.metadata?.passwordChanged === true;
+      return emailChanged && passwordChanged ? 'Changed Admin Email and Password' : passwordChanged ? 'Changed Admin Password' : emailChanged ? 'Changed Admin Email' : 'Updated Admin Credentials';
+    }
+    if (adminAction === 'system-control-updated' || path.endsWith('/system-controls')) {
+      const fields = Array.isArray(event.metadata?.changedFields) ? event.metadata.changedFields : [];
+      if (fields.includes('maintenanceMode')) return 'Changed Maintenance Mode';
+      if (fields.includes('registrationOpen')) return 'Changed Employee Registration Access';
+      return 'Changed System Controls';
+    }
+    if (adminAction === 'employee-access-blocked') return 'Blocked Employee Account';
+    if (adminAction === 'employee-access-restored') return 'Restored Employee Account';
+    if (path.includes('/employees/') && path.endsWith('/access')) return 'Changed Employee Account Access';
+    if (adminAction === 'force-clock-out' || path.endsWith('/force-clock-out')) return 'Forced Employee Clock-Out';
+    if (event.action === 'admin.backup_created') return 'Downloaded System Backup';
+  }
+  if (!path.includes('payroll')) return readableAuditAction(event.action, event.targetType);
+  const payrollAction = String(event.metadata?.payrollAction || '');
+  const labels: Record<string, string> = {
+    'bonus-added': 'Bonus Added',
+    'bulk-paid': 'Multiple Employees Paid',
+    'individual-paid': 'Individual Payment Completed',
+    'payment-held': 'Payment Held',
+    'hold-removed': 'Payment Hold Removed',
+    printed: 'Payroll Printed',
+    'payslip-emailed': 'Payslip Emailed',
+    'summary-emailed': 'Payroll Summary Emailed',
+  };
+  if (labels[payrollAction]) return labels[payrollAction];
+  if (path.includes('/undo-last-payment')) return 'Payment Undone';
+  if (path.includes('/prepare-bulk')) return 'Payroll Prepared';
+  return readableAuditAction(event.action, event.targetType);
+}
+
+function auditEventDetail(event: OverviewAuditEvent, time: string) {
+  const actor = event.actorEmail || String(event.metadata?.attemptedEmail || '') || (event.actorRole === 'anonymous' ? 'Unknown user' : 'System');
+  const path = String(event.metadata?.path || '');
+  const targetName = String(event.metadata?.targetName || event.targetId || '').trim();
+  const result = event.outcome === 'success' ? 'succeeded' : event.outcome === 'failure' ? 'failed' : 'finished with an unknown result';
+  if (event.action === 'auth.login') return `${actor} login ${result} at ${time}.`;
+  if (event.action === 'auth.logout') return `${actor} logged out at ${time}.`;
+  if (path === '/attendance/kiosk') return event.outcome === 'success' ? `${targetName || 'An employee'} completed a kiosk ${String(event.metadata?.kioskAction || 'attendance scan')} at ${time}.` : `A kiosk attendance attempt ${result} at ${time}${targetName ? ` for ${targetName}` : ''}.`;
+  if (/^\/employees(?:\/|$)/.test(path)) {
+    const operation = path.endsWith('/archive') ? 'archived' : path.endsWith('/unarchive') ? 'unarchived' : event.action === 'api.post' ? 'created' : event.action === 'api.delete' ? 'permanently deleted' : 'edited';
+    return `${actor} ${operation} ${targetName || 'an employee record'} at ${time}; the action ${result}.`;
+  }
+  if (path.includes('leave-requests')) {
+    const requestedStatus = String(event.metadata?.requestedStatus || '');
+    const operation = path.includes('/employee/me/') ? path.endsWith('/cancel') ? 'cancelled a leave request' : 'submitted a leave request' : requestedStatus ? `${requestedStatus} a leave request` : 'updated a leave request';
+    return `${actor} ${operation}${targetName ? ` for ${targetName}` : ''} at ${time}; the action ${result}.`;
+  }
+  if (path.includes('payroll')) {
+    const payrollAction = String(event.metadata?.payrollAction || '');
+    const recordCount = Number(event.metadata?.recordCount || 0);
+    const amount = Number(event.metadata?.amount ?? event.metadata?.total ?? 0);
+    const money = amount > 0 ? ` worth ${amount.toLocaleString('en-PH', { style: 'currency', currency: 'PHP' })}` : '';
+    const people = recordCount > 0 ? `${recordCount} employee${recordCount === 1 ? '' : 's'}` : 'the selected employees';
+    const descriptions: Record<string, string> = {
+      'bonus-added': `${actor} added a bonus${money} to ${targetName || people}`,
+      'bulk-paid': `${actor} completed payroll for ${people}${money}`,
+      'individual-paid': `${actor} marked ${targetName || 'an employee'} as paid${money}`,
+      'payment-held': `${actor} placed ${targetName || "an employee's"} payment on hold`,
+      'hold-removed': `${actor} removed the payment hold for ${targetName || 'an employee'}`,
+      printed: event.metadata?.printScope === 'individual-payslip' ? `${actor} printed the payslip for ${targetName || 'an employee'}` : `${actor} printed the paid payroll list${recordCount ? ` containing ${recordCount} records` : ''}`,
+      'payslip-emailed': `${actor} emailed a payslip to ${targetName || 'an employee'}`,
+      'summary-emailed': `${actor} emailed a payroll summary to ${targetName || 'an employee'}`,
+    };
+    const description = descriptions[payrollAction] || (path.includes('/undo-last-payment') ? `${actor} undid the most recent payroll payment` : path.includes('/prepare-bulk') ? `${actor} prepared payroll for ${people}` : `${actor} performed a payroll action${targetName ? ` for ${targetName}` : ''}`);
+    return `${description} at ${time}; the action ${result}.`;
+  }
+  if (path === '/settings') {
+    const values = event.metadata?.settingsValues && typeof event.metadata.settingsValues === 'object' ? Object.entries(event.metadata.settingsValues).filter(([, value]) => value != null).map(([key, value]) => `${key.replace(/([A-Z])/g, ' $1').toLowerCase()}: ${value}`).join(', ') : '';
+    return `${actor} updated system settings${values ? ` (${values})` : ''} at ${time}; the action ${result}.`;
+  }
+  if (path.includes('/admin/') || event.action === 'auth.admin_credentials_changed' || event.action === 'admin.backup_created') {
+    const label = auditActionLabel(event).toLowerCase();
+    const controls = event.metadata?.controlChanges && typeof event.metadata.controlChanges === 'object'
+      ? Object.entries(event.metadata.controlChanges).map(([key, value]) => `${key === 'maintenanceMode' ? 'maintenance mode' : key === 'registrationOpen' ? 'employee registration' : key} was turned ${value ? 'on' : 'off'}`).join(' and ')
+      : '';
+    const count = Number(event.metadata?.recordCount || 0);
+    const extra = controls ? `: ${controls}` : targetName ? ` for ${targetName}` : path.endsWith('/force-clock-out') ? `; ${count} open attendance session${count === 1 ? '' : 's'} closed` : '';
+    return `${actor} ${label}${extra} at ${time}; the action ${result}.`;
+  }
+  return `${actor} ${readableAuditAction(event.action, event.targetType)} at ${time}; the action ${result}.`;
 }
 
 function attendanceTrend(records: OverviewAttendance[], mode: 'daily' | 'weekly' | 'monthly', anchorDate: string) {
@@ -105,7 +196,6 @@ export function AppRoutes() {
   const initialView: ViewKey = validViews.includes(paramView) ? paramView : 'overview';
   const [active, setActive] = useState<ViewKey>(initialView);
   const [mobileNavigationOpen, setMobileNavigationOpen] = useState(false);
-  const [overviewWorkforceDate, setOverviewWorkforceDate] = useState(manilaDateToday);
   const [overviewPerformanceDate, setOverviewPerformanceDate] = useState(manilaDateToday);
   const [overviewViewMode, setOverviewViewMode] = useState<'daily' | 'weekly' | 'monthly'>('weekly');
 
@@ -116,6 +206,7 @@ export function AppRoutes() {
   const [overviewAuditEvents, setOverviewAuditEvents] = useState<OverviewAuditEvent[]>([]);
   const [auditLoading, setAuditLoading] = useState(true);
   const [auditError, setAuditError] = useState('');
+  const [auditDate, setAuditDate] = useState(manilaDateToday);
 
   useEffect(() => {
     let cancelled = false;
@@ -133,7 +224,7 @@ export function AppRoutes() {
     }
     async function loadAuditEvents(attempt = 0) {
       try {
-        const response = await apiFetch('/api/audit-events?limit=20');
+        const response = await apiFetch(`/api/audit-events?limit=100&date=${encodeURIComponent(auditDate)}`);
         const data = await response.json().catch(() => null);
         if (!response.ok) throw new Error(data?.error || `Audit request failed (${response.status})`);
         if (!Array.isArray(data)) throw new Error('Audit server returned an invalid response');
@@ -154,7 +245,7 @@ export function AppRoutes() {
     const overviewInterval = window.setInterval(() => void loadOverviewData(), 30_000);
     const auditInterval = window.setInterval(() => void loadAuditEvents(), 30_000);
     return () => { cancelled = true; window.clearInterval(overviewInterval); window.clearInterval(auditInterval); };
-  }, []);
+  }, [auditDate]);
 
   const adminMetricsData = useMemo(() => {
     const totalStaff = overviewEmployees.length;
@@ -197,14 +288,16 @@ export function AppRoutes() {
   const auditTrail = useMemo(() => overviewAuditEvents.map((event) => {
     const occurredAt = event.occurredAt ? new Date(event.occurredAt) : null;
     const validDate = occurredAt && !Number.isNaN(occurredAt.getTime()) ? occurredAt : null;
+    const time = validDate ? validDate.toLocaleTimeString('en-PH', { hour: '2-digit', minute: '2-digit' }) : '—';
     return {
       id: event.id,
-      user: event.actorEmail || 'System',
+      user: event.screenName || 'System',
       role: event.actorRole === 'admin' ? 'Admin' : event.actorRole === 'manager' ? 'Manager' : event.actorRole === 'anonymous' ? 'System' : 'Staff',
-      action: readableAuditAction(event.action, event.targetType),
-      time: validDate ? validDate.toLocaleTimeString('en-PH', { hour: '2-digit', minute: '2-digit' }) : '—',
+      action: auditActionLabel(event),
+      time,
       date: validDate ? validDate.toLocaleDateString('en-PH', { month: 'short', day: 'numeric', year: 'numeric' }) : '—',
       status: event.outcome === 'success' ? 'Success' : event.outcome === 'failure' ? 'Failed' : 'Unknown',
+      detail: auditEventDetail(event, time),
     };
   }), [overviewAuditEvents]);
 
@@ -219,8 +312,6 @@ export function AppRoutes() {
         metrics={adminMetricsData}
         analytics={attendanceAnalytics}
         latestAttendanceDate={latestAttendanceDate}
-        workforceDate={overviewWorkforceDate}
-        onWorkforceDateChange={setOverviewWorkforceDate}
         performanceDate={overviewPerformanceDate}
         onPerformanceDateChange={setOverviewPerformanceDate}
         employees={overviewEmployees}
@@ -228,6 +319,8 @@ export function AppRoutes() {
         attendanceRecords={overviewAttendance}
         auditLoading={auditLoading}
         auditError={auditError}
+        auditDate={auditDate}
+        onAuditDateChange={setAuditDate}
         onNavigate={setActive}
       />
     ),

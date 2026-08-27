@@ -56,6 +56,22 @@ export function rateLimit({ windowMs, max, keyPrefix }) {
   };
 }
 
+export function auditScreenName(action, targetType, metadata = {}) {
+  const path = String(metadata?.path || '').toLowerCase();
+  const target = String(targetType || '').toLowerCase();
+  if (['auth.login', 'auth.logout', 'auth.otp_sent', 'auth.otp_verify'].includes(String(action || '')) || target === 'session') return 'Login';
+  if (path.includes('/attendance/kiosk') || target === 'attendance') return 'Kiosk';
+  if (path.includes('/payroll') || target.includes('payroll')) return 'Payroll';
+  if (path.includes('/leave-requests') || target.includes('leave')) return 'Leave Requests';
+  if (path.includes('/employees') || target === 'employees' || target.includes('employee')) return 'Employee Directory';
+  if (path === '/settings' || target === 'settings') return 'System Settings';
+  if (path.includes('/admin/') || target.includes('admin')) return 'Admin Controls';
+  if (String(action || '').startsWith('auth.')) return 'Account Security';
+  if (path.includes('/fingerprints') || target.includes('fingerprint') || target.includes('biometric')) return 'Fingerprint Management';
+  if (path.includes('/audit-events') || target.includes('audit')) return 'Overview';
+  return 'System';
+}
+
 export async function auditEvent({ req, actor = null, action, targetType, targetId = null, outcome = 'success', metadata = {} }) {
   try {
     const db = mongoose.connection.db;
@@ -65,6 +81,7 @@ export async function auditEvent({ req, actor = null, action, targetType, target
       actorId: actor?._id ?? null,
       actorEmail: actor?.email ?? null,
       actorRole: actor?.role ?? 'anonymous',
+      screenName: auditScreenName(action, targetType, metadata),
       action,
       targetType,
       targetId,
