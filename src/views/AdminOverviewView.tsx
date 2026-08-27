@@ -15,7 +15,6 @@ import {
   Gauge,
   Timer,
   WalletCards,
-  BookOpen,
 } from "lucide-react";
 import {
   ResponsiveContainer,
@@ -101,7 +100,6 @@ interface AdminOverviewProps {
   employees: { createdAt?: string }[];
   leaveRequests: { id: string; employeeId?: string; startDate: string; endDate: string; approvedDates?: string[]; totalDays: number; status: string }[];
   attendanceRecords: { date?: string; status: string }[];
-  onStartGuide?: () => void;
   onNavigate?: (view: "payroll" | "admin" | "insights") => void;
   auditLoading?: boolean;
   auditError?: string;
@@ -122,7 +120,6 @@ export function AdminOverviewView({
   employees = [],
   leaveRequests = [],
   attendanceRecords = [],
-  onStartGuide,
   onNavigate,
   auditLoading = false,
   auditError = '',
@@ -194,31 +191,10 @@ export function AdminOverviewView({
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+      <div>
         <div>
           <h2 className="text-2xl font-bold text-slate-900">Admin Overview</h2>
           <p className="text-sm text-slate-500">Global system monitoring, attendance analytics, and operational tracking</p>
-        </div>
-        <div className="flex items-center gap-3">
-          <Button data-guide="overview-guide-button" variant="outline" onClick={onStartGuide} className="gap-2 whitespace-nowrap"><BookOpen className="h-4 w-4" /> Start guide again</Button>
-          <div className="flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2">
-            <Calendar className="h-4 w-4 text-slate-400" />
-            <input
-              type="text"
-              value={latestAttendanceDate ? `Through ${new Date(`${latestAttendanceDate}T00:00:00`).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}` : 'No attendance period'}
-              className="text-sm font-medium text-slate-700 outline-none bg-transparent"
-              readOnly
-            />
-          </div>
-          <Tabs
-            value={viewMode}
-            onValueChange={(v) => onViewModeChange(v as ViewMode)}
-            items={[
-              { value: "daily", label: "Daily" },
-              { value: "weekly", label: "Weekly" },
-              { value: "monthly", label: "Monthly" },
-            ]}
-          />
         </div>
       </div>
 
@@ -301,8 +277,13 @@ export function AdminOverviewView({
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
         <Card data-guide="attendance-trends" className="lg:col-span-2">
           <CardHeader>
-            <CardTitle>Workforce Attendance Trends</CardTitle>
-            <CardDescription>Present vs Late vs Absent — {viewMode} view ending {performanceDateLabel}</CardDescription>
+            <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
+              <div><CardTitle>Workforce Attendance Trends</CardTitle><CardDescription>Present vs Late vs Absent — {viewMode} view ending {performanceDateLabel}</CardDescription></div>
+              <div className="flex flex-wrap items-center gap-2">
+                <div className="flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2"><Calendar className="h-4 w-4 text-slate-400" /><span className="whitespace-nowrap text-sm font-medium text-slate-700">{latestAttendanceDate ? `Through ${new Date(`${latestAttendanceDate}T00:00:00`).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}` : 'No attendance period'}</span></div>
+                <Tabs value={viewMode} onValueChange={(value) => onViewModeChange(value as ViewMode)} items={[{ value: "daily", label: "Daily" }, { value: "weekly", label: "Weekly" }, { value: "monthly", label: "Monthly" }]} />
+              </div>
+            </div>
           </CardHeader>
           <CardContent>
             <ResponsiveContainer width="100%" height={300}>

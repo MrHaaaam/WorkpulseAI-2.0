@@ -20,7 +20,7 @@ type Scanner = { deviceUid: string; scans: number; averageScore: number; health:
 type RecentMatch = { employeeId: string | null; name: string; action: "time-in" | "time-out" | "daily-limit" | "recognized" | "no-match"; eventTime: string | null; scannedAt: string | null; deviceUid: string; score: number | null; matchStrength: number | null; accepted: boolean; responseTimeMs: number | null };
 type Insights = {
   generatedAt: string;
-  forecast: { version: string; status: Readiness; sampleDays: number; activeEmployees: number; summary: string; forecast: ForecastDay[] };
+  forecast: { version: string; status: Readiness; sampleDays: number; clockInDays: number; activeEmployees: number; latestDataDate: string | null; dataStale: boolean; summary: string; forecast: ForecastDay[] };
   risk: { version: string; status: Readiness; periodStart: string; periodEnd: string; employeesAnalyzed: number; flagged: number; summary: string; employees: RiskEmployee[] };
   anomaly: { version: string; status: Readiness; sampleScans: number; medianTime: string; madMinutes: number; scaleMinutes: number; summary: string; anomalies: Anomaly[] };
   verification: { version: string; status: Readiness; matchesAnalyzed: number; threshold: number; averageHealth: number; summary: string; scanners: Scanner[]; recentMatches: RecentMatch[]; evaluation: EvaluationSummary };
@@ -81,8 +81,9 @@ function MetricCard({ modelKey, selected, insights, onSelect }: { modelKey: Insi
 function ForecastPanel({ data }: { data: Insights["forecast"] }) {
   return <div className="space-y-5">
     <div className="flex gap-3 rounded-xl border border-violet-200 bg-violet-50 px-4 py-3 text-sm leading-6 text-violet-950"><TrendingUp className="mt-0.5 shrink-0 text-violet-600" size={17} aria-hidden="true" /><p><strong>This is an estimate, not a final result.</strong> It uses recent attendance patterns and may change when new records are added.</p></div>
+    {data.dataStale && <div className="flex gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm leading-6 text-amber-950"><AlertTriangle className="mt-0.5 shrink-0 text-amber-600" size={17} aria-hidden="true" /><p><strong>Attendance data is not current.</strong> {data.latestDataDate ? <>The newest attendance record is from {shortDate(data.latestDataDate)}.</> : <>No attendance records are available.</>} The projection starts tomorrow, but it will remain limited until newer clock-ins are recorded.</p></div>}
     <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-      <Stat label="History analyzed" value={`${data.sampleDays} days`} />
+      <Stat label="Clock-in history" value={`${data.clockInDays} days`} />
       <Stat label="Active workforce" value={String(data.activeEmployees)} />
       <Stat label="Tomorrow" value={`${data.forecast[0]?.expectedPresent ?? 0} expected`} />
       <Stat label="7-day average" value={`${Math.round(data.forecast.reduce((sum, item) => sum + item.attendanceRate, 0) / Math.max(1, data.forecast.length))}%`} />

@@ -9,8 +9,8 @@ import { apiFetch } from "../lib/api";
 import { Dialog, DialogClose, DialogHeader } from "../components/ui/Dialog";
 
 type Settings = {
-  shift: { enabled: boolean; startTime: string; maxHours: number; workDays: number; workWeekdays: number[]; scheduleOverrides: { date: string; working: boolean }[] };
-  leave: { monthlyCredits: number };
+  shift: { enabled: boolean; startTime: string; lateGraceMinutes: number | ""; maxHours: number; workDays: number; workWeekdays: number[]; scheduleOverrides: { date: string; working: boolean }[] };
+  leave: { monthlyCredits: number | "" };
   payroll: { hourlyRates: { regular: number; extra: number } };
 };
 
@@ -32,7 +32,7 @@ function upcomingDates(count: number) {
 }
 
 const defaults: Settings = {
-  shift: { enabled: true, startTime: "09:00", maxHours: 8, workDays: 5, workWeekdays: [1, 2, 3, 4, 5], scheduleOverrides: [] },
+  shift: { enabled: true, startTime: "09:00", lateGraceMinutes: 0, maxHours: 8, workDays: 5, workWeekdays: [1, 2, 3, 4, 5], scheduleOverrides: [] },
   leave: { monthlyCredits: 10 },
   payroll: { hourlyRates: { regular: 50, extra: 40 } },
 };
@@ -65,6 +65,10 @@ export function SettingsView() {
 
   const save = async () => {
     if (!adminPassword) return;
+    if (settings.shift.lateGraceMinutes === "" || settings.leave.monthlyCredits === "") {
+      toast({ title: "Complete the number fields", description: "Enter a late-arrival grace period and monthly leave credits before saving.", variant: "error" });
+      return;
+    }
     setSaving(true);
     try {
       const response = await apiFetch("/api/settings", {
@@ -127,6 +131,16 @@ export function SettingsView() {
               </div>
             </div>
 
+            <div className="rounded-xl border border-amber-200 bg-amber-50/70 p-4">
+              <div className="flex items-start gap-3">
+                <div className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-amber-100 text-amber-700"><Clock className="h-4 w-4" /></div>
+                <div className="flex-1 space-y-3">
+                  <div><p className="text-sm font-semibold text-amber-950">Late Arrival Rule</p><p className="mt-1 text-xs leading-5 text-amber-800">Add a grace period after the configured work start time.</p></div>
+                  <div className="max-w-xs space-y-2"><Label>Grace period after work starts</Label><div className="relative"><Input className="no-number-arrows pr-20" type="number" min="0" max="180" step="1" value={settings.shift.lateGraceMinutes} onChange={(event) => setShift({ lateGraceMinutes: event.target.value === "" ? "" : Number(event.target.value) })} /><span className="pointer-events-none absolute inset-y-0 right-3 flex items-center text-xs font-medium text-slate-500">minutes</span></div><p className="text-xs text-amber-800">Example: an 08:00 AM start with 15 minutes means 08:15 is on time and 08:16 is late.</p></div>
+                </div>
+              </div>
+            </div>
+
             <div className="hidden">
               <Label>Normal work days each week</Label>
               <div className="grid grid-cols-3 gap-2">
@@ -177,7 +191,7 @@ export function SettingsView() {
             <div className="space-y-2">
               <Label>Leave credits per employee, per month</Label>
               <div className="relative max-w-xs">
-                <Input className="no-number-arrows pr-20 text-lg font-semibold" type="number" min="0" max="31" step="1" value={settings.leave.monthlyCredits} onChange={(event) => setSettings((current) => ({ ...current, leave: { monthlyCredits: Number(event.target.value) } }))} />
+                <Input className="no-number-arrows pr-20 text-lg font-semibold" type="number" min="0" max="31" step="1" value={settings.leave.monthlyCredits} onChange={(event) => setSettings((current) => ({ ...current, leave: { monthlyCredits: event.target.value === "" ? "" : Number(event.target.value) } }))} />
                 <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-xs font-semibold text-slate-400">credits</span>
               </div>
             </div>

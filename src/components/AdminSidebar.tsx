@@ -8,8 +8,7 @@ import {
   ChevronRight, 
   Sparkles,
   Calendar,
-  X,
-  BookOpen
+  X
 } from "lucide-react";
 import { apiFetch, clearSession } from "../lib/api";
 import { cn } from "../lib/utils";
@@ -30,10 +29,9 @@ interface SidebarProps {
   onNavigate: (view: ViewKey) => void;
   mobileOpen?: boolean;
   onMobileClose?: () => void;
-  onOpenGuide?: () => void;
 }
 
-export function AdminSidebar({ active, onNavigate, mobileOpen = false, onMobileClose = () => {}, onOpenGuide = () => {} }: SidebarProps) {
+export function AdminSidebar({ active, onNavigate, mobileOpen = false, onMobileClose = () => {} }: SidebarProps) {
   async function logout() {
     try {
       await apiFetch('/api/auth/logout', { method: 'POST' });
@@ -95,11 +93,6 @@ export function AdminSidebar({ active, onNavigate, mobileOpen = false, onMobileC
       </nav>
 
       <div className="border-t border-slate-200/80 p-3">
-        <button data-guide="manual-button" type="button" onClick={() => { onOpenGuide(); onMobileClose(); }} className="mb-3 flex w-full items-center gap-3 rounded-xl border border-violet-200 bg-violet-50 px-3 py-2.5 text-left text-[13px] font-semibold text-violet-700 transition hover:border-violet-300 hover:bg-violet-100">
-          <BookOpen className="h-[18px] w-[18px]" />
-          Manual Guide
-          <ChevronRight className="ml-auto h-3.5 w-3.5" />
-        </button>
         <div className="flex items-center gap-2.5 rounded-xl border border-slate-200 bg-slate-50 p-2.5">
           <div className="flex h-9 w-9 items-center justify-center rounded-full bg-[#8642ED] text-[13px] font-bold text-white">A</div>
           <div className="min-w-0 flex-1">

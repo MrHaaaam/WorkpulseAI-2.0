@@ -91,7 +91,7 @@ export function AttendanceView(props: {
       case "Present":
         return (
           <Badge variant="success">
-            <Check className="h-3 w-3" /> Present
+            <Check className="h-3 w-3" /> On time
           </Badge>
         );
       case "Late":

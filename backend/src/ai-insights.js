@@ -47,28 +47,33 @@ const sessionsFor = (record) => Array.isArray(record?.sessions) && record.sessio
     }];
 
 function forecastInsight(attendance, activeEmployees, today) {
-  const dated = attendance.filter((item) => utcDate(item.date));
-  const lastDate = dated.reduce((latest, item) => {
+  const todayDate = utcDate(today);
+  const historyStart = addDays(todayDate, -89);
+  const dated = attendance.filter((item) => {
+    const date = utcDate(item.date);
+    return date && date >= historyStart && date <= todayDate;
+  });
+  const latestDataDate = dated.reduce((latest, item) => {
     const date = utcDate(item.date);
     return !latest || date > latest ? date : latest;
-  }, null) || utcDate(today);
-  const firstDate = dated.reduce((earliest, item) => {
-    const date = utcDate(item.date);
-    return !earliest || date < earliest ? date : earliest;
-  }, null) || addDays(lastDate, -13);
-  const startDate = new Date(Math.max(firstDate.getTime(), addDays(lastDate, -89).getTime()));
+  }, null);
   const counts = new Map();
+  const observedDates = new Set();
+  const clockInDates = new Set();
   for (const item of dated) {
+    const day = String(item.date).slice(0, 10);
+    observedDates.add(day);
     const present = item.status !== 'Absent' && sessionsFor(item).some((session) => session.checkIn);
-    if (present) counts.set(String(item.date).slice(0, 10), (counts.get(String(item.date).slice(0, 10)) || 0) + 1);
+    if (present) {
+      counts.set(day, (counts.get(day) || 0) + 1);
+      clockInDates.add(day);
+    }
   }
-  const series = [];
-  for (let date = startDate; date <= lastDate; date = addDays(date, 1)) {
-    const key = date.toISOString().slice(0, 10);
-    series.push({ date: key, value: counts.get(key) || 0 });
-  }
+  const series = [...observedDates].sort().map((date) => ({ date, value: counts.get(date) || 0 }));
   const values = series.map((item) => item.value);
-  const ready = activeEmployees > 0 && values.length >= 14;
+  // Allow a normal two-day weekend gap, but do not call an older dataset ready.
+  const dataStale = !latestDataDate || latestDataDate < addDays(todayDate, -2);
+  const ready = activeEmployees > 0 && clockInDates.size >= 14 && !dataStale;
   const weekdayAverages = Array.from({ length: 7 }, (_, day) => {
     const matches = series.filter((item) => utcDate(item.date).getUTCDay() === day).map((item) => item.value);
     return matches.length ? matches.reduce((sum, value) => sum + value, 0) / matches.length : 0;
@@ -88,7 +93,7 @@ function forecastInsight(attendance, activeEmployees, today) {
     });
   }
   const forecast = Array.from({ length: 7 }, (_, index) => {
-    const date = addDays(lastDate, index + 1);
+    const date = addDays(todayDate, index + 1);
     const day = date.getUTCDay();
     const estimate = ready ? level + (index + 1) * trend + season[day] : weekdayAverages[day];
     const expectedPresent = Math.round(clamp(estimate, 0, activeEmployees));
@@ -114,8 +119,15 @@ function forecastInsight(attendance, activeEmployees, today) {
   const average = forecast.reduce((sum, day) => sum + day.expectedPresent, 0) / forecast.length;
   return {
     version: 'Holt-Winters additive · weekly seasonality', status: ready ? 'ready' : 'limited',
-    sampleDays: values.length, activeEmployees, forecast,
-    summary: activeEmployees ? `${round(average)} of ${activeEmployees} employees expected per day next week` : 'Add active employees to generate a forecast',
+    sampleDays: series.length, clockInDays: clockInDates.size, activeEmployees,
+    latestDataDate: latestDataDate?.toISOString().slice(0, 10) || null,
+    dataStale,
+    forecast,
+    summary: !activeEmployees
+      ? 'Add active employees to generate a forecast'
+      : ready
+        ? `${round(average)} of ${activeEmployees} employees expected per day next week`
+        : `Limited forecast: only ${clockInDates.size} days contain valid clock-ins`,
   };
 }
 

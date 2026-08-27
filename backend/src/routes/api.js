@@ -507,7 +507,7 @@ function duplicateEmployeeMessage(error) {
 }
 
 const defaultSettings = {
-  shift: { enabled: true, startTime: '09:00', maxHours: 8, workDays: 5, workWeekdays: [1, 2, 3, 4, 5], scheduleOverrides: [] },
+  shift: { enabled: true, startTime: '09:00', lateGraceMinutes: 0, maxHours: 8, workDays: 5, workWeekdays: [1, 2, 3, 4, 5], scheduleOverrides: [] },
   leave: { monthlyCredits: 10 },
   payroll: { hourlyRates: { regular: 50, extra: 40 } },
 };
@@ -529,6 +529,17 @@ function parseAttendanceTime(date, time) {
   if (Number.isNaN(result.getTime())) return null;
   result.setHours(hour, Number(match[2]), 0, 0);
   return result;
+}
+
+function clockMinutes(time) {
+  if (!time) return null;
+  const match = String(time).match(/(\d{1,2}):(\d{2})(?:\s*(AM|PM))?/i);
+  if (!match) return null;
+  let hour = Number(match[1]);
+  const minute = Number(match[2]);
+  if (match[3]?.toUpperCase() === 'PM' && hour < 12) hour += 12;
+  if (match[3]?.toUpperCase() === 'AM' && hour === 12) hour = 0;
+  return hour >= 0 && hour < 24 && minute >= 0 && minute < 60 ? hour * 60 + minute : null;
 }
 
 function formatAttendanceTime(date) {
@@ -560,6 +571,9 @@ function attendanceHoursForRecord(record, settings) {
 export async function getSettings(db) {
   const stored = await db.collection('settings').findOne({ key: 'company' });
   const storedShift = stored?.shift ?? {};
+  const storedStartMinutes = clockMinutes(storedShift.startTime ?? defaultSettings.shift.startTime);
+  const legacyLateMinutes = clockMinutes(storedShift.lateAfterTime);
+  const migratedGraceMinutes = legacyLateMinutes == null || storedStartMinutes == null ? 0 : Math.max(0, Math.min(180, legacyLateMinutes - storedStartMinutes));
   const workDays = Math.min(7, Math.max(1, Number(storedShift.workDays ?? defaultSettings.shift.workDays)));
   const fallbackWorkWeekdays = Array.from({ length: workDays }, (_, index) => index + 1).map((day) => day === 7 ? 0 : day);
   const storedWorkWeekdays = Array.isArray(storedShift.workWeekdays) ? [...new Set(storedShift.workWeekdays.map(Number).filter((day) => Number.isInteger(day) && day >= 0 && day <= 6))] : fallbackWorkWeekdays;
@@ -567,6 +581,7 @@ export async function getSettings(db) {
     shift: {
       enabled: true,
       startTime: storedShift.startTime ?? defaultSettings.shift.startTime,
+      lateGraceMinutes: Math.max(0, Math.min(180, Number(storedShift.lateGraceMinutes ?? migratedGraceMinutes))),
       maxHours: Number(storedShift.maxHours ?? defaultSettings.shift.maxHours),
       workDays,
       workWeekdays: storedWorkWeekdays.length === workDays ? storedWorkWeekdays : fallbackWorkWeekdays,
@@ -580,6 +595,16 @@ export async function getSettings(db) {
       },
     },
   };
+}
+
+function attendanceArrivalStatus(record, settings) {
+  if (record?.status === 'Absent' || record?.status === 'On Leave') return record.status;
+  const arrival = clockMinutes(attendanceSessions(record)[0]?.checkIn || record?.checkIn);
+  const start = clockMinutes(settings?.shift?.startTime);
+  const graceMinutes = Number(settings?.shift?.lateGraceMinutes || 0);
+  const cutoff = start == null ? null : start + graceMinutes;
+  if (arrival == null || cutoff == null) return record?.status || 'Present';
+  return arrival > cutoff ? 'Late' : 'Present';
 }
 
 export async function enforceAutomaticClockOut(db, settings) {
@@ -629,6 +654,7 @@ router.put('/settings', async (req, res) => {
       shift: {
         enabled: true,
         startTime: /^([01]\d|2[0-3]):[0-5]\d$/.test(incoming.shift?.startTime) ? incoming.shift.startTime : defaultSettings.shift.startTime,
+        lateGraceMinutes: numberInRange(incoming.shift?.lateGraceMinutes, 0, 0, 180),
         maxHours: numberInRange(incoming.shift?.maxHours, 8, 1, 24),
         workDays: numberInRange(incoming.shift?.workDays, 5, 1, 7),
         workWeekdays: Array.isArray(incoming.shift?.workWeekdays) ? [...new Set(incoming.shift.workWeekdays.map(Number).filter((day) => Number.isInteger(day) && day >= 0 && day <= 6))] : defaultSettings.shift.workWeekdays,
@@ -1598,7 +1624,7 @@ router.get('/attendance', async (req, res) => {
         checkOut: a.checkOut,
         sessions: attendanceSessions(a),
         sessionCount: attendanceSessions(a).length,
-        status: a.status,
+        status: attendanceArrivalStatus(a, settings),
         autoClockedOut: a.autoClockedOut ?? false,
       }))
     );
@@ -1666,7 +1692,7 @@ router.post('/attendance/kiosk', async (req, res) => {
         date: stamp.date, checkIn: stamp.time, checkOut: null,
         sessions: [{ checkIn: stamp.time, checkOut: null, checkInAt: stamp.now, deviceUid: deviceUid || null, matchScore: matched.score }],
         sessionCount: 1, lastAction: 'time-in',
-        status: 'Present',
+        status: clockMinutes(stamp.time) > clockMinutes(settings.shift.startTime) + Number(settings.shift.lateGraceMinutes || 0) ? 'Late' : 'Present',
         captureMethod: 'digitalpersona-fingerjet', deviceUid: deviceUid || null,
         identityVerified: true, matchScore: matched.score, matcherFormat: matched.format,
         createdAt: stamp.now, updatedAt: stamp.now,

@@ -1,7 +1,6 @@
 import { useState, useEffect, useMemo } from 'react';
 import { Menu } from 'lucide-react';
 import { AdminSidebar, type ViewKey } from '../components/AdminSidebar';
-import { AdminGuide } from '../components/AdminGuide';
 import { AdminOverviewView } from '../views/AdminOverviewView';
 import { EmployeeDirectoryView } from '../views/EmployeeDirectoryView';
 
@@ -105,7 +104,6 @@ export function AppRoutes() {
   const validViews: ViewKey[] = ['overview', 'attendance', 'employees', 'leave', 'payroll', 'insights', 'settings', 'admin'];
   const initialView: ViewKey = validViews.includes(paramView) ? paramView : 'overview';
   const [active, setActive] = useState<ViewKey>(initialView);
-  const [guideOpen, setGuideOpen] = useState(false);
   const [mobileNavigationOpen, setMobileNavigationOpen] = useState(false);
   const [overviewWorkforceDate, setOverviewWorkforceDate] = useState(manilaDateToday);
   const [overviewPerformanceDate, setOverviewPerformanceDate] = useState(manilaDateToday);
@@ -230,7 +228,6 @@ export function AppRoutes() {
         attendanceRecords={overviewAttendance}
         auditLoading={auditLoading}
         auditError={auditError}
-        onStartGuide={() => { setActive('overview'); setGuideOpen(true); }}
         onNavigate={setActive}
       />
     ),
@@ -269,7 +266,7 @@ export function AppRoutes() {
 
   return (
     <div className="flex min-h-screen w-full bg-slate-100/70">
-      <AdminSidebar active={active} onNavigate={setActive} mobileOpen={mobileNavigationOpen} onMobileClose={() => setMobileNavigationOpen(false)} onOpenGuide={() => { setActive('overview'); setGuideOpen(true); }} />
+      <AdminSidebar active={active} onNavigate={setActive} mobileOpen={mobileNavigationOpen} onMobileClose={() => setMobileNavigationOpen(false)} />
       <div className="min-w-0 flex-1">
         <header className="sticky top-0 z-30 flex h-16 items-center border-b border-slate-200/80 bg-white/90 px-4 backdrop-blur-xl sm:px-6 lg:px-8">
           <button onClick={() => setMobileNavigationOpen(true)} aria-label="Open navigation" className="mr-3 rounded-xl border border-slate-200 p-2 text-slate-600 hover:bg-slate-50 lg:hidden"><Menu className="h-5 w-5" /></button>
@@ -280,7 +277,6 @@ export function AppRoutes() {
           <div className="mx-auto w-full max-w-[1600px]">{viewMap[active] || viewMap.overview}</div>
         </main>
       </div>
-      <AdminGuide key={guideOpen ? 'guide-open' : 'guide-closed'} open={guideOpen} onClose={() => setGuideOpen(false)} onNavigate={setActive} />
     </div>
   );
 }
