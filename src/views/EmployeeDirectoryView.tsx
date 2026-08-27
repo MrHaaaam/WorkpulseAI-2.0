@@ -96,6 +96,7 @@ export function EmployeeDirectoryView({ employees: initialEmployees }: Partial<E
   const [fingerprintRegistering, setFingerprintRegistering] = useState(false);
   const [fingerprintSamples, setFingerprintSamples] = useState<string[]>([]);
   const [fingerprintDeviceUid, setFingerprintDeviceUid] = useState("");
+  const [fingerprintEnrollmentKey, setFingerprintEnrollmentKey] = useState(0);
   const [saving, setSaving] = useState(false);
   const [sendingLogin, setSendingLogin] = useState(false);
   const [formError, setFormError] = useState("");
@@ -113,6 +114,40 @@ export function EmployeeDirectoryView({ employees: initialEmployees }: Partial<E
     const timer = window.setInterval(() => setPasswordRetrySeconds((seconds) => Math.max(0, seconds - 1)), 1000);
     return () => window.clearInterval(timer);
   }, [passwordRetrySeconds]);
+
+  async function checkCompletedFingerprint(samples: string[], deviceUid: string) {
+    setFormError("");
+    try {
+      const response = await apiFetch('/api/fingerprints/check-enrollment', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ fingerprintSamples: samples }),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.error || 'The fingerprint could not be checked.');
+      setFingerprintSamples(samples);
+      setFingerprintDeviceUid(deviceUid);
+      update("biometricStatus", "enrolled");
+      setFingerprintRegistering(false);
+      toast({ title: "Fingerprint ready", description: "All three scans match and this finger is not registered in the system.", variant: "success" });
+    } catch (reason) {
+      const message = reason instanceof Error ? reason.message : 'The fingerprint could not be checked.';
+      setFingerprintSamples([]);
+      setFingerprintDeviceUid("");
+      setFormError(message);
+      setFingerprintEnrollmentKey((key) => key + 1);
+      toast({ title: "Fingerprint not accepted", description: message, variant: "error" });
+    }
+  }
+
+  async function checkFingerprintScan(sample: string) {
+    const response = await apiFetch('/api/fingerprints/check-scan', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ fingerprintSamples: [sample] }),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (response.ok) return;
+    const message = data.error || 'The fingerprint could not be checked. Please scan again.';
+    toast({ title: response.status === 409 ? "Fingerprint already registered" : "Fingerprint check failed", description: message, variant: "error" });
+    throw new Error(message);
+  }
 
   const filtered = useMemo(() => employees.filter((employee) => {
     const query = search.toLowerCase();
@@ -382,7 +417,7 @@ export function EmployeeDirectoryView({ employees: initialEmployees }: Partial<E
                 <Badge variant="warning"><Clock className="h-3 w-3" /> Enrollment in progress</Badge>
               )}
             </div>
-            {fingerprintRegistering && <div className="mt-4"><FingerprintEnrollment onComplete={(samples, uid) => { setFingerprintSamples(samples); setFingerprintDeviceUid(uid); update("biometricStatus", "enrolled"); setFingerprintRegistering(false); }} onCancel={() => setFingerprintRegistering(false)} /></div>}
+            {fingerprintRegistering && <div className="mt-4"><FingerprintEnrollment key={fingerprintEnrollmentKey} validateScan={checkFingerprintScan} onComplete={(samples, uid) => void checkCompletedFingerprint(samples, uid)} onCancel={() => setFingerprintRegistering(false)} /></div>}
           </div>
           {!editingId && fingerprintSamples.length !== REQUIRED_FINGERPRINT_SCANS && <p className="mt-2 text-xs font-medium text-amber-600">Capture three scans of the same finger; all three must match accurately.</p>}
           </FormSection>

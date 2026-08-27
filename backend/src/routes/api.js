@@ -9,6 +9,7 @@ import { auditEvent, authenticate, csrfProtection, pick, requireRole } from '../
 import {
   BiometricError,
   encryptFingerprintSamples,
+  fingerprintMatchStrength,
   fingerprintMatchThreshold,
   findFingerprintDecision,
   findFingerprintMatch,
@@ -211,12 +212,6 @@ router.post('/employee/me/leave-requests', requireRole('regular', 'extra'), asyn
   } catch { res.status(500).json({ error: 'Unable to submit leave request' }); }
 });
 
-router.use(requireRole('admin'));
-
-router.get('/admin/account-security', (req, res) => {
-  res.json({ email: req.auth.actor.email });
-});
-
 router.patch('/employee/me/leave-requests/:id/cancel', requireRole('regular', 'extra'), async (req, res) => {
   try {
     const request = await mongoose.connection.db.collection('leave_requests').findOneAndUpdate(
@@ -224,9 +219,15 @@ router.patch('/employee/me/leave-requests/:id/cancel', requireRole('regular', 'e
       { $set: { status: 'cancelled', cancelledAt: new Date(), cancelledBy: req.auth.actor.email } },
       { returnDocument: 'after' },
     );
-    if (!request) return res.status(409).json({ error: 'Only your pending leave requests can be cancelled.' });
+    if (!request) return res.status(409).json({ error: 'Only your own pending leave requests can be cancelled.' });
     res.json({ ...request, _id: undefined });
   } catch { res.status(500).json({ error: 'Unable to cancel the leave request.' }); }
+});
+
+router.use(requireRole('admin'));
+
+router.get('/admin/account-security', (req, res) => {
+  res.json({ email: req.auth.actor.email });
 });
 
 router.patch('/admin/account-security', async (req, res) => {
@@ -370,10 +371,16 @@ router.get('/ai-insights', async (_req, res) => {
       db.collection('biometric_verification_attempts').find({}).sort({ createdAt: -1 }).limit(500).toArray(),
       db.collection('biometric_evaluation_trials').find({}).sort({ createdAt: -1 }).limit(1000).toArray(),
     ]);
-    const visibleVerificationAttempts = verificationAttempts.filter((attempt) => !attempt.employeeId || employeeIdSet.has(attempt.employeeId));
-    const visibleEvaluationTrials = evaluationTrials.filter((trial) =>
+    const legacyIdentificationTrials = verificationAttempts.filter((attempt) => attempt.source === 'admin-identification').map((attempt) => ({
+      ...attempt, id: String(attempt._id), mode: 'automatic-identification', expectedType: 'automatic',
+      expectedEmployeeId: null, expectedEmployeeName: null, actualEmployeeId: attempt.employeeId || null,
+      actualEmployeeName: employees.find((employee) => employee.id === attempt.employeeId)?.name || null,
+      classification: null,
+    }));
+    const visibleVerificationAttempts = verificationAttempts.filter((attempt) => attempt.source !== 'admin-identification' && (!attempt.employeeId || employeeIdSet.has(attempt.employeeId)));
+    const visibleEvaluationTrials = [...evaluationTrials, ...legacyIdentificationTrials].filter((trial) =>
       (!trial.expectedEmployeeId || employeeIdSet.has(trial.expectedEmployeeId))
-      && (!trial.actualEmployeeId || employeeIdSet.has(trial.actualEmployeeId)));
+      && (!trial.actualEmployeeId || employeeIdSet.has(trial.actualEmployeeId))).sort((left, right) => new Date(right.createdAt || 0) - new Date(left.createdAt || 0));
     res.json(buildAIInsights({ attendance, employees, leaveRequests, verificationAttempts: visibleVerificationAttempts, evaluationTrials: visibleEvaluationTrials, fingerJetThreshold: fingerprintMatchThreshold() }));
   } catch (error) {
     console.error('AI insights generation failed:', error);
@@ -413,6 +420,7 @@ router.post('/biometric-evaluation-trials', async (req, res) => {
       accepted: decision.accepted, classification,
       wrongEmployeeMatch: expectedType === 'genuine' && decision.accepted && actualEmployeeId !== expectedEmployeeId,
       score: decision.best?.score ?? null, threshold: decision.threshold,
+      matchStrength: fingerprintMatchStrength(decision.best?.score, decision.threshold),
       deviceUid: deviceUid || null, responseTimeMs, createdAt: new Date(),
       createdBy: req.auth.actor.email,
     };
@@ -706,6 +714,75 @@ router.get('/employees-next-id', async (_req, res) => {
   catch { res.status(500).json({ error: 'Failed to generate the next employee ID' }); }
 });
 
+router.post('/fingerprints/check-enrollment', async (req, res) => {
+  try {
+    const db = mongoose.connection.db;
+    const fingerprintSamples = normalizeFingerprintSamples(req.body?.fingerprintSamples, 3);
+    const enrollment = await validateEnrollmentSamples(fingerprintSamples);
+    await rejectDuplicateEnrollment(db, enrollment.templates);
+    res.json({ available: true });
+  } catch (error) {
+    if (error instanceof BiometricError) return res.status(error.status).json({ error: error.message });
+    console.error('Fingerprint availability check failed:', error instanceof Error ? error.message : error);
+    res.status(500).json({ error: 'The fingerprint could not be checked. Capture three new scans and try again.' });
+  }
+});
+
+router.post('/fingerprints/check-scan', async (req, res) => {
+  try {
+    const db = mongoose.connection.db;
+    const [fingerprintSample] = normalizeFingerprintSamples(req.body?.fingerprintSamples, 1);
+    const storedTemplates = await db.collection('biometric_templates').find({}).toArray();
+    const duplicate = storedTemplates.length ? await findFingerprintMatch(fingerprintSample, storedTemplates) : null;
+    if (duplicate) return res.status(409).json({ error: 'This fingerprint is already registered. Use a different finger that is not saved in the system.' });
+    res.json({ available: true });
+  } catch (error) {
+    if (error instanceof BiometricError) return res.status(error.status).json({ error: error.message });
+    console.error('Fingerprint scan check failed:', error instanceof Error ? error.message : error);
+    res.status(500).json({ error: 'The fingerprint could not be checked. Please scan again.' });
+  }
+});
+
+router.post('/fingerprints/identify', async (req, res) => {
+  try {
+    const db = mongoose.connection.db;
+    const [fingerprintSample] = normalizeFingerprintSamples(req.body?.fingerprintSamples, 1);
+    const deviceUid = String(req.body?.deviceUid ?? '').trim().slice(0, 200);
+    const templates = await activeBiometricTemplates(db);
+    const startedAt = Date.now();
+    const decision = await findFingerprintDecision(fingerprintSample, templates);
+    const responseTimeMs = Date.now() - startedAt;
+    if (!decision.accepted || !decision.best?.employeeId) {
+      await db.collection('biometric_evaluation_trials').insertOne({
+        id: crypto.randomUUID(), mode: 'automatic-identification', expectedType: 'automatic',
+        expectedEmployeeId: null, expectedEmployeeName: null, actualEmployeeId: null, actualEmployeeName: null,
+        accepted: false, classification: null, score: decision.best?.score ?? null, threshold: decision.threshold,
+        deviceUid: deviceUid || null, responseTimeMs, createdAt: new Date(), createdBy: req.auth.actor.email,
+      });
+      return res.json({ recognized: false, employeeId: null, employeeName: null, matchStrength: fingerprintMatchStrength(decision.best?.score, decision.threshold) });
+    }
+    const employee = await db.collection('employees').findOne(
+      { id: decision.best.employeeId, archived: { $ne: true }, status: { $ne: 'inactive' } },
+      { projection: { _id: 0, id: 1, name: 1 } },
+    );
+    if (!employee) return res.status(404).json({ error: 'The matching employee account is not active.' });
+    await db.collection('biometric_evaluation_trials').insertOne({
+      id: crypto.randomUUID(), mode: 'automatic-identification', expectedType: 'automatic',
+      expectedEmployeeId: null, expectedEmployeeName: null, actualEmployeeId: employee.id, actualEmployeeName: employee.name,
+      accepted: true, classification: null, score: decision.best.score, threshold: decision.threshold,
+      deviceUid: deviceUid || null, responseTimeMs, createdAt: new Date(), createdBy: req.auth.actor.email,
+    });
+    res.json({
+      recognized: true, employeeId: employee.id, employeeName: employee.name,
+      matchStrength: fingerprintMatchStrength(decision.best.score, decision.threshold),
+    });
+  } catch (error) {
+    if (error instanceof BiometricError) return res.status(error.status).json({ error: error.message });
+    console.error('Fingerprint identification failed:', error instanceof Error ? error.message : error);
+    res.status(500).json({ error: 'The fingerprint could not be identified. Please try again.' });
+  }
+});
+
 router.post('/employees', async (req, res) => {
   try {
     if (!(await getSystemControls(mongoose.connection.db)).registrationOpen) return res.status(403).json({ error: 'New employee registration is currently restricted in Admin Controls' });
@@ -731,7 +808,7 @@ router.post('/employees', async (req, res) => {
     const deviceUid = String(req.body?.fingerprintDeviceUid ?? '').trim().slice(0, 200);
     const enrollment = await validateEnrollmentSamples(fingerprintSamples);
     employee.id = await nextEmployeeId(db);
-    await rejectDuplicateEnrollment(db, employee.id, enrollment.templates);
+    await rejectDuplicateEnrollment(db, enrollment.templates);
     const createdAt = new Date();
     const generatedPassword = generateTemporaryPassword();
     const passwordHash = await hashSecret(generatedPassword);
@@ -844,7 +921,7 @@ router.put('/employees/:id/fingerprint', async (req, res) => {
     const fingerprintSamples = normalizeFingerprintSamples(req.body?.fingerprintSamples, 3);
     const deviceUid = String(req.body?.fingerprintDeviceUid ?? '').trim().slice(0, 200);
     const enrollment = await validateEnrollmentSamples(fingerprintSamples);
-    await rejectDuplicateEnrollment(db, employee.id, enrollment.templates);
+    await rejectDuplicateEnrollment(db, enrollment.templates);
     const now = new Date();
     const session = await mongoose.startSession();
     try {

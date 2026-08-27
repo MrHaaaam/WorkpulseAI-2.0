@@ -44,6 +44,16 @@ function friendlyDate(value: string) {
   return Number.isNaN(date.getTime()) ? value : date.toLocaleDateString("en-PH", { timeZone: "UTC", weekday: "short", month: "short", day: "numeric" });
 }
 
+function requestedDatesFor(request: LeaveRequest) {
+  if (request.requestedDates?.length) return [...new Set(request.requestedDates)].sort();
+  const start = new Date(`${request.startDate}T00:00:00Z`);
+  const end = new Date(`${request.endDate}T00:00:00Z`);
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return [];
+  const dates: string[] = [];
+  for (let date = start; date <= end; date = new Date(date.getTime() + 86_400_000)) dates.push(date.toISOString().slice(0, 10));
+  return dates;
+}
+
 function LeaveDates({ request }: { request: LeaveRequest }) {
   const dates = request.approvedDates?.length ? request.approvedDates : request.requestedDates?.length ? request.requestedDates : [];
   if (!dates.length) return <div className="mt-1 flex items-center gap-1 text-xs text-slate-600"><Calendar className="h-3.5 w-3.5 text-slate-400"/><span>{friendlyDate(request.startDate)} to {friendlyDate(request.endDate)}</span><span className="font-semibold text-slate-900">({request.totalDays} days)</span></div>;
@@ -60,6 +70,8 @@ export function LeaveRequestsView({
   const [filterStatus, setFilterStatus] = useState<"all" | "pending" | "approved" | "rejected">("all");
   const [localRequests, setLocalRequests] = useState(requests);
   const [reviewTarget, setReviewTarget] = useState<LeaveRequest | null>(null);
+  const [undoTarget, setUndoTarget] = useState<LeaveRequest | null>(null);
+  const [undoing, setUndoing] = useState(false);
   const [approvalDates, setApprovalDates] = useState<string[]>([]);
   useEffect(() => { apiFetch('/api/leave-requests').then((response) => response.ok ? response.json() : Promise.reject()).then(setLocalRequests).catch(() => setLocalRequests([])); }, []);
 
@@ -78,14 +90,16 @@ export function LeaveRequestsView({
     }
   }
   async function undoApproval(request: LeaveRequest) {
-    if (!window.confirm(`Undo ${request.employeeName}'s approved leave? Future On Leave attendance will be removed and their credits restored.`)) return;
+    setUndoing(true);
     try {
       const response = await apiFetch(`/api/leave-requests/${request.id}/undo-approval`, { method: 'PATCH' });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(data.error || 'Approval could not be undone');
       setLocalRequests((current) => current.map((item) => item.id === request.id ? { ...item, ...data } : item));
       toast({ title: "Approval undone", description: `${request.employeeName}'s leave was cancelled and future attendance access was restored.`, variant: "success" });
+      setUndoTarget(null);
     } catch (reason) { toast({ title: "Approval was not undone", description: reason instanceof Error ? reason.message : "Please try again.", variant: "error" }); }
+    finally { setUndoing(false); }
   }
   // REMOVED: filterLeaveType state declaration
 
@@ -93,7 +107,7 @@ export function LeaveRequestsView({
   const activeRequests = localRequests.filter((request) => {
     const dates = request.approvedDates?.length ? request.approvedDates : request.requestedDates?.length ? request.requestedDates : [request.endDate];
     return [...dates].sort().at(-1)! >= today;
-  }).sort((left, right) => new Date(right.createdAt ?? 0).getTime() - new Date(left.createdAt ?? 0).getTime());
+  }).sort((left, right) => Number(right.status === "pending") - Number(left.status === "pending") || new Date(right.createdAt ?? 0).getTime() - new Date(left.createdAt ?? 0).getTime());
   const pendingCount = activeRequests.filter(r => r.status === "pending").length;
   const approvedCount = activeRequests.filter(r => r.status === "approved").length;
   const totalDaysRequested = activeRequests.reduce((acc, r) => acc + (r.status === "approved" ? r.totalDays : 0), 0);
@@ -113,7 +127,7 @@ export function LeaveRequestsView({
       <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h2 className="text-2xl font-extrabold text-slate-900 tracking-tight">Leave Requests</h2>
-          <p className="text-sm text-slate-500">Review, approve, or decline time-off requests from your team.</p>
+          <p className="text-sm leading-6 text-slate-600">Pending requests appear first. Review the employee's dates and reason before making a decision.</p>
         </div>
       </div>
 
@@ -134,7 +148,7 @@ export function LeaveRequestsView({
             <CheckCircle className="h-6 w-6" />
           </div>
           <div>
-            <p className="text-sm font-medium text-slate-500">Approved This Month</p>
+            <p className="text-sm font-medium text-slate-500">Upcoming Approved Leave</p>
             <p className="text-2xl font-bold text-slate-900">{approvedCount}</p>
           </div>
         </div>
@@ -144,7 +158,7 @@ export function LeaveRequestsView({
             <Calendar className="h-6 w-6" />
           </div>
           <div>
-            <p className="text-sm font-medium text-slate-500">Total Team Days Approved</p>
+            <p className="text-sm font-medium text-slate-500">Upcoming Approved Days</p>
             <p className="text-2xl font-bold text-slate-900">{totalDaysRequested} Days</p>
           </div>
         </div>
@@ -156,6 +170,7 @@ export function LeaveRequestsView({
         <div className="relative max-w-md flex-1 w-full">
           <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
           <input
+            aria-label="Search leave requests by employee name or role"
             type="text"
             placeholder="Search employee or role..."
             value={searchTerm}
@@ -173,8 +188,10 @@ export function LeaveRequestsView({
             ["rejected", "Declined"]
           ].map(([val, label]) => (
             <button
+              type="button"
               key={val}
-onClick={() => setFilterStatus(val as "all" | "pending" | "approved" | "rejected")}
+              aria-pressed={filterStatus === val}
+              onClick={() => setFilterStatus(val as "all" | "pending" | "approved" | "rejected")}
               className={`whitespace-nowrap rounded-lg px-3 py-2 text-sm font-medium transition-colors ${
                 filterStatus === val
                   ? "bg-[#8642ED] text-white"
@@ -188,7 +205,7 @@ onClick={() => setFilterStatus(val as "all" | "pending" | "approved" | "rejected
       </div>
 
       {/* Leave Requests Feed */}
-      <div data-guide="leave-list" className="space-y-4">
+      <div data-guide="leave-list" className="space-y-4" aria-live="polite" aria-label={`${filteredRequests.length} leave requests shown`}>
         {filteredRequests.length > 0 ? (
           filteredRequests.map((request) => (
             <div
@@ -235,7 +252,7 @@ onClick={() => setFilterStatus(val as "all" | "pending" | "approved" | "rejected
               {/* Actions & Status Badge */}
               <div className="flex items-center justify-between md:justify-end gap-3 mt-4 md:mt-0 border-t md:border-none pt-3 md:pt-0 border-slate-100">
                 {request.status === "approved" && (
-                  <div className="flex items-center gap-2"><span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-700"><CheckCircle className="h-3.5 w-3.5" /> Approved</span>{request.approvedDates?.some((date)=>date>=today)&&<button onClick={()=>void undoApproval(request)} className="rounded-lg border border-amber-200 px-3 py-1.5 text-xs font-semibold text-amber-700 hover:bg-amber-50">Undo Approval</button>}</div>
+                  <div className="flex items-center gap-2"><span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-700"><CheckCircle className="h-3.5 w-3.5" /> Approved</span>{request.approvedDates?.some((date)=>date>=today)&&<button type="button" onClick={()=>setUndoTarget(request)} className="rounded-lg border border-amber-300 px-3 py-1.5 text-xs font-semibold text-amber-800 hover:bg-amber-50 focus:outline-none focus:ring-2 focus:ring-amber-300">Undo Approval</button>}</div>
                 )}
                 
                 {request.status === "rejected" && (
@@ -254,7 +271,7 @@ onClick={() => setFilterStatus(val as "all" | "pending" | "approved" | "rejected
                       <X className="h-3.5 w-3.5" /> Decline
                     </button>
                     <button
-                      onClick={() => { setReviewTarget(request); setApprovalDates(request.requestedDates?.length ? request.requestedDates : []); }}
+                      onClick={() => { setReviewTarget(request); setApprovalDates(requestedDatesFor(request)); }}
                       className="flex-1 md:flex-none inline-flex items-center justify-center gap-1 rounded-lg bg-[#8642ED] px-3 py-1.5 text-xs font-semibold text-white hover:bg-[#7232db] shadow-sm transition-colors"
                     >
                       <Check className="h-3.5 w-3.5" /> Approve
@@ -272,7 +289,8 @@ onClick={() => setFilterStatus(val as "all" | "pending" | "approved" | "rejected
           </div>
         )}
       </div>
-      <Dialog open={Boolean(reviewTarget)} onClose={() => setReviewTarget(null)} className="max-w-2xl"><DialogHeader><div><h3 className="text-base font-bold text-slate-900">Review leave dates</h3><p className="mt-1 text-sm text-slate-500">Select the exact requested dates to approve for {reviewTarget?.employeeName}.</p></div><DialogClose onClose={() => setReviewTarget(null)}/></DialogHeader><div className="space-y-4 px-6 pb-6 pt-3">{reviewTarget&&<LeaveDatePicker selected={approvalDates} onChange={setApprovalDates} allowedDates={reviewTarget.requestedDates}/>}<div className="flex justify-end gap-2"><Button variant="outline" onClick={()=>setReviewTarget(null)}>Cancel</Button><Button disabled={!approvalDates.length} onClick={()=>reviewTarget&&void updateRequest(reviewTarget.id,"approved",approvalDates)}><Check className="h-4 w-4"/>Approve {approvalDates.length} {approvalDates.length===1?"Date":"Dates"}</Button></div></div></Dialog>
+      <Dialog open={Boolean(reviewTarget)} onClose={() => setReviewTarget(null)} className="max-w-2xl"><DialogHeader><div><h3 className="text-base font-bold text-slate-900">Review requested leave</h3><p className="mt-1 text-sm text-slate-500">The employee's requested dates are already included. No calendar navigation is needed.</p></div><DialogClose onClose={() => setReviewTarget(null)}/></DialogHeader><div className="space-y-4 px-6 pb-6 pt-3">{reviewTarget&&<><div className="rounded-xl border border-slate-200 bg-slate-50 p-4"><p className="font-semibold text-slate-900">{reviewTarget.employeeName}</p><p className="mt-1 text-sm text-slate-600">{reviewTarget.leaveType} · {reviewTarget.reason}</p></div><LeaveDatePicker selected={approvalDates} onChange={setApprovalDates} allowedDates={requestedDatesFor(reviewTarget)}/></>}<div className="flex justify-end gap-2"><Button variant="outline" onClick={()=>setReviewTarget(null)}>Cancel</Button><Button disabled={!approvalDates.length} onClick={()=>reviewTarget&&void updateRequest(reviewTarget.id,"approved",approvalDates)}><Check className="h-4 w-4"/>Approve {approvalDates.length} {approvalDates.length===1?"Date":"Dates"}</Button></div></div></Dialog>
+      <Dialog open={Boolean(undoTarget)} onClose={() => !undoing && setUndoTarget(null)} className="max-w-md"><DialogHeader><div><h3 className="text-base font-bold text-amber-800">Undo approved leave?</h3><p className="mt-1 text-sm leading-6 text-slate-600">Review what will change before continuing.</p></div><DialogClose onClose={() => !undoing && setUndoTarget(null)}/></DialogHeader><div className="space-y-4 px-6 pb-6 pt-3"><div className="rounded-xl border border-amber-200 bg-amber-50 p-4"><p className="font-semibold text-slate-900">{undoTarget?.employeeName}</p>{undoTarget&&<LeaveDates request={undoTarget}/>}<ul className="mt-3 list-disc space-y-1 pl-5 text-sm leading-6 text-amber-950"><li>The approved leave will be cancelled.</li><li>Future “On Leave” attendance entries will be removed.</li><li>The employee's leave credits will be restored.</li></ul></div><p className="text-xs leading-5 text-slate-500">Past attendance records are not changed automatically.</p><div className="flex justify-end gap-2"><Button type="button" variant="outline" disabled={undoing} onClick={()=>setUndoTarget(null)}>Keep Approval</Button><Button type="button" variant="destructive" disabled={undoing} onClick={()=>undoTarget&&void undoApproval(undoTarget)}>{undoing?"Undoing...":"Undo Approval"}</Button></div></div></Dialog>
     </div>
   );
 }

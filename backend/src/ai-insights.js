@@ -92,9 +92,23 @@ function forecastInsight(attendance, activeEmployees, today) {
     const day = date.getUTCDay();
     const estimate = ready ? level + (index + 1) * trend + season[day] : weekdayAverages[day];
     const expectedPresent = Math.round(clamp(estimate, 0, activeEmployees));
+    const weekdaySamples = series.filter((item) => utcDate(item.date).getUTCDay() === day);
+    const weekdayAverage = Math.round(weekdayAverages[day]);
+    const trendDirection = Math.abs(trend) < 0.05 ? 'stable' : trend > 0 ? 'increasing' : 'decreasing';
+    const expectedLabel = `${expectedPresent} ${expectedPresent === 1 ? 'employee' : 'employees'}`;
+    const averageLabel = `${weekdayAverage} ${weekdayAverage === 1 ? 'employee' : 'employees'}`;
+    const trendExplanation = trendDirection === 'stable'
+      ? 'Recent attendance has stayed about the same.'
+      : trendDirection === 'increasing'
+        ? 'Recent attendance has been going up.'
+        : 'Recent attendance has been going down.';
     return {
       date: date.toISOString().slice(0, 10), expectedPresent,
       attendanceRate: activeEmployees ? round(expectedPresent / activeEmployees * 100) : 0,
+      weekdayAverage, weekdaySamples: weekdaySamples.length, trendDirection,
+      explanation: ready
+        ? `We expect ${expectedLabel} because usually around ${averageLabel} attended on recent ${displayWeekday(day)}s. ${trendExplanation}`
+        : `We expect ${expectedLabel} because around ${averageLabel} attended on previous ${displayWeekday(day)}s. More attendance records will make this estimate clearer.`,
     };
   });
   const average = forecast.reduce((sum, day) => sum + day.expectedPresent, 0) / forecast.length;
@@ -105,43 +119,58 @@ function forecastInsight(attendance, activeEmployees, today) {
   };
 }
 
+function displayWeekday(day) {
+  return ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][day];
+}
+
 function leaveDateSet(leaveRequests) {
   const result = new Map();
   for (const leave of leaveRequests.filter((item) => item.status === 'approved')) {
+    if (!result.has(leave.employeeId)) result.set(leave.employeeId, new Set());
+    if (Array.isArray(leave.approvedDates) && leave.approvedDates.length) {
+      for (const value of leave.approvedDates) {
+        const approvedDate = utcDate(value);
+        if (approvedDate) result.get(leave.employeeId).add(approvedDate.toISOString().slice(0, 10));
+      }
+      continue;
+    }
     const start = utcDate(leave.startDate);
     const end = utcDate(leave.endDate);
     if (!start || !end) continue;
-    if (!result.has(leave.employeeId)) result.set(leave.employeeId, new Set());
     for (let date = start; date <= end; date = addDays(date, 1)) result.get(leave.employeeId).add(date.toISOString().slice(0, 10));
   }
   return result;
 }
 
+export function attendanceFlagFor(absenceDays) {
+  if (absenceDays >= 26) return 'red';
+  if (absenceDays >= 16) return 'orange';
+  return 'green';
+}
+
 function riskInsight(attendance, employees, leaveRequests, today) {
   const todayDate = utcDate(today);
+  const periodStart = addDays(todayDate, -29).toISOString().slice(0, 10);
+  const periodEnd = todayDate.toISOString().slice(0, 10);
   const coveredLeave = leaveDateSet(leaveRequests);
   const rows = employees.map((employee) => {
     const records = attendance.filter((item) => item.employeeId === employee.id).sort((a, b) => String(a.date).localeCompare(String(b.date)));
     const absenceDates = records
-      .filter((item) => item.status === 'Absent' && !coveredLeave.get(employee.id)?.has(String(item.date).slice(0, 10)))
-      .map((item) => utcDate(item.date)).filter(Boolean);
-    let spells = 0;
-    let previous = null;
-    let weightedDays = 0;
-    for (const date of absenceDates) {
-      if (!previous || Math.round((date - previous) / DAY_MS) > 1) spells += 1;
-      previous = date;
-      weightedDays += 0.5 ** (Math.max(0, (todayDate - date) / DAY_MS) / 30);
-    }
-    const score = round(spells ** 2 * weightedDays);
-    const lateDays = records.filter((item) => item.status === 'Late').length;
-    const tier = score >= 400 ? 'severe' : score >= 125 ? 'high' : score >= 51 ? 'mild' : 'normal';
-    return { employeeId: employee.id, name: employee.name || employee.fullName || employee.id, score, tier, spells, weightedDays: round(weightedDays), absenceDays: absenceDates.length, lateDays };
-  }).sort((a, b) => b.score - a.score);
+      .map((item) => ({ status: item.status, day: String(item.date).slice(0, 10) }))
+      .filter((item) => item.status === 'Absent' && item.day >= periodStart && item.day <= periodEnd && !coveredLeave.get(employee.id)?.has(item.day))
+      .map((item) => item.day);
+    const lateDays = records.filter((item) => {
+      const day = String(item.date).slice(0, 10);
+      return item.status === 'Late' && day >= periodStart && day <= periodEnd;
+    }).length;
+    const tier = attendanceFlagFor(absenceDates.length);
+    return { employeeId: employee.id, name: employee.name || employee.fullName || employee.id, tier, absenceDays: absenceDates.length, absenceDates, lateDays };
+  }).sort((a, b) => b.absenceDays - a.absenceDays || b.lateDays - a.lateDays || a.name.localeCompare(b.name));
+  const flagged = rows.filter((row) => row.tier !== 'green').length;
   return {
-    version: 'Bradford factor · 30-day decay', status: rows.length ? 'ready' : 'limited',
-    employeesAnalyzed: rows.length, flagged: rows.filter((row) => row.tier !== 'normal').length,
-    employees: rows.slice(0, 10), summary: rows.length ? `${rows.filter((row) => row.tier !== 'normal').length} attendance patterns need review` : 'No employee records to analyze',
+    version: '30-day unapproved absence count', status: rows.length ? 'ready' : 'limited', periodStart, periodEnd,
+    employeesAnalyzed: rows.length, flagged,
+    employees: rows.slice(0, 10), summary: rows.length ? `${flagged} ${flagged === 1 ? 'employee has' : 'employees have'} an Orange or Red attendance flag` : 'No employee records to analyze',
   };
 }
 
@@ -158,7 +187,7 @@ function anomalyInsight(attendance, employees) {
   const scale = Math.max(mad, 15);
   const anomalies = scans.map((scan) => ({
     ...scan, score: round(0.6745 * (scan.minutes - center) / scale, 2), deviationMinutes: Math.round(scan.minutes - center),
-  })).filter((scan) => Math.abs(scan.score) > 3.5).sort((a, b) => Math.abs(b.score) - Math.abs(a.score)).slice(0, 12);
+  })).filter((scan) => Math.abs(scan.score) > 3.5).sort((a, b) => String(b.date).localeCompare(String(a.date)) || Math.abs(b.score) - Math.abs(a.score)).slice(0, 200);
   return {
     version: 'Modified Z-score · MAD baseline', status: scans.length >= 7 ? 'ready' : 'limited', sampleScans: scans.length,
     medianTime: values.length ? displayClock(center) : 'No data', madMinutes: round(mad), scaleMinutes: scale,
@@ -238,9 +267,11 @@ function verificationInsight(attendance, verificationAttempts, evaluationTrials,
     averageResponseTimeMs,
     recentTrials: evaluationTrials.slice(0, 20).map((trial) => ({
       id: trial.id || String(trial._id), classification: trial.classification,
+      scanKind: trial.mode === 'automatic-identification' ? 'automatic' : 'controlled',
       expectedType: trial.expectedType, expectedEmployeeName: trial.expectedEmployeeName || null,
       actualEmployeeName: trial.actualEmployeeName || null, accepted: Boolean(trial.accepted),
       wrongEmployeeMatch: Boolean(trial.wrongEmployeeMatch), responseTimeMs: Number(trial.responseTimeMs || 0),
+      matchStrength: trial.score == null ? null : matchStrength(Number(trial.score), Number(trial.threshold) || threshold),
       createdAt: asDate(trial.createdAt)?.toISOString() || null,
     })),
   };

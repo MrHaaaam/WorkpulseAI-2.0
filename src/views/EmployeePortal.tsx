@@ -7,6 +7,8 @@ import { apiFetch, clearSession } from '../lib/api'
 import { useToast } from '../components/ui/Toast'
 import { DateNavigator } from '../components/DateNavigator'
 import { LeaveDatePicker } from '../components/LeaveDatePicker'
+import { Dialog, DialogClose, DialogHeader } from '../components/ui/Dialog'
+import { Button } from '../components/ui/Button'
 
 type EmployeeProfile = {
   id: string; name: string; email?: string; phone?: string; address?: string; createdAt?: string;
@@ -58,6 +60,8 @@ export function EmployeePortal() {
   const [savingContact, setSavingContact] = useState(false)
   const [contactDraft, setContactDraft] = useState({ phone: '', address: '' })
   const [selectedPayroll, setSelectedPayroll] = useState<Payroll | null>(null)
+  const [cancelLeaveTarget, setCancelLeaveTarget] = useState<Leave | null>(null)
+  const [cancellingLeave, setCancellingLeave] = useState(false)
 
   useEffect(() => {
     let cancelled = false
@@ -103,14 +107,16 @@ export function EmployeePortal() {
   }
 
   async function cancelLeave(request: Leave) {
-    if (!window.confirm('Cancel this pending leave request?')) return
+    setCancellingLeave(true)
     try {
       const response = await apiFetch(`/api/employee/me/leave-requests/${request.id}/cancel`, { method: 'PATCH' })
       const data = await response.json().catch(() => ({}))
       if (!response.ok) throw new Error(data.error || 'Leave request could not be cancelled')
       setWorkspace((current) => current ? { ...current, leaveRequests: current.leaveRequests.map((item) => item.id === request.id ? { ...item, ...data } : item) } : current)
       toast({ title: 'Leave request cancelled', description: 'The request was removed from the administrator approval queue.', variant: 'success' })
+      setCancelLeaveTarget(null)
     } catch (reason) { toast({ title: 'Request was not cancelled', description: reason instanceof Error ? reason.message : 'Please try again.', variant: 'error' }) }
+    finally { setCancellingLeave(false) }
   }
 
   async function saveContactInformation(event: FormEvent<HTMLFormElement>) {
@@ -206,7 +212,7 @@ export function EmployeePortal() {
 
         {section === 'leave' && <div className="grid gap-5 xl:grid-cols-[.82fr_1.18fr]">
           <Panel title="Request leave" subtitle="Your administrator will review the dates you select"><MonthlyLeaveBalance balance={profile.monthlyLeaveCredits} /><form onSubmit={submitLeave} className="mt-5 space-y-4"><Field label="Leave type"><select value={leaveDraft.leaveType} onChange={(event) => setLeaveDraft((current) => ({ ...current, leaveType: event.target.value }))} className="input"><option>Annual Leave</option><option>Sick Leave</option><option>Personal Leave</option><option>Maternity Leave</option></select></Field><LeaveDatePicker selected={leaveDraft.requestedDates} onChange={(requestedDates)=>setLeaveDraft(current=>({...current,requestedDates}))}/><Field label="Reason"><textarea required minLength={5} maxLength={500} rows={4} value={leaveDraft.reason} onChange={(event) => setLeaveDraft((current) => ({ ...current, reason: event.target.value }))} className="input h-auto py-3" placeholder="Briefly explain your request" /></Field><button disabled={submitting||leaveDraft.requestedDates.length===0} className="flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-[#8642ED] text-sm font-semibold text-white shadow-lg shadow-violet-600/15 hover:bg-violet-700 disabled:opacity-60"><Send className="h-4 w-4" />{submitting ? 'Submitting...' : `Submit ${leaveDraft.requestedDates.length} ${leaveDraft.requestedDates.length===1?'date':'dates'}`}</button></form></Panel>
-          <Panel title="Request history" subtitle="Updates and decisions from your administrator"><DataTable headers={['Leave type', 'Dates', 'Days', 'Status']} rows={workspace.leaveRequests.map((item) => [item.leaveType, (item.approvedDates?.length?item.approvedDates:item.requestedDates)?.map(formatDate).join(', ')||`${formatDate(item.startDate)} – ${formatDate(item.endDate)}`, String(item.totalDays), <div key={item.id} className="flex flex-wrap items-center gap-2"><Status value={item.status} />{item.status==='pending'&&<button onClick={()=>void cancelLeave(item)} className="rounded-lg border border-rose-200 px-2 py-1 text-xs font-semibold text-rose-600 hover:bg-rose-50">Cancel</button>}</div>])} empty="No leave requests yet." /></Panel>
+          <Panel title="Request history" subtitle="Updates and decisions from your administrator"><DataTable headers={['Leave type', 'Dates', 'Days', 'Status']} rows={workspace.leaveRequests.map((item) => [item.leaveType, (item.approvedDates?.length?item.approvedDates:item.requestedDates)?.map(formatDate).join(', ')||`${formatDate(item.startDate)} – ${formatDate(item.endDate)}`, String(item.totalDays), <div key={item.id} className="flex flex-wrap items-center gap-2"><Status value={item.status} />{item.status==='pending'&&<button type="button" onClick={()=>setCancelLeaveTarget(item)} className="rounded-lg border border-rose-200 px-2 py-1 text-xs font-semibold text-rose-700 hover:bg-rose-50 focus:outline-none focus:ring-2 focus:ring-rose-300">Cancel</button>}</div>])} empty="No leave requests yet." /></Panel>
         </div>}
 
         {section === 'profile' && <div className="grid gap-5 xl:grid-cols-[1.15fr_.85fr]">
@@ -217,6 +223,7 @@ export function EmployeePortal() {
       </div></main>
     </div>
     {selectedPayroll && <EmployeePayslip profile={profile} payroll={selectedPayroll} onClose={() => setSelectedPayroll(null)} />}
+    <Dialog open={Boolean(cancelLeaveTarget)} onClose={() => !cancellingLeave && setCancelLeaveTarget(null)} className="max-w-md"><DialogHeader><div><h2 className="text-base font-bold text-rose-700">Cancel leave request?</h2><p className="mt-1 text-sm leading-6 text-slate-600">This removes the pending request from the administrator's review list.</p></div><DialogClose onClose={() => !cancellingLeave && setCancelLeaveTarget(null)} /></DialogHeader><div className="space-y-4 px-6 pb-6 pt-3">{cancelLeaveTarget&&<div className="rounded-xl border border-slate-200 p-4"><p className="font-semibold text-slate-900">{cancelLeaveTarget.leaveType}</p><p className="mt-1 text-sm text-slate-600">{(cancelLeaveTarget.requestedDates?.length?cancelLeaveTarget.requestedDates:[cancelLeaveTarget.startDate,cancelLeaveTarget.endDate]).map(formatDate).join(', ')}</p></div>}<p className="text-sm leading-6 text-slate-600">You can submit a new request later if you still need leave.</p><div className="flex justify-end gap-2"><Button type="button" variant="outline" disabled={cancellingLeave} onClick={()=>setCancelLeaveTarget(null)}>Keep Request</Button><Button type="button" variant="destructive" disabled={cancellingLeave} onClick={()=>cancelLeaveTarget&&void cancelLeave(cancelLeaveTarget)}>{cancellingLeave?'Cancelling...':'Cancel Request'}</Button></div></div></Dialog>
   </div>
 }
 

@@ -13,12 +13,14 @@ const qualityMessages: Record<number, string> = {
   19: 'Press more gently', 20: 'Press a little more firmly', 21: 'Dry your finger and try again', 23: 'Cover more of the reader',
 };
 
-export function FingerprintEnrollment({ onComplete, onCancel }: {
+export function FingerprintEnrollment({ onComplete, onCancel, validateScan }: {
   onComplete: (samples: string[], deviceUid: string) => void;
   onCancel: () => void;
+  validateScan?: (sample: string) => Promise<void>;
 }) {
   const apiRef = useRef<Fingerprint.WebApi | null>(null);
   const onCompleteRef = useRef(onComplete);
+  const validateScanRef = useRef(validateScan);
   const samplesRef = useRef<string[]>([]);
   const acquiringRef = useRef(false);
   const deviceRef = useRef('');
@@ -37,6 +39,7 @@ export function FingerprintEnrollment({ onComplete, onCancel }: {
   const [countdown, setCountdown] = useState(0);
 
   useEffect(() => { onCompleteRef.current = onComplete; }, [onComplete]);
+  useEffect(() => { validateScanRef.current = validateScan; }, [validateScan]);
 
   async function startAutomaticCapture() {
     if (!apiRef.current || !deviceRef.current || acquiringRef.current || samplesRef.current.length >= REQUIRED_SCANS) return;
@@ -53,11 +56,11 @@ export function FingerprintEnrollment({ onComplete, onCancel }: {
 
   useEffect(() => { startCaptureRef.current = startAutomaticCapture; });
 
-  function scheduleNextScan(delay = 3000) {
+  function scheduleNextScan(delay = 3000, waitingMessage = 'Scan saved — lift your finger. The next scan starts automatically.') {
     window.clearTimeout(rearmTimerRef.current); window.clearInterval(countdownTimerRef.current);
     const startedAt = Date.now();
     setState('waiting'); setCountdown(Math.ceil(delay / 1000));
-    setMessage('Scan saved — lift your finger. The next scan starts automatically.');
+    setMessage(waitingMessage);
     countdownTimerRef.current = window.setInterval(() => setCountdown(Math.max(0, Math.ceil((delay - (Date.now() - startedAt)) / 1000))), 250);
     rearmTimerRef.current = window.setTimeout(() => {
       window.clearInterval(countdownTimerRef.current); setCountdown(0); void startCaptureRef.current();
@@ -111,9 +114,11 @@ export function FingerprintEnrollment({ onComplete, onCancel }: {
       if (!mounted || event.deviceUid !== deviceRef.current) return;
       void api.stopAcquisition(event.deviceUid).catch(() => undefined);
       acquiringRef.current = false;
-      try {
+      void (async () => { try {
         if (qualityRef.current !== null && qualityRef.current !== 0) throw new Error(qualityMessages[qualityRef.current] || 'Scan quality was too low');
         const sample = readCapturedFingerprintSample(event.samples);
+        setState('waiting'); setMessage('Checking whether this fingerprint is already registered...');
+        if (validateScanRef.current) await validateScanRef.current(sample);
         const next = [...samplesRef.current, sample].slice(0, REQUIRED_SCANS);
         samplesRef.current = next; setSamples(next); setQuality(0); setJustCaptured(true);
         window.clearTimeout(feedbackTimerRef.current);
@@ -125,9 +130,10 @@ export function FingerprintEnrollment({ onComplete, onCancel }: {
         }
         if (next.length < REQUIRED_SCANS) scheduleNextScan(3000);
       } catch (error) {
-        setState('ready'); setMessage(error instanceof Error ? error.message : 'Could not read the fingerprint sample');
-        scheduleNextScan(3000);
-      }
+        const retryMessage = error instanceof Error ? error.message : 'Could not read the fingerprint sample';
+        setState('ready'); setMessage(retryMessage);
+        scheduleNextScan(3000, `${retryMessage} Retrying automatically.`);
+      } })();
     };
     reconnect();
     return () => {

@@ -63,6 +63,11 @@ export function fingerprintMatchThreshold() {
   return Number.isFinite(configured) && configured > 0 ? configured : DEFAULT_THRESHOLD;
 }
 
+export function fingerprintMatchStrength(score, threshold = fingerprintMatchThreshold()) {
+  if (score == null || !Number.isFinite(Number(score)) || !Number.isFinite(Number(threshold)) || Number(threshold) <= 0) return null;
+  return Number(Math.min(99, Math.max(0, 99 - 4 * (Number(score) / Number(threshold)))).toFixed(1));
+}
+
 function runFingerprintTool(payload) {
   return new Promise((resolve, reject) => {
     const child = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', helperPath], {
@@ -166,17 +171,14 @@ export async function findFingerprintMatch(probe, templateDocuments) {
   return decision.accepted ? decision.best : null;
 }
 
-export async function rejectDuplicateEnrollment(db, employeeId, enrollmentTemplates) {
-  const activeEmployees = await db.collection('employees').find(
-    { id: { $ne: employeeId }, archived: { $ne: true }, status: { $ne: 'inactive' } },
-    { projection: { id: 1 } },
-  ).toArray();
-  const activeEmployeeIds = activeEmployees.map((employee) => employee.id).filter(Boolean);
-  if (!activeEmployeeIds.length) return;
-  const storedTemplates = await db.collection('biometric_templates').find({ employeeId: { $in: activeEmployeeIds } }).toArray();
+export async function rejectDuplicateEnrollment(db, enrollmentTemplates) {
+  // A biometric identity remains reserved while its template exists. Check
+  // active, inactive, archived, and the employee's current enrollment so a
+  // re-registration cannot silently reuse any finger already in the database.
+  const storedTemplates = await db.collection('biometric_templates').find({}).toArray();
   if (!storedTemplates.length) return;
   for (const enrollmentTemplate of enrollmentTemplates) {
     const duplicate = await findFingerprintMatch(enrollmentTemplate, storedTemplates);
-    if (duplicate) throw new BiometricError('This fingerprint is already registered to another employee', 409);
+    if (duplicate) throw new BiometricError('This fingerprint is already registered. Use a different finger that is not saved in the system.', 409);
   }
 }
