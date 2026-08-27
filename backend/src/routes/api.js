@@ -133,12 +133,52 @@ router.get('/employee/me', requireRole('regular', 'extra'), async (req, res) => 
     const today = kioskTimestamp().date;
     const onLeaveToday = leaveRequests.some((leave) => leave.status === 'approved' && (Array.isArray(leave.approvedDates) && leave.approvedDates.length ? leave.approvedDates.includes(today) : leave.startDate <= today && leave.endDate >= today));
     res.json({
-      profile: { id: employee.id, name: employee.name, email: employee.email, phone: employee.phone, address: employee.address, role: employee.role, status: employee.status === 'inactive' ? 'inactive' : onLeaveToday ? 'on-leave' : 'active', biometricStatus: biometricTemplate ? 'enrolled' : 'none', monthlyLeaveCredits, hourlyRate: employee.hourlyRate, grossSalary: employee.grossSalary, createdAt: employee.createdAt },
+      profile: { id: employee.id, name: employee.name, email: employee.email, phone: employee.phone, address: employee.address, role: employee.role, status: employee.status === 'inactive' ? 'inactive' : onLeaveToday ? 'on-leave' : 'active', biometricStatus: biometricTemplate ? 'enrolled' : 'none', monthlyLeaveCredits, hourlyRate: configuredHourlyRate(employee, settings), grossSalary: employee.grossSalary, createdAt: employee.createdAt },
       attendance: attendance.map(({ _id, ...record }) => record),
       leaveRequests: leaveRequests.map(({ _id, ...record }) => record),
-      payroll: payroll.map(({ _id, ...record }) => ({ id: record.id, amount: record.amount, currentAmount: record.currentAmount, carryOverAmount: record.carryOverAmount, status: record.status, periodStart: payrollPeriodKeyForRecord(record), createdAt: record.createdAt })),
+      payroll: payroll.map((record) => ({
+        id: record.id,
+        amount: Number(record.amount || 0),
+        grossAmount: Number(record.grossAmount || 0),
+        currentAmount: Number(record.currentAmount || 0),
+        carryOverAmount: Number(record.carryOverAmount || 0),
+        additions: Array.isArray(record.additions) ? record.additions.slice(0, 20).map((item) => ({ label: String(item.label || 'Addition').slice(0, 80), value: Number(item.value || 0) })) : [],
+        hoursWorked: Number(record.hoursWorked || 0),
+        hourlyRate: Number(record.hourlyRate || 0),
+        status: record.status,
+        periodStart: payrollPeriodKeyForRecord(record),
+        paidAt: record.paidAt,
+        warnings: Array.isArray(record.warnings) ? record.warnings.slice(0, 20).map((warning) => String(warning).slice(0, 200)) : [],
+        createdAt: record.createdAt,
+      })),
     });
   } catch { res.status(500).json({ error: 'Unable to load employee workspace' }); }
+});
+
+router.patch('/employee/me/contact', requireRole('regular', 'extra'), async (req, res) => {
+  try {
+    const phone = String(req.body?.phone ?? '').trim();
+    const address = String(req.body?.address ?? '').trim().replace(/\s+/g, ' ');
+    if (phone.length < 7 || phone.length > 30 || !/^[0-9+()\-\s.]+$/.test(phone)) {
+      return res.status(400).json({ error: 'Enter a valid phone number using 7 to 30 characters.' });
+    }
+    if (address.length < 5 || address.length > 200) {
+      return res.status(400).json({ error: 'Enter an address using 5 to 200 characters.' });
+    }
+    const db = mongoose.connection.db;
+    const employeeId = req.auth.actor.employeeId;
+    const updatedAt = new Date();
+    const result = await db.collection('employees').findOneAndUpdate(
+      { id: employeeId, archived: { $ne: true }, status: { $ne: 'inactive' } },
+      { $set: { phone, address, updatedAt } },
+      { returnDocument: 'after', projection: { _id: 0, id: 1, phone: 1, address: 1 } },
+    );
+    if (!result) return res.status(404).json({ error: 'Active employee profile not found.' });
+    res.json(result);
+  } catch (error) {
+    console.error('Employee contact update failed:', error instanceof Error ? error.message : error);
+    res.status(500).json({ error: 'Unable to update your contact information.' });
+  }
 });
 
 router.post('/employee/me/leave-requests', requireRole('regular', 'extra'), async (req, res) => {
@@ -461,7 +501,14 @@ function duplicateEmployeeMessage(error) {
 const defaultSettings = {
   shift: { enabled: true, startTime: '09:00', maxHours: 8, workDays: 5, workWeekdays: [1, 2, 3, 4, 5], scheduleOverrides: [] },
   leave: { monthlyCredits: 10 },
+  payroll: { hourlyRates: { regular: 50, extra: 40 } },
 };
+
+function configuredHourlyRate(employee, settings) {
+  return String(employee?.role ?? '').toLowerCase() === 'extra'
+    ? Number(settings?.payroll?.hourlyRates?.extra ?? defaultSettings.payroll.hourlyRates.extra)
+    : Number(settings?.payroll?.hourlyRates?.regular ?? defaultSettings.payroll.hourlyRates.regular);
+}
 
 function parseAttendanceTime(date, time) {
   if (!date || !time) return null;
@@ -518,6 +565,12 @@ export async function getSettings(db) {
       scheduleOverrides: Array.isArray(storedShift.scheduleOverrides) ? storedShift.scheduleOverrides.filter((entry) => /^\d{4}-\d{2}-\d{2}$/.test(entry?.date) && typeof entry?.working === 'boolean').slice(0, 366).map((entry) => ({ date: entry.date, working: entry.working })) : [],
     },
     leave: { monthlyCredits: Number(stored?.leave?.monthlyCredits ?? stored?.leave?.casualDays ?? defaultSettings.leave.monthlyCredits) },
+    payroll: {
+      hourlyRates: {
+        regular: Number(stored?.payroll?.hourlyRates?.regular ?? defaultSettings.payroll.hourlyRates.regular),
+        extra: Number(stored?.payroll?.hourlyRates?.extra ?? defaultSettings.payroll.hourlyRates.extra),
+      },
+    },
   };
 }
 
@@ -552,6 +605,14 @@ router.get('/settings', async (_req, res) => {
 router.put('/settings', async (req, res) => {
   try {
     const incoming = req.body ?? {};
+    const verification = await verifyAdminPassword(req, incoming.adminPassword);
+    if (!verification.valid) {
+      if (verification.retryAfterSeconds) res.setHeader('Retry-After', String(verification.retryAfterSeconds));
+      return res.status(verification.forbidden ? 403 : verification.retryAfterSeconds ? 429 : 401).json({
+        error: verification.forbidden ? 'Administrator access required' : verification.retryAfterSeconds ? `Incorrect admin password. Try again in ${verification.retryAfterSeconds} seconds.` : 'Incorrect administrator password.',
+        ...(verification.retryAfterSeconds ? { retryAfterSeconds: verification.retryAfterSeconds } : {}),
+      });
+    }
     const numberInRange = (value, fallback, minimum, maximum) => {
       const number = Number(value);
       return Number.isFinite(number) ? Math.min(maximum, Math.max(minimum, number)) : fallback;
@@ -566,10 +627,22 @@ router.put('/settings', async (req, res) => {
         scheduleOverrides: Array.isArray(incoming.shift?.scheduleOverrides) ? incoming.shift.scheduleOverrides.filter((entry) => /^\d{4}-\d{2}-\d{2}$/.test(entry?.date) && typeof entry?.working === 'boolean').slice(0, 366).map((entry) => ({ date: entry.date, working: entry.working })) : [],
       },
       leave: { monthlyCredits: numberInRange(incoming.leave?.monthlyCredits, 10, 0, 31) },
+      payroll: {
+        hourlyRates: {
+          regular: numberInRange(incoming.payroll?.hourlyRates?.regular, defaultSettings.payroll.hourlyRates.regular, 1, 10000),
+          extra: numberInRange(incoming.payroll?.hourlyRates?.extra, defaultSettings.payroll.hourlyRates.extra, 1, 10000),
+        },
+      },
     };
     if (normalized.shift.workWeekdays.length !== normalized.shift.workDays) return res.status(400).json({ error: `Select exactly ${normalized.shift.workDays} regular workdays.` });
     await mongoose.connection.db.collection('settings').updateOne({ key: 'company' }, { $set: { ...normalized, updatedAt: new Date() }, $unset: { lateness: '' } }, { upsert: true });
     await enforceAutomaticClockOut(mongoose.connection.db, normalized);
+    const currentPeriod = payrollPeriodKey();
+    const recalculablePayroll = await mongoose.connection.db.collection('payroll_requests').find({ periodStart: currentPeriod, status: { $in: ['processing', 'rejected'] } }, { projection: { employeeId: 1 } }).toArray();
+    if (recalculablePayroll.length) {
+      const employees = await mongoose.connection.db.collection('employees').find({ id: { $in: recalculablePayroll.map((record) => record.employeeId) }, archived: { $ne: true } }).toArray();
+      for (const employee of employees) await preparePayrollRecord(mongoose.connection.db, employee, currentPeriod, normalized);
+    }
     res.json(normalized);
   } catch { res.status(500).json({ error: 'Failed to save settings' }); }
 });
@@ -599,7 +672,7 @@ router.get('/employees', async (req, res) => {
       employees.map((e) => {
         const records = attendance.filter((record) => record.employeeId === e.id && new Date(record.date) >= periodStart);
         const hoursWorked = records.reduce((total, record) => total + attendanceHoursForRecord(record, settings), 0);
-        const hourlyRate = e.role === 'extra' ? 40 : 50;
+        const hourlyRate = configuredHourlyRate(e, settings);
         const calculatedGross = Math.round(hoursWorked * hourlyRate * 100) / 100;
         return ({
         id: e.id,
@@ -990,7 +1063,7 @@ async function preparePayrollRecord(db, employee, periodStart, settings) {
     const attendance = await db.collection('attendance').find({ employeeId: employee.id, date: { $gte: periodStart, $lte: periodEnd } }).toArray();
     const incompleteAttendance = attendance.some((record) => attendanceSessions(record).some((session) => !session.checkOut));
     const hoursWorked = Math.round(attendance.reduce((total, record) => total + attendanceHoursForRecord(record, settings), 0) * 100) / 100;
-    const hourlyRate = Number(employee.hourlyRate || (employee.role === 'extra' ? 40 : 50));
+    const hourlyRate = configuredHourlyRate(employee, settings);
     const grossAmount = Math.round(hoursWorked * hourlyRate * 100) / 100;
     const bonusAmount = Math.max(0, Number(existing.bonusAmount || 0));
     const additions = [...payrollAdditions(employee), ...(bonusAmount > 0 ? [{ label: 'Bonus', value: bonusAmount }] : [])];
@@ -1024,7 +1097,7 @@ async function preparePayrollRecord(db, employee, periodStart, settings) {
   const attendance = await db.collection('attendance').find({ employeeId: employee.id, date: { $gte: periodStart, $lte: periodEnd } }).toArray();
   const incompleteAttendance = attendance.some((record) => attendanceSessions(record).some((session) => !session.checkOut));
   const hoursWorked = Math.round(attendance.reduce((total, record) => total + attendanceHoursForRecord(record, settings), 0) * 100) / 100;
-  const hourlyRate = Number(employee.hourlyRate || (employee.role === 'extra' ? 40 : 50));
+  const hourlyRate = configuredHourlyRate(employee, settings);
   const grossAmount = Math.round(hoursWorked * hourlyRate * 100) / 100;
   const additions = payrollAdditions(employee);
   const currentAmount = grossAmount + additions.reduce((sum, item) => sum + item.value, 0);
@@ -1313,7 +1386,7 @@ router.post('/payroll/:employeeId/email-summary', async (req, res) => {
     const records = await mongoose.connection.db.collection('attendance').find({ employeeId: employee.id }).toArray();
     const periodRecords = records.filter((record) => new Date(record.date) >= periodStart);
     const hoursWorked = periodRecords.reduce((total, record) => total + attendanceHoursForRecord(record, settings), 0);
-    const hourlyRate = employee.role === 'extra' ? 40 : 50;
+    const hourlyRate = configuredHourlyRate(employee, settings);
     const gross = periodRecords.length ? Math.round(hoursWorked * hourlyRate * 100) / 100 : Number(employee.grossSalary ?? 0);
     const identifiers = Array.isArray(employee.identifiers) ? employee.identifiers.filter((item) => item?.type && item?.value) : [];
     const additionLines = identifiers.filter((item) => Number(item.amount) > 0).map((item) => [String(item.type), Number(item.amount)]);

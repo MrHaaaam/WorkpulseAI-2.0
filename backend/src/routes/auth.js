@@ -13,6 +13,9 @@ const operations = ['+', '-', '×', '÷'];
 const captchaLimit = rateLimit({ windowMs: 60_000, max: 20, keyPrefix: 'captcha' });
 const loginLimit = rateLimit({ windowMs: 15 * 60_000, max: 8, keyPrefix: 'login' });
 const otpLimit = rateLimit({ windowMs: 10 * 60_000, max: 10, keyPrefix: 'otp' });
+const passwordResetRequestLimit = rateLimit({ windowMs: 15 * 60_000, max: 5, keyPrefix: 'password-reset-request' });
+const passwordResetVerifyLimit = rateLimit({ windowMs: 10 * 60_000, max: 10, keyPrefix: 'password-reset-verify' });
+const passwordResetCompleteLimit = rateLimit({ windowMs: 15 * 60_000, max: 5, keyPrefix: 'password-reset-complete' });
 const passwordCooldowns = new Map();
 
 export async function hashSecret(secret) {
@@ -165,6 +168,111 @@ router.get('/session', async (request, response) => {
     accountType,
     mustChangePassword: accountType === 'employee' && account.mustChangePassword === true,
   });
+});
+
+router.post('/forgot-password/request', passwordResetRequestLimit, async (request, response) => {
+  const genericMessage = 'If that email belongs to an active employee, a 6-digit reset code has been sent.';
+  try {
+    const email = String(request.body?.email ?? '').trim().toLowerCase();
+    if (!email || email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      return response.status(400).json({ error: 'Enter a valid employee email address.' });
+    }
+    const db = mongoose.connection.db;
+    const account = await db.collection('employee_accounts').findOne({ email, active: true });
+    if (!account) {
+      await auditEvent({ req: request, action: 'auth.password_reset_requested', targetType: 'employee_account', outcome: 'failure', metadata: { reason: 'account_not_found' } });
+      return response.json({ verificationId: crypto.randomUUID(), message: genericMessage });
+    }
+    if (!process.env.SMTP_USER || !process.env.SMTP_APP_PASSWORD) {
+      return response.status(503).json({ error: 'Employee email delivery is not configured. Ask your administrator for help.' });
+    }
+
+    const code = String(crypto.randomInt(100000, 1_000_000));
+    const verificationId = crypto.randomUUID();
+    await db.collection('password_reset_otps').deleteMany({ accountId: account._id });
+    await db.collection('password_reset_otps').insertOne({
+      verificationId,
+      accountId: account._id,
+      codeHash: await hashSecret(code),
+      attempts: 0,
+      createdAt: new Date(),
+      expiresAt: new Date(Date.now() + 10 * 60_000),
+    });
+
+    if (process.env.NODE_ENV !== 'production') console.log(`[DEV] Employee password reset code for ${account.email}: ${code}`);
+    const transport = nodemailer.createTransport({ service: 'gmail', auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_APP_PASSWORD } });
+    await transport.sendMail({
+      from: `Workpulse AI <${process.env.SMTP_USER}>`,
+      to: account.email,
+      subject: 'Reset your Workpulse AI employee password',
+      text: `Your Workpulse AI password reset code is ${code}. It expires in 10 minutes. If you did not request this change, you can ignore this email.`,
+    });
+    await auditEvent({ req: request, actor: account, action: 'auth.password_reset_requested', targetType: 'employee_account', targetId: account.employeeId, outcome: 'success' });
+    response.json({ verificationId, message: genericMessage });
+  } catch (error) {
+    console.error('Password reset request failed:', error instanceof Error ? error.message : error);
+    response.status(500).json({ error: 'Unable to send a reset code. Please try again.' });
+  }
+});
+
+router.post('/forgot-password/verify', passwordResetVerifyLimit, async (request, response) => {
+  try {
+    const verificationId = String(request.body?.verificationId ?? '');
+    const code = String(request.body?.code ?? '').trim();
+    if (!verificationId || !/^\d{6}$/.test(code)) return response.status(400).json({ error: 'Enter the complete 6-digit code.' });
+    const db = mongoose.connection.db;
+    const record = await db.collection('password_reset_otps').findOne({ verificationId });
+    if (!record || record.expiresAt < new Date() || record.attempts >= 5 || record.usedAt) {
+      return response.status(401).json({ error: 'The reset code is invalid or has expired.' });
+    }
+    if (!(await verifySecret(code, record.codeHash))) {
+      await db.collection('password_reset_otps').updateOne({ _id: record._id }, { $inc: { attempts: 1 } });
+      await auditEvent({ req: request, action: 'auth.password_reset_code_verified', targetType: 'employee_account', outcome: 'failure' });
+      return response.status(401).json({ error: 'The reset code is invalid or has expired.' });
+    }
+    const resetToken = crypto.randomBytes(32).toString('hex');
+    const resetTokenDigest = crypto.createHash('sha256').update(resetToken).digest('hex');
+    await db.collection('password_reset_otps').updateOne(
+      { _id: record._id, usedAt: { $exists: false } },
+      { $set: { resetTokenDigest, verifiedAt: new Date(), resetExpiresAt: new Date(Date.now() + 10 * 60_000), expiresAt: new Date(Date.now() + 10 * 60_000) }, $unset: { codeHash: '' } },
+    );
+    response.json({ resetToken });
+  } catch (error) {
+    console.error('Password reset verification failed:', error instanceof Error ? error.message : error);
+    response.status(500).json({ error: 'Unable to verify the reset code. Please try again.' });
+  }
+});
+
+router.post('/forgot-password/reset', passwordResetCompleteLimit, async (request, response) => {
+  try {
+    const verificationId = String(request.body?.verificationId ?? '');
+    const resetToken = String(request.body?.resetToken ?? '');
+    const newPassword = request.body?.newPassword;
+    if (!verificationId || verificationId.length > 100 || resetToken.length !== 64) return response.status(401).json({ error: 'Your password reset request has expired.' });
+    if (typeof newPassword !== 'string' || newPassword.length < 8 || newPassword.length > 32) {
+      return response.status(400).json({ error: 'Your new password must be between 8 and 32 characters.' });
+    }
+    const db = mongoose.connection.db;
+    const resetTokenDigest = crypto.createHash('sha256').update(resetToken).digest('hex');
+    const record = await db.collection('password_reset_otps').findOne({ verificationId, resetTokenDigest, resetExpiresAt: { $gt: new Date() }, usedAt: { $exists: false } });
+    if (!record) return response.status(401).json({ error: 'Your password reset request is invalid or has expired.' });
+    const account = await db.collection('employee_accounts').findOne({ _id: record.accountId, active: true });
+    if (!account) return response.status(401).json({ error: 'This employee account is unavailable.' });
+    if (await verifySecret(newPassword, account.passwordHash)) return response.status(400).json({ error: 'Choose a password different from your current password.' });
+
+    const changedAt = new Date();
+    await db.collection('employee_accounts').updateOne(
+      { _id: account._id },
+      { $set: { passwordHash: await hashSecret(newPassword), mustChangePassword: false, passwordChangedAt: changedAt, credentialsChangedAt: changedAt, updatedAt: changedAt } },
+    );
+    await db.collection('password_reset_otps').updateOne({ _id: record._id, usedAt: { $exists: false } }, { $set: { usedAt: changedAt }, $unset: { resetTokenDigest: '' } });
+    await db.collection('admin_sessions').deleteMany({ accountId: account._id, accountType: 'employee' });
+    await auditEvent({ req: request, actor: account, action: 'auth.password_reset_completed', targetType: 'employee_account', targetId: account.employeeId, outcome: 'success' });
+    response.json({ changed: true, message: 'Your password has been reset. You can now sign in.' });
+  } catch (error) {
+    console.error('Password reset failed:', error instanceof Error ? error.message : error);
+    response.status(500).json({ error: 'Unable to reset your password. Please try again.' });
+  }
 });
 
 router.post('/change-initial-password', authenticate, csrfProtection, async (request, response) => {

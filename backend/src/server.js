@@ -62,6 +62,8 @@ async function startServer() {
       await Promise.all([
         db.collection('login_captchas').createIndex({ expiresAt: 1 }, { expireAfterSeconds: 0 }),
         db.collection('login_otps').createIndex({ expiresAt: 1 }, { expireAfterSeconds: 0 }),
+        db.collection('password_reset_otps').createIndex({ expiresAt: 1 }, { expireAfterSeconds: 0 }),
+        db.collection('password_reset_otps').createIndex({ verificationId: 1 }, { unique: true }),
         db.collection('admin_sessions').createIndex({ expiresAt: 1 }, { expireAfterSeconds: 0 }),
         db.collection('admin_sessions').createIndex({ tokenDigest: 1 }, { unique: true }),
         db.collection('admin_accounts').createIndex({ email: 1 }, { unique: true }),

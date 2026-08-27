@@ -61,6 +61,12 @@ function initials(name: string) {
   return name.split(" ").filter(Boolean).map((part) => part[0]).join("").slice(0, 2).toUpperCase() || "--";
 }
 
+function primaryGovernmentId(employee: Employee) {
+  const identifier = employee.identifiers?.find((item) => item.value?.trim());
+  if (identifier) return `${identifier.type} — ${identifier.value}`;
+  return employee.sssNumber ? `SSS — ${employee.sssNumber}` : "Not added";
+}
+
 function BiometricBadge({ status }: { status: Employee["biometricStatus"] }) {
   if (status === "enrolled") return <Badge variant="success"><Check className="h-3 w-3" /> Enrolled</Badge>;
   if (status === "pending") return <Badge variant="warning"><Clock className="h-3 w-3" /> Pending</Badge>;
@@ -110,7 +116,7 @@ export function EmployeeDirectoryView({ employees: initialEmployees }: Partial<E
 
   const filtered = useMemo(() => employees.filter((employee) => {
     const query = search.toLowerCase();
-    const matchesSearch = [employee.name, employee.id, employee.role, employee.sssNumber, employee.address]
+    const matchesSearch = [employee.name, employee.id, employee.role, employee.sssNumber, employee.address, ...(employee.identifiers ?? []).flatMap((item) => [item.type, item.value])]
       .some((value) => value?.toLowerCase().includes(query));
     return matchesSearch && (statusFilter === "All" || employee.status === statusFilter);
   }), [employees, search, statusFilter]);
@@ -272,43 +278,45 @@ export function EmployeeDirectoryView({ employees: initialEmployees }: Partial<E
     <div className="space-y-6">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h2 className="text-2xl font-bold text-slate-900">Employee Directory</h2>
-          <p className="text-sm text-slate-500">Manage employee, payroll, contact, and biometric information</p>
+          <p className="text-xs font-bold uppercase tracking-[.16em] text-violet-600">Workforce records</p>
+          <h2 className="mt-1 text-2xl font-bold text-slate-900">Employee Directory</h2>
+          <p className="mt-1 max-w-2xl text-sm leading-6 text-slate-600">Find employees, review their work status, and manage account details.</p>
         </div>
         <div className="flex flex-wrap gap-2"><Button variant="outline" onClick={() => window.open('/kiosk', '_blank', 'noopener,noreferrer')}><ScanLine className="h-4 w-4" /> Open Kiosk</Button><Button data-guide="employee-add" onClick={openAdd}><Plus className="h-4 w-4" /> Add Employee</Button></div>
       </div>
 
       <div data-guide="employee-filters" className="grid grid-cols-1 gap-2 sm:grid-cols-[minmax(0,1fr)_auto_auto] sm:items-center lg:grid-cols-[minmax(18rem,28rem)_auto_auto_1fr]">
         <div className="relative min-w-0">
-          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-          <Input placeholder="Search name, ID, SSS, role, or address..." value={search} onChange={(e) => setSearch(e.target.value)} className="pl-10" />
+          <label htmlFor="employee-directory-search" className="sr-only">Search employees</label><Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" aria-hidden="true" />
+          <Input id="employee-directory-search" type="search" placeholder="Search name, employee ID, government ID, role, or address..." value={search} onChange={(e) => setSearch(e.target.value)} className="pl-10" />
         </div>
-        <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value as typeof statusFilter)} className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-700 sm:w-auto">
+        <label htmlFor="employee-status-filter" className="sr-only">Filter by employment status</label><select id="employee-status-filter" aria-label="Filter by employment status" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value as typeof statusFilter)} className="h-10 w-full rounded-lg border border-slate-300 bg-white px-3 text-sm text-slate-700 focus:border-violet-500 focus:outline-none focus:ring-4 focus:ring-violet-200 sm:w-auto">
           <option value="All">All statuses</option><option value="active">Active</option><option value="on-leave">On Leave</option><option value="inactive">Inactive</option>
         </select>
         <div className="flex rounded-lg border border-slate-200 bg-white p-1">
-          <button onClick={() => setViewMode("table")} aria-label="Table view" className={`rounded-md p-2 ${viewMode === "table" ? "bg-[#8642ED] text-white" : "text-slate-500"}`}><List className="h-4 w-4" /></button>
-          <button onClick={() => setViewMode("cards")} aria-label="Card view" className={`rounded-md p-2 ${viewMode === "cards" ? "bg-[#8642ED] text-white" : "text-slate-500"}`}><Grid2X2 className="h-4 w-4" /></button>
+          <button onClick={() => setViewMode("table")} aria-label="Show employees in a table" aria-pressed={viewMode === "table"} className={`rounded-md p-2 focus:outline-none focus:ring-2 focus:ring-violet-500 ${viewMode === "table" ? "bg-[#8642ED] text-white" : "text-slate-500"}`}><List className="h-4 w-4" aria-hidden="true" /></button>
+          <button onClick={() => setViewMode("cards")} aria-label="Show employees as cards" aria-pressed={viewMode === "cards"} className={`rounded-md p-2 focus:outline-none focus:ring-2 focus:ring-violet-500 ${viewMode === "cards" ? "bg-[#8642ED] text-white" : "text-slate-500"}`}><Grid2X2 className="h-4 w-4" aria-hidden="true" /></button>
         </div>
+        <p className="text-sm text-slate-600 lg:ml-auto" role="status" aria-live="polite">Showing {filtered.length} of {employees.length} employees</p>
       </div>
 
       {viewMode === "table" ? (
-        <Card data-guide="employee-list" className="min-w-0 overflow-hidden"><CardContent className="p-0"><Table className="min-w-[760px]">
-          <TableHeader><TableRow className="bg-slate-50/50"><TableHead>Employee</TableHead><TableHead>Role</TableHead><TableHead>SSS Number</TableHead><TableHead>Biometric</TableHead><TableHead>Status</TableHead><TableHead className="text-right">Actions</TableHead></TableRow></TableHeader>
+        <Card data-guide="employee-list" className="min-w-0 overflow-hidden"><CardContent className="p-0"><Table className="min-w-[760px]" aria-label="Employee directory">
+          <caption className="sr-only">Employee names, roles, government IDs, work status, and available actions.</caption>
+          <TableHeader><TableRow className="bg-slate-50/50"><TableHead>Employee</TableHead><TableHead>Role</TableHead><TableHead>Government ID</TableHead><TableHead>Status</TableHead><TableHead className="text-right">Actions</TableHead></TableRow></TableHeader>
           <TableBody>{filtered.map((employee) => <TableRow key={employee.id}>
             <TableCell><div className="flex items-center gap-3"><div className="flex h-9 w-9 items-center justify-center rounded-full bg-violet-100 text-xs font-bold text-[#8642ED]">{initials(employee.name)}</div><div><p className="font-medium text-slate-900">{employee.name}</p><p className="text-xs text-slate-400">{employee.id}</p></div></div></TableCell>
             <TableCell className="capitalize text-slate-600">{employee.role}</TableCell>
-            <TableCell className="text-slate-600">{employee.identifiers?.find((item) => item.type.toLowerCase() === "sss")?.value || employee.sssNumber || "Not added"}</TableCell>
-            <TableCell><BiometricBadge status={employee.biometricStatus} /></TableCell>
+            <TableCell className="text-slate-600">{primaryGovernmentId(employee)}</TableCell>
             <TableCell><StatusBadge status={employee.status} /></TableCell>
-            <TableCell><div className="flex justify-end gap-2"><Button size="sm" variant="outline" onClick={() => openEdit(employee)}><Pencil className="h-3.5 w-3.5" /> Edit details</Button><Button size="sm" variant="outline" className="text-rose-600 hover:bg-rose-50" onClick={() => { setArchiveTarget(employee); setArchivePassword(""); setArchiveError(""); }}><Archive className="h-3.5 w-3.5" /> Archive</Button></div></TableCell>
+            <TableCell><div className="flex justify-end gap-2"><Button size="sm" variant="outline" aria-label={`Edit details for ${employee.name}`} onClick={() => openEdit(employee)}><Pencil className="h-3.5 w-3.5" /> Edit details</Button><Button size="sm" variant="outline" aria-label={`Archive ${employee.name}`} className="text-rose-600 hover:bg-rose-50" onClick={() => { setArchiveTarget(employee); setArchivePassword(""); setArchiveError(""); }}><Archive className="h-3.5 w-3.5" /> Archive</Button></div></TableCell>
           </TableRow>)}</TableBody>
         </Table>{filtered.length === 0 && <div className="py-12 text-center text-sm text-slate-400">No employees match your search.</div>}</CardContent></Card>
       ) : (
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">{filtered.map((employee) => (
           <Card key={employee.id}><CardContent className="p-5 !pt-5">
             <div className="flex min-w-0 items-start justify-between gap-2"><div className="flex min-w-0 items-center gap-3"><div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-violet-100 font-bold text-[#8642ED]">{initials(employee.name)}</div><div className="min-w-0"><h3 className="truncate font-semibold text-slate-900">{employee.name}</h3><p className="truncate text-xs text-slate-500">{employee.id} · {employee.role}</p></div></div><div className="shrink-0"><StatusBadge status={employee.status} /></div></div>
-            <div className="mt-5 space-y-2 border-t border-slate-100 pt-4 text-sm"><div className="flex justify-between"><span className="text-slate-400">SSS</span><span className="text-slate-700">{employee.identifiers?.find((item) => item.type.toLowerCase() === "sss")?.value || employee.sssNumber || "Not added"}</span></div><div className="flex justify-between"><span className="text-slate-400">Address</span><span className="max-w-[65%] truncate text-slate-700">{employee.address || "Not added"}</span></div><div className="flex justify-between"><span className="text-slate-400">Fingerprint</span><BiometricBadge status={employee.biometricStatus} /></div></div>
+            <div className="mt-5 space-y-2 border-t border-slate-100 pt-4 text-sm"><div className="flex justify-between gap-3"><span className="text-slate-500">Government ID</span><span className="text-right text-slate-700">{primaryGovernmentId(employee)}</span></div><div className="flex justify-between gap-3"><span className="text-slate-500">Address</span><span className="max-w-[65%] truncate text-slate-700">{employee.address || "Not added"}</span></div><div className="flex justify-between"><span className="text-slate-500">Fingerprint</span><BiometricBadge status={employee.biometricStatus} /></div></div>
             <div className="mt-5 grid grid-cols-2 gap-2"><Button variant="outline" onClick={() => openEdit(employee)}><Pencil className="h-4 w-4" /> Edit</Button><Button variant="outline" className="text-rose-600 hover:bg-rose-50" onClick={() => { setArchiveTarget(employee); setArchivePassword(""); setArchiveError(""); }}><Archive className="h-4 w-4" /> Archive</Button></div>
           </CardContent></Card>
         ))}</div>
@@ -335,7 +343,7 @@ export function EmployeeDirectoryView({ employees: initialEmployees }: Partial<E
           <FormSection icon={<BriefcaseBusiness className="h-4 w-4" />} title="Employment details" description="Role, compensation, and current employment state.">
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
               <Field label="Employee role"><select value={draft.role === "extra" ? "extra" : "regular"} onChange={(e) => updateRole(e.target.value as "regular" | "extra")} className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-[#8642ED] focus:ring-2 focus:ring-[#8642ED]/20"><option value="regular">Regular</option><option value="extra">Extra</option></select></Field>
-              <Field label="Hourly rate"><div className="relative"><span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-slate-400">₱</span><Input className="pl-8" readOnly value={draft.role === "extra" ? "40 / hour" : "50 / hour"} /></div></Field>
+              <Field label="Hourly rate"><div className="flex h-10 items-center rounded-lg border border-slate-200 bg-slate-50 px-3 text-sm text-slate-600">Managed in System Settings</div></Field>
               <div className="rounded-xl border border-violet-100 bg-violet-50 p-3"><p className="text-xs font-semibold text-violet-800">Attendance-based payroll</p><p className="mt-1 text-[11px] leading-relaxed text-violet-600">Gross pay is calculated automatically from clocked hours during each 15-day period.</p></div>
               <div className="rounded-xl border border-slate-200 bg-slate-50 p-3"><p className="text-xs font-semibold text-slate-600">Employment status</p><div className="mt-1 flex items-center justify-between"><span className="text-sm font-semibold capitalize text-slate-800">{draft.status.replace('-', ' ')}</span><StatusBadge status={draft.status} /></div><p className="mt-1 text-[11px] text-slate-400">Controlled by leave approval and archiving.</p></div>
             </div>
@@ -376,7 +384,7 @@ export function EmployeeDirectoryView({ employees: initialEmployees }: Partial<E
             </div>
             {fingerprintRegistering && <div className="mt-4"><FingerprintEnrollment onComplete={(samples, uid) => { setFingerprintSamples(samples); setFingerprintDeviceUid(uid); update("biometricStatus", "enrolled"); setFingerprintRegistering(false); }} onCancel={() => setFingerprintRegistering(false)} /></div>}
           </div>
-          {!editingId && fingerprintSamples.length !== REQUIRED_FINGERPRINT_SCANS && <p className="mt-2 text-xs font-medium text-amber-600">Capture three scans; at least two must match accurately.</p>}
+          {!editingId && fingerprintSamples.length !== REQUIRED_FINGERPRINT_SCANS && <p className="mt-2 text-xs font-medium text-amber-600">Capture three scans of the same finger; all three must match accurately.</p>}
           </FormSection>
           {!editingId && <FormSection icon={<KeyRound className="h-4 w-4" />} title="Employee login" description="A login account is created together with the employee record."><div className="rounded-xl border border-sky-200 bg-sky-50 p-4"><p className="text-sm font-semibold text-sky-900">Login email: {draft.email || "Enter the employee email above"}</p><p className="mt-1 text-xs leading-5 text-sky-700">WorkPulse generates a secure password and sends it directly to this email. The password is never displayed to the administrator.</p></div></FormSection>}
           {editingId && <FormSection icon={<KeyRound className="h-4 w-4" />} title="Confirm administrator changes" description="Your admin password is required before profile, role, or fingerprint changes can be saved."><Field label="Admin password" required><Input required type="password" autoComplete="current-password" disabled={passwordRetrySeconds > 0} placeholder={passwordRetrySeconds > 0 ? `Try again in ${passwordRetrySeconds}s` : "Enter your admin password"} value={adminPassword} onChange={(event) => { setAdminPassword(event.target.value); setFormError(""); }} /></Field>{passwordRetrySeconds > 0 && <p className="mt-2 text-xs font-medium text-amber-600">Password attempts locked for {passwordRetrySeconds} more seconds.</p>}</FormSection>}

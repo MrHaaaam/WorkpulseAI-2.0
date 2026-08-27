@@ -134,16 +134,14 @@ export async function validateEnrollmentSamples(samples) {
     throw new BiometricError('The reader sample format is not supported by the installed HID FingerJet matcher. Recapture using a supported reader.', 422);
   }
 
-  if (!matchingPairs.length) throw new BiometricError('The enrollment scans did not match closely enough. At least two of the three scans must come from the same finger.');
+  if (!matchingPairs.length) throw new BiometricError('The enrollment scans did not match. Use the same finger for all three scans.');
 
-  // Store all three only when every pair agrees. Otherwise keep the closest
-  // matching pair and discard the outlier so it cannot cause kiosk false matches.
+  // All three impressions must agree. This keeps three useful reference
+  // templates without allowing unrelated fingers under one employee identity.
   const pairKeys = new Set(matchingPairs.map((pair) => `${Math.min(pair.first, pair.second)}:${Math.max(pair.first, pair.second)}`));
   const allThreeAgree = templates.length === 3 && pairKeys.has('0:1') && pairKeys.has('0:2') && pairKeys.has('1:2');
-  const consistentIndexes = allThreeAgree
-    ? [0, 1, 2]
-    : matchingPairs.sort((left, right) => left.score - right.score).slice(0, 1).flatMap((pair) => [pair.first, pair.second]);
-  return { threshold: matchThreshold, format: acceptedFormat, templates: consistentIndexes.map((index) => templates[index]) };
+  if (!allThreeAgree) throw new BiometricError('All three enrollment scans must match the same finger. Start over and keep the finger centered for every scan.');
+  return { threshold: matchThreshold, format: acceptedFormat, templates };
 }
 
 export async function findFingerprintDecision(probe, templateDocuments) {
