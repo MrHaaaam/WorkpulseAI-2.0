@@ -170,7 +170,7 @@ export function AttendanceView(props: {
                       </TableCell>
                       <TableCell className="whitespace-nowrap text-slate-600">{record.date}</TableCell>
                       <TableCell>
-                        <div className="flex min-w-[28rem] flex-wrap gap-2">
+                        {record.status === "On Leave" ? <div className="min-w-[28rem] text-sm font-medium text-indigo-600">Approved leave — no time-in required</div> : <div className="flex min-w-[28rem] flex-wrap gap-2">
                           {sessions.map((session, index) => (
                             <div key={`${record.employeeId}-${record.date}-${index}`} className="min-w-36 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
                               <div className="mb-1 text-[10px] font-bold uppercase tracking-wide text-violet-600">Session {index + 1}</div>
@@ -179,7 +179,7 @@ export function AttendanceView(props: {
                               </div>
                             </div>
                           ))}
-                        </div>
+                        </div>}
                       </TableCell>
                       <TableCell>{statusBadge(record.status)}</TableCell>
                     </TableRow>

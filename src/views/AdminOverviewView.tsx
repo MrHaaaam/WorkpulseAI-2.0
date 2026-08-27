@@ -99,7 +99,7 @@ interface AdminOverviewProps {
   performanceDate: string;
   onPerformanceDateChange: (value: string) => void;
   employees: { createdAt?: string }[];
-  leaveRequests: { id: string; employeeId?: string; startDate: string; endDate: string; totalDays: number; status: string }[];
+  leaveRequests: { id: string; employeeId?: string; startDate: string; endDate: string; approvedDates?: string[]; totalDays: number; status: string }[];
   attendanceRecords: { date?: string; status: string }[];
   onStartGuide?: () => void;
   onNavigate?: (view: "payroll" | "admin" | "insights") => void;
@@ -147,14 +147,14 @@ export function AdminOverviewView({
   });
   const approvedLeavesForDate = leaveRequests.filter((leave) => {
     if (leave.status !== "approved") return false;
-    return leave.startDate <= workforceDate && leave.endDate >= workforceDate;
+    return leave.approvedDates?.length ? leave.approvedDates.includes(workforceDate) : leave.startDate <= workforceDate && leave.endDate >= workforceDate;
   });
   const employeesOnLeave = new Set(approvedLeavesForDate.map((leave) => leave.employeeId || leave.id)).size;
   const activeForDate = Math.max(0, metrics.workforceEligible - employeesOnLeave);
   const performanceRecords = attendanceRecords.filter((record) => record.date === performanceDate);
   const attendedForDate = performanceRecords.filter((record) => record.status === "Present" || record.status === "Late").length;
   const onTimeForDate = performanceRecords.filter((record) => record.status === "Present").length;
-  const performanceLeave = new Set(leaveRequests.filter((leave) => leave.status === "approved" && leave.startDate <= performanceDate && leave.endDate >= performanceDate).map((leave) => leave.employeeId || leave.id)).size;
+  const performanceLeave = new Set(leaveRequests.filter((leave) => leave.status === "approved" && (leave.approvedDates?.length ? leave.approvedDates.includes(performanceDate) : leave.startDate <= performanceDate && leave.endDate >= performanceDate)).map((leave) => leave.employeeId || leave.id)).size;
   const expectedWorkforceForDate = Math.max(0, metrics.workforceEligible - performanceLeave);
   const attendanceRateForDate = expectedWorkforceForDate ? attendedForDate / expectedWorkforceForDate * 100 : 0;
   const punctualityRateForDate = attendedForDate ? onTimeForDate / attendedForDate * 100 : 0;

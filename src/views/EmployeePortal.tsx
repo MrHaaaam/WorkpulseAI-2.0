@@ -6,6 +6,7 @@ import {
 import { apiFetch, clearSession } from '../lib/api'
 import { useToast } from '../components/ui/Toast'
 import { DateNavigator } from '../components/DateNavigator'
+import { LeaveDatePicker } from '../components/LeaveDatePicker'
 
 type EmployeeProfile = {
   id: string; name: string; email?: string; phone?: string; address?: string; createdAt?: string;
@@ -15,7 +16,7 @@ type EmployeeProfile = {
 }
 type AttendanceSession = { checkIn: string; checkOut?: string | null; autoClockedOut?: boolean }
 type Attendance = { date: string; checkIn?: string; checkOut?: string; sessions?: AttendanceSession[]; status: string; autoClockedOut?: boolean }
-type Leave = { id: string; leaveType: string; startDate: string; endDate: string; totalDays: number; reason: string; status: string }
+type Leave = { id: string; leaveType: string; startDate: string; endDate: string; requestedDates?: string[]; approvedDates?: string[]; totalDays: number; reason: string; status: string }
 type Payroll = { id: string; amount?: number; currentAmount?: number; carryOverAmount?: number; status: string; periodStart?: string }
 type Workspace = { profile: EmployeeProfile; attendance: Attendance[]; leaveRequests: Leave[]; payroll: Payroll[] }
 type Section = 'overview' | 'attendance' | 'leave' | 'payroll' | 'profile'
@@ -52,7 +53,7 @@ export function EmployeePortal() {
   const [submitting, setSubmitting] = useState(false)
   const [mobileNavigationOpen, setMobileNavigationOpen] = useState(false)
   const [attendanceDate, setAttendanceDate] = useState(manilaToday)
-  const [leaveDraft, setLeaveDraft] = useState({ leaveType: 'Annual Leave', startDate: '', endDate: '', reason: '' })
+  const [leaveDraft, setLeaveDraft] = useState({ leaveType: 'Annual Leave', requestedDates: [] as string[], reason: '' })
 
   useEffect(() => {
     let cancelled = false
@@ -87,11 +88,22 @@ export function EmployeePortal() {
       const data = await response.json()
       if (!response.ok) throw new Error(data.error || 'Unable to submit leave request')
       setWorkspace((current) => current ? { ...current, leaveRequests: [data, ...current.leaveRequests] } : current)
-      setLeaveDraft({ leaveType: 'Annual Leave', startDate: '', endDate: '', reason: '' })
+      setLeaveDraft({ leaveType: 'Annual Leave', requestedDates: [], reason: '' })
       toast({ title: 'Leave request submitted', description: 'Your request is now waiting for administrator review.', variant: 'success' })
     } catch (reason) {
       toast({ title: 'Request not submitted', description: reason instanceof Error ? reason.message : 'Please try again.', variant: 'error' })
     } finally { setSubmitting(false) }
+  }
+
+  async function cancelLeave(request: Leave) {
+    if (!window.confirm('Cancel this pending leave request?')) return
+    try {
+      const response = await apiFetch(`/api/employee/me/leave-requests/${request.id}/cancel`, { method: 'PATCH' })
+      const data = await response.json().catch(() => ({}))
+      if (!response.ok) throw new Error(data.error || 'Leave request could not be cancelled')
+      setWorkspace((current) => current ? { ...current, leaveRequests: current.leaveRequests.map((item) => item.id === request.id ? { ...item, ...data } : item) } : current)
+      toast({ title: 'Leave request cancelled', description: 'The request was removed from the administrator approval queue.', variant: 'success' })
+    } catch (reason) { toast({ title: 'Request was not cancelled', description: reason instanceof Error ? reason.message : 'Please try again.', variant: 'error' }) }
   }
 
   async function logout() {
@@ -164,8 +176,8 @@ export function EmployeePortal() {
         {section === 'payroll' && <Panel title="Payroll history" subtitle="Prepared amounts, unpaid carry-over, and completed payments"><DataTable headers={['Pay period', 'Current pay', 'Carried balance', 'Total payout', 'Status']} rows={workspace.payroll.map((item) => [formatDate(item.periodStart), money(item.currentAmount), money(item.carryOverAmount), <strong key={`${item.id}-amount`} className="text-slate-900">{money(item.amount)}</strong>, <Status key={item.id} value={item.status} />])} empty="No payroll records yet." /></Panel>}
 
         {section === 'leave' && <div className="grid gap-5 xl:grid-cols-[.82fr_1.18fr]">
-          <Panel title="Request leave" subtitle="Your administrator will review this request"><MonthlyLeaveBalance balance={profile.monthlyLeaveCredits} /><form onSubmit={submitLeave} className="mt-5 space-y-4"><Field label="Leave type"><select value={leaveDraft.leaveType} onChange={(event) => setLeaveDraft((current) => ({ ...current, leaveType: event.target.value }))} className="input"><option>Annual Leave</option><option>Sick Leave</option><option>Personal Leave</option><option>Maternity Leave</option></select></Field><div className="grid grid-cols-1 gap-3 sm:grid-cols-2"><Field label="Start date"><input required type="date" value={leaveDraft.startDate} onChange={(event) => setLeaveDraft((current) => ({ ...current, startDate: event.target.value }))} className="input" /></Field><Field label="End date"><input required type="date" value={leaveDraft.endDate} onChange={(event) => setLeaveDraft((current) => ({ ...current, endDate: event.target.value }))} className="input" /></Field></div><Field label="Reason"><textarea required minLength={5} maxLength={500} rows={4} value={leaveDraft.reason} onChange={(event) => setLeaveDraft((current) => ({ ...current, reason: event.target.value }))} className="input h-auto py-3" placeholder="Briefly explain your request" /></Field><button disabled={submitting} className="flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-[#8642ED] text-sm font-semibold text-white shadow-lg shadow-violet-600/15 hover:bg-violet-700 disabled:opacity-60"><Send className="h-4 w-4" />{submitting ? 'Submitting...' : 'Submit request'}</button></form></Panel>
-          <Panel title="Request history" subtitle="Updates and decisions from your administrator"><DataTable headers={['Leave type', 'Dates', 'Days', 'Status']} rows={workspace.leaveRequests.map((item) => [item.leaveType, `${formatDate(item.startDate)} – ${formatDate(item.endDate)}`, String(item.totalDays), <Status key={item.id} value={item.status} />])} empty="No leave requests yet." /></Panel>
+          <Panel title="Request leave" subtitle="Your administrator will review the dates you select"><MonthlyLeaveBalance balance={profile.monthlyLeaveCredits} /><form onSubmit={submitLeave} className="mt-5 space-y-4"><Field label="Leave type"><select value={leaveDraft.leaveType} onChange={(event) => setLeaveDraft((current) => ({ ...current, leaveType: event.target.value }))} className="input"><option>Annual Leave</option><option>Sick Leave</option><option>Personal Leave</option><option>Maternity Leave</option></select></Field><LeaveDatePicker selected={leaveDraft.requestedDates} onChange={(requestedDates)=>setLeaveDraft(current=>({...current,requestedDates}))}/><Field label="Reason"><textarea required minLength={5} maxLength={500} rows={4} value={leaveDraft.reason} onChange={(event) => setLeaveDraft((current) => ({ ...current, reason: event.target.value }))} className="input h-auto py-3" placeholder="Briefly explain your request" /></Field><button disabled={submitting||leaveDraft.requestedDates.length===0} className="flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-[#8642ED] text-sm font-semibold text-white shadow-lg shadow-violet-600/15 hover:bg-violet-700 disabled:opacity-60"><Send className="h-4 w-4" />{submitting ? 'Submitting...' : `Submit ${leaveDraft.requestedDates.length} ${leaveDraft.requestedDates.length===1?'date':'dates'}`}</button></form></Panel>
+          <Panel title="Request history" subtitle="Updates and decisions from your administrator"><DataTable headers={['Leave type', 'Dates', 'Days', 'Status']} rows={workspace.leaveRequests.map((item) => [item.leaveType, (item.approvedDates?.length?item.approvedDates:item.requestedDates)?.map(formatDate).join(', ')||`${formatDate(item.startDate)} – ${formatDate(item.endDate)}`, String(item.totalDays), <div key={item.id} className="flex flex-wrap items-center gap-2"><Status value={item.status} />{item.status==='pending'&&<button onClick={()=>void cancelLeave(item)} className="rounded-lg border border-rose-200 px-2 py-1 text-xs font-semibold text-rose-600 hover:bg-rose-50">Cancel</button>}</div>])} empty="No leave requests yet." /></Panel>
         </div>}
 
         {section === 'profile' && <div className="grid gap-5 xl:grid-cols-[1.15fr_.85fr]">
@@ -181,7 +193,7 @@ function AttendanceRows({ records, showDate = true }: { records: Attendance[]; s
   if (!records.length) return <EmptyState icon={Clock3} text="No attendance record was found for this date." />
   return <div className="space-y-3">{records.map((record) => {
     const sessions = attendanceSessions(record)
-    return <div key={record.date} className="rounded-2xl border border-slate-200 bg-slate-50/70 p-4"><div className="flex flex-wrap items-center justify-between gap-3"><div>{showDate && <p className="text-sm font-bold text-slate-900">{formatDate(record.date)}</p>}<p className="text-xs text-slate-500">{sessions.length} of 3 attendance sessions used</p></div><Status value={record.status} /></div><div className="mt-3 grid gap-2 sm:grid-cols-3">{[0, 1, 2].map((index) => { const session = sessions[index]; return <div key={`${record.date}-${index}`} className={`rounded-xl border px-3 py-3 ${session ? 'border-violet-100 bg-white' : 'border-dashed border-slate-200 bg-slate-50'}`}><p className={`text-[10px] font-bold uppercase tracking-wider ${session ? 'text-[#8642ED]' : 'text-slate-400'}`}>Session {index + 1}</p>{session ? <p className="mt-1 whitespace-nowrap text-xs font-semibold text-slate-700">{formatTime(session.checkIn)} <span className="mx-1 text-slate-300">→</span> {session.checkOut ? formatTime(session.checkOut) : <span className="text-amber-600">Currently clocked in</span>}</p> : <p className="mt-1 text-xs text-slate-400">Not used</p>}</div> })}</div></div>
+    return <div key={record.date} className="rounded-2xl border border-slate-200 bg-slate-50/70 p-4"><div className="flex flex-wrap items-center justify-between gap-3"><div>{showDate && <p className="text-sm font-bold text-slate-900">{formatDate(record.date)}</p>}<p className="text-xs text-slate-500">{record.status === 'On Leave' ? 'Approved leave — no time-in required' : `${sessions.length} of 3 attendance sessions used`}</p></div><Status value={record.status} /></div>{record.status !== 'On Leave' && <div className="mt-3 grid gap-2 sm:grid-cols-3">{[0, 1, 2].map((index) => { const session = sessions[index]; return <div key={`${record.date}-${index}`} className={`rounded-xl border px-3 py-3 ${session ? 'border-violet-100 bg-white' : 'border-dashed border-slate-200 bg-slate-50'}`}><p className={`text-[10px] font-bold uppercase tracking-wider ${session ? 'text-[#8642ED]' : 'text-slate-400'}`}>Session {index + 1}</p>{session ? <p className="mt-1 whitespace-nowrap text-xs font-semibold text-slate-700">{formatTime(session.checkIn)} <span className="mx-1 text-slate-300">→</span> {session.checkOut ? formatTime(session.checkOut) : <span className="text-amber-600">Currently clocked in</span>}</p> : <p className="mt-1 text-xs text-slate-400">Not used</p>}</div> })}</div>}</div>
   })}</div>
 }
 
@@ -201,7 +213,7 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 function Status({ value }: { value: string }) {
   const good = ['approved', 'paid', 'Present', 'active'].includes(value)
   const bad = ['rejected', 'Absent'].includes(value)
-  const label = value === 'processing' ? 'Awaiting approval' : value === 'rejected' ? 'Unpaid / carries forward' : value
+  const label = value === 'processing' ? 'Ready to pay' : value === 'rejected' ? 'Payment on hold' : value === 'carried_over' ? 'Carried to next period' : value
   return <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold capitalize ${good ? 'bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200' : bad ? 'bg-rose-50 text-rose-700 ring-1 ring-rose-200' : 'bg-amber-50 text-amber-700 ring-1 ring-amber-200'}`}>{label}</span>
 }
 

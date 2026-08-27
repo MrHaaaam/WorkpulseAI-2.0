@@ -16,7 +16,7 @@ import { apiFetch } from '../lib/api';
 type OverviewEmployee = { status: string; biometricStatus: string; createdAt?: string };
 type OverviewPayroll = { status: string; periodStart?: string };
 type OverviewAttendance = { employeeId?: string; name?: string; role?: string; date?: string; checkIn?: string; checkOut?: string; status: string };
-type OverviewLeave = { id: string; employeeId?: string; startDate: string; endDate: string; totalDays: number; status: string };
+type OverviewLeave = { id: string; employeeId?: string; startDate: string; endDate: string; approvedDates?: string[]; totalDays: number; status: string };
 type OverviewAuditEvent = { id: string; occurredAt?: string; actorEmail?: string | null; actorRole?: string; action?: string; targetType?: string; outcome?: string };
 
 function readableAuditAction(action = 'unknown', targetType = 'system') {

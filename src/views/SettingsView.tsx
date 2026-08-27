@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { CalendarDays, CheckCircle2, Clock, Info, Save } from "lucide-react";
+import { CalendarDays, Clock, Info, Save } from "lucide-react";
 
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../components/ui/Card";
 import { Input, Label } from "../components/ui/Input";
@@ -8,34 +8,39 @@ import { useToast } from "../components/ui/Toast";
 import { apiFetch } from "../lib/api";
 
 type Settings = {
-  shift: { enabled: boolean; startTime: string; maxHours: number; workDays: number };
+  shift: { enabled: boolean; startTime: string; maxHours: number; workDays: number; workWeekdays: number[]; scheduleOverrides: { date: string; working: boolean }[] };
   leave: { monthlyCredits: number };
 };
 
+function isoDate(date: Date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function upcomingDates(count: number) {
+  const today = new Date();
+  today.setHours(12, 0, 0, 0);
+  return Array.from({ length: count }, (_, index) => {
+    const date = new Date(today);
+    date.setDate(today.getDate() + index);
+    return { value: isoDate(date), day: date.toLocaleDateString("en-PH", { weekday: "short" }), date: date.toLocaleDateString("en-PH", { month: "short", day: "numeric" }) };
+  });
+}
+
 const defaults: Settings = {
-  shift: { enabled: false, startTime: "09:00", maxHours: 8, workDays: 5 },
+  shift: { enabled: true, startTime: "09:00", maxHours: 8, workDays: 5, workWeekdays: [1, 2, 3, 4, 5], scheduleOverrides: [] },
   leave: { monthlyCredits: 10 },
 };
-
-function Toggle({ enabled, onChange }: { enabled: boolean; onChange: (enabled: boolean) => void }) {
-  return (
-    <button
-      type="button"
-      role="switch"
-      aria-checked={enabled}
-      aria-label={enabled ? "Turn off automatic clock-out" : "Turn on automatic clock-out"}
-      onClick={() => onChange(!enabled)}
-      className={`relative h-7 w-12 shrink-0 rounded-full transition ${enabled ? "bg-[#8642ED]" : "bg-slate-300"}`}
-    >
-      <span className={`absolute top-1 h-5 w-5 rounded-full bg-white shadow transition-all ${enabled ? "left-6" : "left-1"}`} />
-    </button>
-  );
-}
 
 export function SettingsView() {
   const { toast } = useToast();
   const [settings, setSettings] = useState<Settings>(defaults);
   const [saving, setSaving] = useState(false);
+  const [scheduleRange, setScheduleRange] = useState<7 | 30>(7);
+  const visibleScheduleDates = upcomingDates(scheduleRange);
+  const specialScheduleActive = settings.shift.scheduleOverrides.length > 0;
 
   useEffect(() => {
     apiFetch("/api/settings")
@@ -94,40 +99,48 @@ export function SettingsView() {
                   <CardDescription>Set the normal work schedule and maximum daily hours.</CardDescription>
                 </div>
               </div>
-              <Toggle enabled={settings.shift.enabled} onChange={(enabled) => setShift({ enabled })} />
             </div>
           </CardHeader>
           <CardContent className="space-y-5 pt-5">
-            <div className={`rounded-xl border px-4 py-3 text-sm ${settings.shift.enabled ? "border-emerald-200 bg-emerald-50 text-emerald-800" : "border-slate-200 bg-slate-50 text-slate-600"}`}>
-              <div className="flex items-center gap-2 font-semibold">
-                <CheckCircle2 className="h-4 w-4" />
-                {settings.shift.enabled ? "Automatic clock-out is active" : "Automatic clock-out is off"}
-              </div>
-              <p className="mt-1 text-xs opacity-80">When active, an open session closes after the maximum paid hours below.</p>
-            </div>
-
+            <p className="text-sm text-slate-500">Work-hour rules apply automatically.</p>
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="space-y-2">
                 <Label>Work starts at</Label>
-                <Input disabled={!settings.shift.enabled} type="time" value={settings.shift.startTime} onChange={(event) => setShift({ startTime: event.target.value })} />
+                <Input type="time" value={settings.shift.startTime} onChange={(event) => setShift({ startTime: event.target.value })} />
                 <p className="text-xs text-slate-500">The company’s usual starting time.</p>
               </div>
               <div className="space-y-2">
                 <Label>Maximum hours per day</Label>
-                <Input disabled={!settings.shift.enabled} className="no-number-arrows" type="number" min="1" max="24" step="0.5" value={settings.shift.maxHours || ""} onChange={(event) => setShift({ maxHours: Number(event.target.value) })} />
+                <Input className="no-number-arrows" type="number" min="1" max="24" step="0.5" value={settings.shift.maxHours || ""} onChange={(event) => setShift({ maxHours: Number(event.target.value) })} />
                 <p className="text-xs text-slate-500">Default: 8 hours.</p>
               </div>
             </div>
 
-            <div className="space-y-2">
-              <Label>Work days each week</Label>
+            <div className="hidden">
+              <Label>Normal work days each week</Label>
               <div className="grid grid-cols-3 gap-2">
                 {[5, 6, 7].map((days) => (
-                  <button key={days} type="button" disabled={!settings.shift.enabled} onClick={() => setShift({ workDays: days })} className={`rounded-xl border px-3 py-3 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-50 ${settings.shift.workDays === days ? "border-violet-400 bg-violet-50 text-violet-700" : "border-slate-200 bg-white text-slate-600 hover:border-violet-200"}`}>
+                  <button key={days} type="button" disabled={specialScheduleActive} onClick={() => setShift({ workDays: days, workWeekdays: Array.from({ length: days }, (_, index) => index + 1).map((day) => day === 7 ? 0 : day) })} className={`rounded-xl border px-3 py-3 text-sm font-semibold transition disabled:cursor-not-allowed disabled:border-slate-200 disabled:bg-slate-100 disabled:text-slate-400 ${!specialScheduleActive && settings.shift.workDays === days ? "border-violet-400 bg-violet-50 text-violet-700" : "border-slate-200 bg-white text-slate-600 hover:border-violet-200"}`}>
                     {days} days
                   </button>
                 ))}
               </div>
+              {specialScheduleActive && <p className="text-xs text-slate-500">Normal schedule choices are paused while special dates exist.</p>}
+              {!specialScheduleActive && <div className="space-y-2 pt-1"><p className="text-xs font-semibold text-slate-700">Select exactly {settings.shift.workDays} regular workdays</p><div className="grid grid-cols-4 gap-2 sm:grid-cols-7">{[[1,"Mon"],[2,"Tue"],[3,"Wed"],[4,"Thu"],[5,"Fri"],[6,"Sat"],[0,"Sun"]].map(([day,label]) => {
+                const selected = settings.shift.workWeekdays.includes(day as number);
+                return <button key={day} type="button" aria-pressed={selected} onClick={() => setShift({ workWeekdays: selected ? settings.shift.workWeekdays.filter((value) => value !== day) : settings.shift.workWeekdays.length < settings.shift.workDays ? [...settings.shift.workWeekdays, day as number] : settings.shift.workWeekdays })} className={`rounded-lg border px-2 py-2 text-xs font-bold transition ${selected ? "border-violet-400 bg-violet-100 text-violet-800" : "border-slate-200 bg-white text-slate-500 hover:border-violet-300"}`}>{label}</button>;
+              })}</div><p className={`text-xs ${settings.shift.workWeekdays.length === settings.shift.workDays ? "text-emerald-600" : "font-medium text-amber-600"}`}>{settings.shift.workWeekdays.length} of {settings.shift.workDays} days selected{settings.shift.workWeekdays.length === settings.shift.workDays ? "." : " — select the remaining days before saving."}</p></div>}
+            </div>
+
+            <div className="space-y-3 rounded-xl border border-violet-200 bg-violet-50/50 p-4">
+              <div className="flex flex-wrap items-start justify-between gap-3"><div><p className="text-sm font-semibold text-violet-950">Work Schedule</p><p className="mt-1 text-xs text-violet-700">Select a date to switch it between Work and Off.</p></div><div className="flex rounded-lg border border-violet-200 bg-white p-1"><button type="button" onClick={() => setScheduleRange(7)} className={`rounded-md px-2.5 py-1 text-xs font-semibold ${scheduleRange === 7 ? "bg-violet-600 text-white" : "text-slate-500"}`}>7 Days</button><button type="button" onClick={() => setScheduleRange(30)} className={`rounded-md px-2.5 py-1 text-xs font-semibold ${scheduleRange === 30 ? "bg-violet-600 text-white" : "text-slate-500"}`}>30 Days</button></div></div>
+              <div className="grid grid-cols-4 gap-1.5 sm:grid-cols-7">{visibleScheduleDates.map((item) => {
+                const override = settings.shift.scheduleOverrides.find((entry) => entry.date === item.value);
+                const normalWorking = settings.shift.workWeekdays.includes(new Date(`${item.value}T12:00:00`).getDay());
+                const working = override?.working ?? normalWorking;
+                return <button key={item.value} type="button" title={`${item.day}, ${item.date}: ${working ? "Work day" : "Off day"}`} onClick={() => setShift({ scheduleOverrides: [...settings.shift.scheduleOverrides.filter((entry) => entry.date !== item.value), { date: item.value, working: !working }].sort((a, b) => a.date.localeCompare(b.date)) })} className={`min-w-0 rounded-lg border px-1 py-1.5 text-center transition ${working ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-slate-200 bg-white text-slate-500"}`}><span className="block truncate text-[10px] font-bold">{item.day}</span><span className="block truncate text-[9px]">{item.date}</span><span className="mt-0.5 block text-[9px] font-bold">{working ? "Work" : "Off"}</span></button>;
+              })}</div>
+              <div className="flex flex-wrap items-center justify-between gap-2"><p className="text-[11px] text-slate-500">Green = work day. White = off day.</p>{specialScheduleActive && <Button type="button" size="sm" variant="ghost" onClick={() => setShift({ scheduleOverrides: [] })}>Clear Special Dates</Button>}</div>
             </div>
           </CardContent>
         </Card>

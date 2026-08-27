@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Archive, Check, DatabaseBackup, KeyRound, LogOut, RotateCcw, ShieldCheck, Trash2, UserPlus, Wrench, X } from "lucide-react";
+import { Archive, Check, DatabaseBackup, KeyRound, LockKeyhole, LogOut, Mail, RotateCcw, ShieldCheck, Trash2, UserPlus, Wrench, X } from "lucide-react";
 
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "../components/ui/Card";
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from "../components/ui/Table";
@@ -35,6 +35,12 @@ export function AdminView() {
   const [deletePassword, setDeletePassword] = useState("");
   const [deleteError, setDeleteError] = useState("");
   const [deleting, setDeleting] = useState(false);
+  const [adminEmail, setAdminEmail] = useState("");
+  const [currentPassword, setCurrentPassword] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [credentialError, setCredentialError] = useState("");
+  const [credentialSaving, setCredentialSaving] = useState(false);
 
   const filteredArchivedAccounts = useMemo(() => {
     if (archiveRange === "all") return archivedAccounts;
@@ -53,15 +59,38 @@ export function AdminView() {
   }, [passwordRetrySeconds]);
 
   useEffect(() => {
-    Promise.all([apiFetch('/api/employees'), apiFetch('/api/archived-employees'), apiFetch('/api/admin/system-controls')]).then(async ([activeResponse, archivedResponse, controlsResponse]) => {
+    Promise.all([apiFetch('/api/employees'), apiFetch('/api/archived-employees'), apiFetch('/api/admin/system-controls'), apiFetch('/api/admin/account-security')]).then(async ([activeResponse, archivedResponse, controlsResponse, accountResponse]) => {
       if (activeResponse.ok) setLocalEmployees(await activeResponse.json());
       if (archivedResponse.ok) {
         const archived = await archivedResponse.json() as (Employee & { banned?: boolean })[];
         setArchivedAccounts(archived.map((record) => ({ id: record.id, name: record.name, type: 'Employee' as const, record })));
       }
       if (controlsResponse.ok) setControls(await controlsResponse.json());
+      if (accountResponse.ok) setAdminEmail((await accountResponse.json()).email ?? "");
     }).catch(() => {});
   }, []);
+
+  async function updateAdminCredentials(event: React.FormEvent) {
+    event.preventDefault();
+    setCredentialError("");
+    if (!currentPassword) return setCredentialError("Enter your current administrator password.");
+    if (newPassword && newPassword !== confirmPassword) return setCredentialError("The new passwords do not match.");
+    setCredentialSaving(true);
+    try {
+      const response = await apiFetch('/api/admin/account-security', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: adminEmail, currentPassword, newPassword }) });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.error || 'Administrator credentials were not updated.');
+      setAdminEmail(data.email);
+      setCurrentPassword("");
+      setNewPassword("");
+      setConfirmPassword("");
+      toast({ title: "Admin credentials updated", description: `${data.revokedSessions ? `${data.revokedSessions} other active session${data.revokedSessions === 1 ? " was" : "s were"} signed out. ` : ""}Your current session remains active.`, variant: "success" });
+    } catch (reason) {
+      const message = reason instanceof Error ? reason.message : "Please try again.";
+      setCredentialError(message);
+      toast({ title: "Credentials were not updated", description: message, variant: "error" });
+    } finally { setCredentialSaving(false); }
+  }
 
   async function toggleBanEmployee(id: string) {
     const employee = localEmployees.find((item) => item.id === id);
@@ -301,6 +330,25 @@ export function AdminView() {
                 </TableRow>
               </TableBody>
             </Table>
+          </CardContent>
+        </Card>
+
+        <Card className="overflow-hidden border-amber-200">
+          <CardHeader className="border-b border-amber-100 bg-amber-50/60">
+            <CardTitle className="flex items-center gap-2"><LockKeyhole className="h-5 w-5 text-amber-700" />Admin Account Security</CardTitle>
+            <CardDescription>Use this panel if the administrator account may be compromised. Only the signed-in administrator can change these credentials.</CardDescription>
+          </CardHeader>
+          <CardContent className="pt-5">
+            <form onSubmit={updateAdminCredentials} className="space-y-5">
+              <div className="grid gap-4 md:grid-cols-2">
+                <label className="space-y-1.5 md:col-span-2"><span className="flex items-center gap-2 text-sm font-medium text-slate-700"><Mail className="h-4 w-4 text-slate-400" />Administrator email</span><Input type="email" autoComplete="email" required value={adminEmail} disabled={credentialSaving} onChange={(event) => { setAdminEmail(event.target.value); setCredentialError(""); }} /></label>
+                <label className="space-y-1.5"><span className="text-sm font-medium text-slate-700">New password</span><Input type="password" autoComplete="new-password" minLength={8} maxLength={64} value={newPassword} disabled={credentialSaving} onChange={(event) => { setNewPassword(event.target.value); setCredentialError(""); }} placeholder="Leave blank to keep it" /></label>
+                <label className="space-y-1.5"><span className="text-sm font-medium text-slate-700">Confirm new password</span><Input type="password" autoComplete="new-password" minLength={8} maxLength={64} value={confirmPassword} disabled={credentialSaving || !newPassword} onChange={(event) => { setConfirmPassword(event.target.value); setCredentialError(""); }} placeholder="Repeat new password" /></label>
+              </div>
+              <div className="rounded-xl border border-amber-200 bg-amber-50 p-4"><label className="block max-w-md space-y-1.5"><span className="text-sm font-semibold text-amber-950">Current administrator password</span><Input type="password" autoComplete="current-password" required value={currentPassword} disabled={credentialSaving} onChange={(event) => { setCurrentPassword(event.target.value); setCredentialError(""); }} placeholder="Required to save changes" /></label><p className="mt-2 text-xs leading-5 text-amber-800">Saving signs out all other administrator sessions. This device stays signed in.</p></div>
+              {credentialError && <p className="rounded-lg bg-rose-50 px-3 py-2 text-sm font-medium text-rose-700">{credentialError}</p>}
+              <div className="flex justify-end"><Button type="submit" disabled={credentialSaving || !adminEmail || !currentPassword || Boolean(newPassword && newPassword !== confirmPassword)}><ShieldCheck className="h-4 w-4" />{credentialSaving ? "Updating..." : "Update Admin Credentials"}</Button></div>
+            </form>
           </CardContent>
         </Card>
       </div>

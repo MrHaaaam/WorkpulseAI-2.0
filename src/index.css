@@ -168,6 +168,24 @@ code {
   .print-payslip button { display: none !important; }
   .no-print { display: none !important; }
 }
+
+/* Payroll selection is deliberately labeled for non-technical users. */
+[data-guide="payroll-hub"] th:first-child {
+  min-width: 88px;
+  white-space: nowrap;
+}
+[data-guide="payroll-hub"] th:first-child::after {
+  content: " Select";
+  text-transform: none;
+  letter-spacing: normal;
+}
+[data-guide="payroll-hub"] tbody td:first-child:has(input:disabled) input {
+  display: none;
+}
+[data-guide="payroll-hub"] tbody td:first-child:has(input:disabled)::after {
+  content: "-";
+  color: #94a3b8;
+}
 .animate-pulse-ring {
   animation: pulse-ring 2s infinite;
 }
