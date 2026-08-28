@@ -10,6 +10,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from ".
 import { useToast } from "../components/ui/Toast";
 import { apiFetch } from "../lib/api";
 import { FingerprintEnrollment } from "../components/biometric/FingerprintEnrollment";
+import { PaginationControls, usePagination } from "../components/ui/Pagination";
 
 export interface Employee {
   id: string;
@@ -155,6 +156,7 @@ export function EmployeeDirectoryView({ employees: initialEmployees }: Partial<E
       .some((value) => value?.toLowerCase().includes(query));
     return matchesSearch && (statusFilter === "All" || employee.status === statusFilter);
   }), [employees, search, statusFilter]);
+  const employeePage = usePagination(filtered, `${search}|${statusFilter}`);
 
   async function openAdd() {
     const nextNumber = employees.reduce((maximum, employee) => {
@@ -339,22 +341,22 @@ export function EmployeeDirectoryView({ employees: initialEmployees }: Partial<E
         <Card data-guide="employee-list" className="min-w-0 overflow-hidden"><CardContent className="p-0"><Table className="min-w-[760px]" aria-label="Employee directory">
           <caption className="sr-only">Employee names, roles, government IDs, work status, and available actions.</caption>
           <TableHeader><TableRow className="bg-slate-50/50"><TableHead>Employee</TableHead><TableHead>Role</TableHead><TableHead>Government ID</TableHead><TableHead>Status</TableHead><TableHead className="text-right">Actions</TableHead></TableRow></TableHeader>
-          <TableBody>{filtered.map((employee) => <TableRow key={employee.id}>
+          <TableBody>{employeePage.pageItems.map((employee) => <TableRow key={employee.id}>
             <TableCell><div className="flex items-center gap-3"><div className="flex h-9 w-9 items-center justify-center rounded-full bg-violet-100 text-xs font-bold text-[#8642ED]">{initials(employee.name)}</div><div><p className="font-medium text-slate-900">{employee.name}</p><p className="text-xs text-slate-400">{employee.id}</p></div></div></TableCell>
             <TableCell className="capitalize text-slate-600">{employee.role}</TableCell>
             <TableCell className="text-slate-600">{primaryGovernmentId(employee)}</TableCell>
             <TableCell><StatusBadge status={employee.status} /></TableCell>
             <TableCell><div className="flex justify-end gap-2"><Button size="sm" variant="outline" aria-label={`Edit details for ${employee.name}`} onClick={() => openEdit(employee)}><Pencil className="h-3.5 w-3.5" /> Edit details</Button><Button size="sm" variant="outline" aria-label={`Archive ${employee.name}`} className="text-rose-600 hover:bg-rose-50" onClick={() => { setArchiveTarget(employee); setArchivePassword(""); setArchiveError(""); }}><Archive className="h-3.5 w-3.5" /> Archive</Button></div></TableCell>
           </TableRow>)}</TableBody>
-        </Table>{filtered.length === 0 && <div className="py-12 text-center text-sm text-slate-400">No employees match your search.</div>}</CardContent></Card>
+        </Table>{filtered.length === 0 && <div className="py-12 text-center text-sm text-slate-400">No employees match your search.</div>}<PaginationControls {...employeePage} onPageChange={employeePage.setPage} /></CardContent></Card>
       ) : (
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">{filtered.map((employee) => (
+        <div><div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">{employeePage.pageItems.map((employee) => (
           <Card key={employee.id}><CardContent className="p-5 !pt-5">
             <div className="flex min-w-0 items-start justify-between gap-2"><div className="flex min-w-0 items-center gap-3"><div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-violet-100 font-bold text-[#8642ED]">{initials(employee.name)}</div><div className="min-w-0"><h3 className="truncate font-semibold text-slate-900">{employee.name}</h3><p className="truncate text-xs text-slate-500">{employee.id} · {employee.role}</p></div></div><div className="shrink-0"><StatusBadge status={employee.status} /></div></div>
             <div className="mt-5 space-y-2 border-t border-slate-100 pt-4 text-sm"><div className="flex justify-between gap-3"><span className="text-slate-500">Government ID</span><span className="text-right text-slate-700">{primaryGovernmentId(employee)}</span></div><div className="flex justify-between gap-3"><span className="text-slate-500">Address</span><span className="max-w-[65%] truncate text-slate-700">{employee.address || "Not added"}</span></div><div className="flex justify-between"><span className="text-slate-500">Fingerprint</span><BiometricBadge status={employee.biometricStatus} /></div></div>
             <div className="mt-5 grid grid-cols-2 gap-2"><Button variant="outline" onClick={() => openEdit(employee)}><Pencil className="h-4 w-4" /> Edit</Button><Button variant="outline" className="text-rose-600 hover:bg-rose-50" onClick={() => { setArchiveTarget(employee); setArchivePassword(""); setArchiveError(""); }}><Archive className="h-4 w-4" /> Archive</Button></div>
           </CardContent></Card>
-        ))}</div>
+        ))}</div><PaginationControls {...employeePage} onPageChange={employeePage.setPage} /></div>
       )}
 
       <Dialog open={editorOpen} onClose={closeEditor} className="max-h-[92vh] max-w-3xl overflow-hidden">

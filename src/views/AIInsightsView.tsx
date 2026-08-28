@@ -10,6 +10,7 @@ import { Card, CardContent } from "../components/ui/Card";
 import { FingerprintEvaluation, type EvaluationSummary } from "../components/biometric/FingerprintEvaluation";
 import { apiFetch } from "../lib/api";
 import { cn } from "../lib/util";
+import { PaginationControls, usePagination } from "../components/ui/Pagination";
 
 type Readiness = "ready" | "limited";
 type InsightKey = "forecast" | "risk" | "anomaly" | "verification";
@@ -135,15 +136,17 @@ function AnomalyPanel({ data }: { data: Insights["anomaly"] }) {
   const months = useMemo(() => [...new Set(data.anomalies.map((item) => item.date.slice(0, 7)))].sort().reverse(), [data.anomalies]);
   const [selectedMonth, setSelectedMonth] = useState("all");
   const visibleAnomalies = selectedMonth === "all" ? data.anomalies : data.anomalies.filter((item) => item.date.startsWith(selectedMonth));
+  const anomalyPage = usePagination(visibleAnomalies, selectedMonth);
   return <div className="space-y-4">
     <div className="flex gap-3 rounded-xl border border-sky-200 bg-sky-50 px-4 py-3"><Clock3 className="mt-0.5 shrink-0 text-sky-600" size={17} aria-hidden="true" /><div><p className="text-sm font-semibold text-sky-950">What does this show?</p><p className="mt-1 text-sm leading-6 text-sky-900/80">It shows clock-ins that are much earlier or later than the usual time. A different shift, approved schedule, transport issue, or incorrect record may explain the difference. Always check the details with the employee.</p></div></div>
     <div className="grid grid-cols-2 gap-3 sm:grid-cols-3"><Stat label="Usual arrival time" value={data.medianTime} /><Stat label="Clock-ins checked" value={String(data.sampleScans)} /><div className="hidden sm:block"><Stat label="Visible unusual arrivals" value={String(visibleAnomalies.length)} /></div></div>
     <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white px-4 py-3"><div><label htmlFor="arrival-month" className="text-sm font-semibold text-slate-800">Show records for</label><p className="text-xs text-slate-500">Choose a month so older records do not remain mixed with recent ones.</p></div><select id="arrival-month" value={selectedMonth} onChange={(event) => setSelectedMonth(event.target.value)} className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 outline-none focus:border-sky-500 focus:ring-2 focus:ring-sky-200"><option value="all">All available months</option>{months.map((month) => <option key={month} value={month}>{monthLabel(month)}</option>)}</select></div>
     <div className="overflow-hidden rounded-2xl border border-slate-200">
-      {visibleAnomalies.length ? visibleAnomalies.map((item) => <div key={`${item.employeeId}-${item.date}`} className="flex items-center justify-between gap-4 border-b border-slate-100 px-4 py-3 last:border-0">
+      {visibleAnomalies.length ? anomalyPage.pageItems.map((item) => <div key={`${item.employeeId}-${item.date}`} className="flex items-center justify-between gap-4 border-b border-slate-100 px-4 py-3 last:border-0">
         <div className="flex min-w-0 items-center gap-3"><span className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-sky-50 text-sky-600"><Clock3 size={17} /></span><div className="min-w-0"><p className="truncate text-sm font-semibold text-slate-800">{item.name}</p><p className="text-xs text-slate-400">{shortDate(item.date)} · {item.time}</p></div></div>
         <Badge variant="info">{arrivalDifference(item.deviationMinutes)}</Badge>
       </div>) : <Empty text={selectedMonth === "all" ? "No unusual arrival times were detected." : `No unusual arrival times were found in ${monthLabel(selectedMonth)}.`} />}
+      <PaginationControls {...anomalyPage} onPageChange={anomalyPage.setPage} />
     </div>
   </div>;
 }

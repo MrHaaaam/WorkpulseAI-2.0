@@ -6,6 +6,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from ".
 import { Badge } from "../components/ui/Badge";
 import { apiFetch } from "../lib/api";
 import { DateNavigator } from "../components/DateNavigator";
+import { PaginationControls, usePagination } from "../components/ui/Pagination";
 
 export interface AttendanceRecord {
   employeeId: string;
@@ -53,6 +54,7 @@ export function AttendanceView(props: {
   const [error, setError] = useState<string | null>(null);
   const [selectedDate, setSelectedDate] = useState(workforceDateToday);
   const filteredRecords = localRecords.filter((record) => record.date === selectedDate);
+  const attendancePage = usePagination(filteredRecords, selectedDate);
 
   useEffect(() => {
     // If parent passed data, render it immediately.
@@ -160,7 +162,7 @@ export function AttendanceView(props: {
                   </TableCell>
                 </TableRow>
               ) : (
-                filteredRecords.map((record) => {
+                attendancePage.pageItems.map((record) => {
                   const sessions = attendanceSessions(record);
                   return (
                     <TableRow key={`${record.employeeId}-${record.date}`}>
@@ -188,6 +190,7 @@ export function AttendanceView(props: {
               )}
             </TableBody>
           </Table>
+          <PaginationControls {...attendancePage} onPageChange={attendancePage.setPage} />
         </CardContent>
       </Card>
     </div>

@@ -10,6 +10,7 @@ import { Input } from "../components/ui/Input";
 import type { Employee } from "../lib/data";
 import { useToast } from "../components/ui/Toast";
 import { apiFetch } from "../lib/api";
+import { PaginationControls, usePagination } from "../components/ui/Pagination";
 
 const hoverScrollbarClasses = 
   "max-h-[400px] overflow-y-auto pr-2 " +
@@ -63,6 +64,8 @@ export function AdminView() {
       return Number.isFinite(archivedAt) && archivedAt >= cutoff;
     });
   }, [archiveRange, archiveReferenceTime, archivedAccounts]);
+  const employeePage = usePagination(localEmployees);
+  const archivePage = usePagination(filteredArchivedAccounts, archiveRange);
 
   useEffect(() => {
     if (passwordRetrySeconds <= 0) return;
@@ -276,7 +279,7 @@ export function AdminView() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {localEmployees.map((e) => (
+                  {employeePage.pageItems.map((e) => (
                     <TableRow key={e.id} className="group hover:bg-slate-50/70">
                       <TableCell>
                         <div className="font-medium text-slate-900">{e.name}</div>
@@ -304,6 +307,7 @@ export function AdminView() {
                 </TableBody>
               </Table>
             </div>
+            <PaginationControls {...employeePage} onPageChange={employeePage.setPage} />
           </CardContent>
         </Card>
 
@@ -380,13 +384,13 @@ export function AdminView() {
         <Card className="border-violet-200">
           <CardHeader><div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between"><div><CardTitle className="flex items-center gap-2"><Archive className="h-5 w-5 text-[#8642ED]" /> Archived Employees</CardTitle><CardDescription>Restore employees or permanently delete an individual employee and all linked database records.</CardDescription></div><div className="flex flex-col gap-2 sm:flex-row sm:items-center"><div className="flex flex-wrap rounded-xl border border-slate-200 bg-slate-50 p-1">{([['30d','30 days'],['1y','1 year'],['5y','5 years'],['all','All']] as const).map(([value,label]) => <button key={value} type="button" onClick={() => setArchiveRange(value)} className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition ${archiveRange === value ? 'bg-white text-violet-700 shadow-sm' : 'text-slate-500 hover:text-slate-800'}`}>{label}</button>)}</div><Button className="w-full sm:w-auto" size="sm" variant="outline" onClick={() => setArchiveOpen(false)}>Close</Button></div></div></CardHeader>
           <CardContent className="p-0"><div className="overflow-x-auto"><Table className="min-w-[720px]"><TableHeader><TableRow><TableHead>Employee</TableHead><TableHead>Archived date</TableHead><TableHead>Age</TableHead><TableHead className="text-right">Actions</TableHead></TableRow></TableHeader><TableBody>
-            {filteredArchivedAccounts.map((account) => {
+            {archivePage.pageItems.map((account) => {
               const archivedAt = account.record.archivedAt ? new Date(account.record.archivedAt) : null;
               const validDate = archivedAt && !Number.isNaN(archivedAt.getTime());
               const ageDays = validDate ? Math.max(0, Math.floor((archiveReferenceTime - archivedAt.getTime()) / 86400000)) : null;
               return <TableRow key={account.id}><TableCell><div className="font-medium text-slate-900">{account.name}</div><div className="text-xs text-slate-400">{account.id}</div></TableCell><TableCell className="text-slate-600">{validDate ? archivedAt.toLocaleDateString('en-PH', { month: 'short', day: 'numeric', year: 'numeric' }) : 'Date unavailable'}</TableCell><TableCell><Badge variant="neutral">{ageDays == null ? 'Unknown' : ageDays === 0 ? 'Today' : `${ageDays} ${ageDays === 1 ? 'day' : 'days'}`}</Badge></TableCell><TableCell><div className="flex justify-end gap-2"><Button size="sm" variant="outline" onClick={() => restoreAccount(account.id)}><RotateCcw className="h-3.5 w-3.5" /> Restore</Button><Button size="sm" variant="destructive" onClick={() => { setDeleteTarget(account); setDeletePassword(''); setDeleteError(''); }}><Trash2 className="h-3.5 w-3.5" /> Delete permanently</Button></div></TableCell></TableRow>;
             })}
-          </TableBody></Table></div>{filteredArchivedAccounts.length === 0 && <div className="py-10 text-center text-sm text-slate-400">{archivedAccounts.length ? 'No archived employees match this time filter.' : 'The archive is empty.'}</div>}</CardContent>
+          </TableBody></Table></div>{filteredArchivedAccounts.length === 0 && <div className="py-10 text-center text-sm text-slate-400">{archivedAccounts.length ? 'No archived employees match this time filter.' : 'The archive is empty.'}</div>}<PaginationControls {...archivePage} onPageChange={archivePage.setPage} /></CardContent>
         </Card>
       )}
 

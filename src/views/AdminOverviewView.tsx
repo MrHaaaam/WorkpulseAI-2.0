@@ -39,6 +39,7 @@ import { Tabs } from "../components/ui/Tabs";
 import { Badge } from "../components/ui/Badge";
 import { Button } from "../components/ui/Button";
 import { DateNavigator } from "../components/DateNavigator";
+import { PaginationControls, usePagination } from "../components/ui/Pagination";
 
 type ViewMode = "daily" | "weekly" | "monthly";
 
@@ -127,6 +128,7 @@ export function AdminOverviewView({
   auditDate,
   onAuditDateChange,
 }: AdminOverviewProps) {
+  const auditPage = usePagination(auditTrail, auditDate);
   const chartData = attendanceTrends?.[viewMode] || [];
   const chartHasData = chartData.some((item) => item.present > 0 || item.late > 0 || item.absent > 0);
   const chartSummary = chartData.map((item) => `${item.label}: ${item.present} on time, ${item.late} late, ${item.absent} recorded absent`).join("; ");
@@ -495,7 +497,7 @@ export function AdminOverviewView({
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {auditTrail.map((activity, index) => (
+                {auditPage.pageItems.map((activity, index) => (
                   <tr key={activity.id} tabIndex={0} title={activity.detail} aria-label={activity.detail} className="group relative outline-none hover:bg-slate-50/70 focus:bg-violet-50 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-violet-500">
                     <td className="whitespace-nowrap px-4 py-3 font-medium text-slate-900">{activity.user}</td>
                     <td className="px-4 py-3">
@@ -523,6 +525,7 @@ export function AdminOverviewView({
                 {auditTrail.length === 0 && <tr><td colSpan={5} className={`px-4 py-10 text-center text-sm ${auditError ? 'text-rose-600' : 'text-slate-400'}`}>{auditLoading ? 'Loading audit events…' : auditError || 'No audit events found in audit_events.'}</td></tr>}
               </tbody>
             </table>
+            <PaginationControls {...auditPage} onPageChange={auditPage.setPage} />
           </div>
         </CardContent>
       </Card>
@@ -558,6 +561,7 @@ export function OverviewView({
 }: OverviewViewProps) {
   const [viewMode, setViewMode] = useState<ViewMode>("weekly");
   const chartData = attendanceTrends?.[viewMode] || [];
+  const activityPage = usePagination(recentActivities);
 
   const managerMetrics = [
     { label: "Total Active Staff", value: metrics.totalActiveStaff.toString(), change: "+2", trend: "up", icon: Users, ...cardColorStyles.purple },
@@ -753,7 +757,7 @@ export function OverviewView({
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
-                  {recentActivities.map((activity) => (
+                  {activityPage.pageItems.map((activity) => (
                     <tr key={activity.id} className="hover:bg-slate-50/50">
                       <td className="whitespace-nowrap px-4 py-3 font-medium text-slate-900">{activity.user}</td>
                       <td className="px-4 py-3">
@@ -780,6 +784,7 @@ export function OverviewView({
                   ))}
                 </tbody>
               </table>
+              <PaginationControls {...activityPage} onPageChange={activityPage.setPage} />
             </div>
           </CardContent>
         </Card>

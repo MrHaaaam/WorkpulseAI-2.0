@@ -14,6 +14,7 @@ import { apiFetch } from "../lib/api";
 import { Dialog, DialogClose, DialogHeader } from "../components/ui/Dialog";
 import { Button } from "../components/ui/Button";
 import { LeaveDatePicker } from "../components/LeaveDatePicker";
+import { PaginationControls, usePagination } from "../components/ui/Pagination";
 
 export interface LeaveRequest {
   id: string;
@@ -120,6 +121,7 @@ export function LeaveRequestsView({
     
     return matchesSearch && matchesStatus;
   });
+  const leavePage = usePagination(filteredRequests, `${searchTerm}|${filterStatus}`);
 
   return (
     <div className="space-y-6 max-w-7xl mx-auto p-1">
@@ -207,7 +209,7 @@ export function LeaveRequestsView({
       {/* Leave Requests Feed */}
       <div data-guide="leave-list" className="space-y-4" aria-live="polite" aria-label={`${filteredRequests.length} leave requests shown`}>
         {filteredRequests.length > 0 ? (
-          filteredRequests.map((request) => (
+          leavePage.pageItems.map((request) => (
             <div
               key={request.id}
               className="flex flex-col md:flex-row md:items-center gap-4 rounded-xl border border-slate-200 bg-white p-5 transition-all hover:border-slate-300 hover:shadow-md"
@@ -288,6 +290,7 @@ export function LeaveRequestsView({
             <p className="mt-1 text-xs text-slate-500">Try adjusting your filters or search terms.</p>
           </div>
         )}
+        <PaginationControls {...leavePage} onPageChange={leavePage.setPage} />
       </div>
       <Dialog open={Boolean(reviewTarget)} onClose={() => setReviewTarget(null)} className="max-w-2xl"><DialogHeader><div><h3 className="text-base font-bold text-slate-900">Review requested leave</h3><p className="mt-1 text-sm text-slate-500">The employee's requested dates are already included. No calendar navigation is needed.</p></div><DialogClose onClose={() => setReviewTarget(null)}/></DialogHeader><div className="space-y-4 px-6 pb-6 pt-3">{reviewTarget&&<><div className="rounded-xl border border-slate-200 bg-slate-50 p-4"><p className="font-semibold text-slate-900">{reviewTarget.employeeName}</p><p className="mt-1 text-sm text-slate-600">{reviewTarget.leaveType} · {reviewTarget.reason}</p></div><LeaveDatePicker selected={approvalDates} onChange={setApprovalDates} allowedDates={requestedDatesFor(reviewTarget)}/></>}<div className="flex justify-end gap-2"><Button variant="outline" onClick={()=>setReviewTarget(null)}>Cancel</Button><Button disabled={!approvalDates.length} onClick={()=>reviewTarget&&void updateRequest(reviewTarget.id,"approved",approvalDates)}><Check className="h-4 w-4"/>Approve {approvalDates.length} {approvalDates.length===1?"Date":"Dates"}</Button></div></div></Dialog>
       <Dialog open={Boolean(undoTarget)} onClose={() => !undoing && setUndoTarget(null)} className="max-w-md"><DialogHeader><div><h3 className="text-base font-bold text-amber-800">Undo approved leave?</h3><p className="mt-1 text-sm leading-6 text-slate-600">Review what will change before continuing.</p></div><DialogClose onClose={() => !undoing && setUndoTarget(null)}/></DialogHeader><div className="space-y-4 px-6 pb-6 pt-3"><div className="rounded-xl border border-amber-200 bg-amber-50 p-4"><p className="font-semibold text-slate-900">{undoTarget?.employeeName}</p>{undoTarget&&<LeaveDates request={undoTarget}/>}<ul className="mt-3 list-disc space-y-1 pl-5 text-sm leading-6 text-amber-950"><li>The approved leave will be cancelled.</li><li>Future “On Leave” attendance entries will be removed.</li><li>The employee's leave credits will be restored.</li></ul></div><p className="text-xs leading-5 text-slate-500">Past attendance records are not changed automatically.</p><div className="flex justify-end gap-2"><Button type="button" variant="outline" disabled={undoing} onClick={()=>setUndoTarget(null)}>Keep Approval</Button><Button type="button" variant="destructive" disabled={undoing} onClick={()=>undoTarget&&void undoApproval(undoTarget)}>{undoing?"Undoing...":"Undo Approval"}</Button></div></div></Dialog>
