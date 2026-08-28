@@ -222,7 +222,7 @@ export function AIInsightsView() {
   const loadInsights = useCallback(async (manual = false) => {
     if (manual) setRefreshing(true);
     try {
-      const response = await apiFetch("/api/ai-insights");
+      const response = await apiFetch(manual ? "/api/ai-insights?refresh=1" : "/api/ai-insights");
       const body = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(body.error || "Unable to load AI insights.");
       setInsights(body as Insights); setError(null);
@@ -231,8 +231,7 @@ export function AIInsightsView() {
   }, []);
   useEffect(() => {
     const initial = window.setTimeout(() => void loadInsights(), 0);
-    const interval = window.setInterval(() => void loadInsights(), 10_000);
-    return () => { window.clearTimeout(initial); window.clearInterval(interval); };
+    return () => window.clearTimeout(initial);
   }, [loadInsights]);
   const meta = modelMeta[selected];
   const generated = useMemo(() => insights ? new Intl.DateTimeFormat("en-US", { hour: "numeric", minute: "2-digit", timeZone: "Asia/Manila" }).format(new Date(insights.generatedAt)) : null, [insights]);

@@ -209,43 +209,47 @@ export function AppRoutes() {
   const [auditDate, setAuditDate] = useState(manilaDateToday);
 
   useEffect(() => {
+    if (active !== 'overview') return;
     let cancelled = false;
-    async function loadOverviewData() {
+    let loading = false;
+    async function loadOverview() {
+      if (loading || document.visibilityState === 'hidden') return;
+      loading = true;
       try {
-        const [employeesResponse, payrollResponse, attendanceResponse, leaveResponse] = await Promise.all([
-          apiFetch('/api/employees'), apiFetch('/api/payroll-requests'), apiFetch('/api/attendance'), apiFetch('/api/leave-requests'),
-        ]);
-        if (cancelled) return;
-        if (employeesResponse.ok) setOverviewEmployees(await employeesResponse.json());
-        if (payrollResponse.ok) setOverviewPayroll(await payrollResponse.json());
-        if (attendanceResponse.ok) setOverviewAttendance(await attendanceResponse.json());
-        if (leaveResponse.ok) setOverviewLeaves(await leaveResponse.json());
-      } catch { /* Preserve the last successful overview instead of replacing it with empty data. */ }
-    }
-    async function loadAuditEvents(attempt = 0) {
-      try {
-        const response = await apiFetch(`/api/audit-events?limit=100&date=${encodeURIComponent(auditDate)}`);
+        const query = new URLSearchParams({ performanceDate: overviewPerformanceDate, auditDate });
+        const response = await apiFetch(`/api/overview?${query.toString()}`);
         const data = await response.json().catch(() => null);
-        if (!response.ok) throw new Error(data?.error || `Audit request failed (${response.status})`);
-        if (!Array.isArray(data)) throw new Error('Audit server returned an invalid response');
-        if (!cancelled) { setOverviewAuditEvents(data); setAuditError(''); setAuditLoading(false); }
-      } catch (reason) {
-        if (cancelled) return;
-        if (attempt < 2) {
-          window.setTimeout(() => { void loadAuditEvents(attempt + 1); }, 1200);
-          return;
+        if (!response.ok) throw new Error(data?.error || `Overview request failed (${response.status})`);
+        if (!data || !Array.isArray(data.employees) || !Array.isArray(data.payroll) || !Array.isArray(data.attendance) || !Array.isArray(data.leaveRequests) || !Array.isArray(data.auditEvents)) {
+          throw new Error('Overview server returned an invalid response');
         }
-        setOverviewAuditEvents([]);
-        setAuditError(reason instanceof Error ? reason.message : 'Unable to load audit events');
+        if (cancelled) return;
+        setOverviewEmployees(data.employees);
+        setOverviewPayroll(data.payroll);
+        setOverviewAttendance(data.attendance);
+        setOverviewLeaves(data.leaveRequests);
+        setOverviewAuditEvents(data.auditEvents);
+        setAuditError('');
         setAuditLoading(false);
+      } catch (reason) {
+        if (!cancelled) {
+          setAuditError(reason instanceof Error ? reason.message : 'Unable to load overview data');
+          setAuditLoading(false);
+        }
+      } finally {
+        loading = false;
       }
     }
-    void loadOverviewData();
-    void loadAuditEvents();
-    const overviewInterval = window.setInterval(() => void loadOverviewData(), 30_000);
-    const auditInterval = window.setInterval(() => void loadAuditEvents(), 30_000);
-    return () => { cancelled = true; window.clearInterval(overviewInterval); window.clearInterval(auditInterval); };
-  }, [auditDate]);
+    const refreshWhenVisible = () => { if (document.visibilityState === 'visible') void loadOverview(); };
+    void loadOverview();
+    const overviewInterval = window.setInterval(() => void loadOverview(), 60_000);
+    document.addEventListener('visibilitychange', refreshWhenVisible);
+    return () => {
+      cancelled = true;
+      window.clearInterval(overviewInterval);
+      document.removeEventListener('visibilitychange', refreshWhenVisible);
+    };
+  }, [active, auditDate, overviewPerformanceDate]);
 
   const adminMetricsData = useMemo(() => {
     const totalStaff = overviewEmployees.length;

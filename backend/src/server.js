@@ -12,6 +12,26 @@ dotenv.config();
 const app = express();
 const port = process.env.PORT || 5000;
 const mongoUri = process.env.MONGODB_URI;
+const AUDIT_RETENTION_SECONDS = 90 * 24 * 60 * 60;
+
+async function ensureAuditRetentionIndex(db) {
+  const collection = db.collection('audit_events');
+  const indexes = await collection.listIndexes().toArray().catch((error) => {
+    if (error?.codeName === 'NamespaceNotFound') return [];
+    throw error;
+  });
+  const occurredAtIndex = indexes.find((index) => index.key?.occurredAt === -1 && Object.keys(index.key).length === 1);
+  if (occurredAtIndex && occurredAtIndex.expireAfterSeconds !== AUDIT_RETENTION_SECONDS) {
+    await db.command({ collMod: 'audit_events', index: { name: occurredAtIndex.name, expireAfterSeconds: AUDIT_RETENTION_SECONDS } });
+    return;
+  }
+  if (!occurredAtIndex) {
+    await collection.createIndex(
+      { occurredAt: -1 },
+      { expireAfterSeconds: AUDIT_RETENTION_SECONDS, name: 'audit_events_90_day_ttl' },
+    );
+  }
+}
 
 app.set('trust proxy', 1);
 app.use(cors({ origin: process.env.FRONTEND_ORIGIN || 'http://localhost:5173', credentials: true, allowedHeaders: ['Content-Type', 'Authorization', 'X-CSRF-Token'] }));
@@ -69,10 +89,18 @@ async function startServer() {
         db.collection('admin_accounts').createIndex({ email: 1 }, { unique: true }),
         db.collection('employee_accounts').createIndex({ email: 1 }, { unique: true }),
         db.collection('employee_accounts').createIndex({ employeeId: 1 }, { unique: true }),
-        db.collection('audit_events').createIndex({ occurredAt: -1 }),
+        ensureAuditRetentionIndex(db),
         db.collection('employees').createIndex({ id: 1 }, { unique: true, name: 'employee_id_unique' }),
+        db.collection('employees').createIndex({ archived: 1, status: 1 }),
         db.collection('biometric_templates').createIndex({ employeeId: 1 }, { unique: true, name: 'biometric_employee_unique' }),
         db.collection('attendance').createIndex({ employeeId: 1, date: 1 }, { unique: true }),
+        db.collection('attendance').createIndex({ date: -1 }),
+        db.collection('leave_requests').createIndex({ employeeId: 1, createdAt: -1 }),
+        db.collection('leave_requests').createIndex({ status: 1, startDate: 1, endDate: 1 }),
+        db.collection('payroll_requests').createIndex({ employeeId: 1, createdAt: -1 }),
+        db.collection('payroll_requests').createIndex({ periodStart: 1, status: 1 }),
+        db.collection('biometric_verification_attempts').createIndex({ createdAt: -1 }),
+        db.collection('biometric_evaluation_trials').createIndex({ createdAt: -1 }),
       ]);
     } catch (error) {
       console.error('Security index setup failed:', error instanceof Error ? error.message : error);

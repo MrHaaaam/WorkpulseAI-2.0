@@ -20,6 +20,8 @@ import {
 
 const router = Router();
 const MAX_DAILY_ATTENDANCE_SESSIONS = 3;
+const AI_INSIGHTS_CACHE_MS = 60_000;
+let aiInsightsCache = { expiresAt: 0, value: null };
 
 async function visibleEmployeeIds(db) {
   const employees = await db.collection('employees').find(
@@ -382,15 +384,22 @@ router.get('/admin/backup', async (req, res) => {
   }
 });
 
-router.get('/ai-insights', async (_req, res) => {
+router.get('/ai-insights', async (req, res) => {
   try {
+    if (req.query.refresh !== '1' && aiInsightsCache.value && aiInsightsCache.expiresAt > Date.now()) {
+      res.setHeader('X-Cache', 'HIT');
+      return res.json(aiInsightsCache.value);
+    }
     const db = mongoose.connection.db;
     const employeeIds = await visibleEmployeeIds(db);
     const employeeIdSet = new Set(employeeIds);
+    const attendanceStart = new Date();
+    attendanceStart.setUTCFullYear(attendanceStart.getUTCFullYear() - 1);
+    const attendanceStartDate = attendanceStart.toISOString().slice(0, 10);
     const [attendance, employees, leaveRequests, verificationAttempts, evaluationTrials] = await Promise.all([
-      db.collection('attendance').find({ employeeId: { $in: employeeIds } }).sort({ date: 1 }).toArray(),
+      db.collection('attendance').find({ employeeId: { $in: employeeIds }, date: { $gte: attendanceStartDate } }).sort({ date: 1 }).toArray(),
       db.collection('employees').find({ id: { $in: employeeIds } }).toArray(),
-      db.collection('leave_requests').find({ employeeId: { $in: employeeIds }, status: 'approved' }).toArray(),
+      db.collection('leave_requests').find({ employeeId: { $in: employeeIds }, status: 'approved', endDate: { $gte: attendanceStartDate } }).toArray(),
       db.collection('biometric_verification_attempts').find({}).sort({ createdAt: -1 }).limit(500).toArray(),
       db.collection('biometric_evaluation_trials').find({}).sort({ createdAt: -1 }).limit(1000).toArray(),
     ]);
@@ -404,7 +413,10 @@ router.get('/ai-insights', async (_req, res) => {
     const visibleEvaluationTrials = [...evaluationTrials, ...legacyIdentificationTrials].filter((trial) =>
       (!trial.expectedEmployeeId || employeeIdSet.has(trial.expectedEmployeeId))
       && (!trial.actualEmployeeId || employeeIdSet.has(trial.actualEmployeeId))).sort((left, right) => new Date(right.createdAt || 0) - new Date(left.createdAt || 0));
-    res.json(buildAIInsights({ attendance, employees, leaveRequests, verificationAttempts: visibleVerificationAttempts, evaluationTrials: visibleEvaluationTrials, fingerJetThreshold: fingerprintMatchThreshold() }));
+    const insights = buildAIInsights({ attendance, employees, leaveRequests, verificationAttempts: visibleVerificationAttempts, evaluationTrials: visibleEvaluationTrials, fingerJetThreshold: fingerprintMatchThreshold() });
+    aiInsightsCache = { value: insights, expiresAt: Date.now() + AI_INSIGHTS_CACHE_MS };
+    res.setHeader('X-Cache', 'MISS');
+    res.json(insights);
   } catch (error) {
     console.error('AI insights generation failed:', error);
     res.status(500).json({ error: 'Unable to generate AI insights right now.' });
@@ -458,6 +470,82 @@ router.post('/biometric-evaluation-trials', async (req, res) => {
 
 const employeeFields = ['id', 'firstName', 'lastName', 'name', 'role', 'casualLeave', 'sickLeave', 'status', 'grossSalary', 'hoursWorked', 'hourlyRate', 'email', 'phone', 'address', 'identifiers'];
 
+function serializedAuditEvent(event) {
+  return {
+    id: String(event._id),
+    occurredAt: event.occurredAt,
+    actorEmail: event.actorEmail ?? null,
+    actorRole: event.actorRole ?? 'anonymous',
+    screenName: event.screenName ?? auditScreenName(event.action, event.targetType, event.metadata),
+    action: event.action ?? 'unknown',
+    targetType: event.targetType ?? 'system',
+    targetId: event.targetId ?? null,
+    outcome: event.outcome ?? 'unknown',
+    metadata: event.metadata ?? {},
+  };
+}
+
+router.get('/overview', requireRole('admin', 'manager'), async (req, res) => {
+  try {
+    const db = mongoose.connection?.db;
+    if (!db) return res.status(503).json({ error: 'Database is unavailable' });
+    const datePattern = /^\d{4}-\d{2}-\d{2}$/;
+    const today = kioskTimestamp().date;
+    const performanceDate = datePattern.test(String(req.query.performanceDate || '')) ? String(req.query.performanceDate) : today;
+    const auditDate = datePattern.test(String(req.query.auditDate || '')) ? String(req.query.auditDate) : today;
+    const rangeStart = new Date(`${performanceDate}T00:00:00Z`);
+    rangeStart.setUTCMonth(rangeStart.getUTCMonth() - 6);
+    const attendanceStart = rangeStart.toISOString().slice(0, 10);
+    const auditStart = new Date(`${auditDate}T00:00:00+08:00`);
+    const auditEnd = new Date(auditStart.getTime() + 86_400_000);
+    const currentPeriod = payrollPeriodKey();
+    const employeeProjection = { id: 1, status: 1, createdAt: 1 };
+    const [settings, employees] = await Promise.all([
+      getSettings(db),
+      db.collection('employees').find({ archived: { $ne: true } }, { projection: employeeProjection }).toArray(),
+    ]);
+    const employeeIds = employees.map((employee) => employee.id).filter(Boolean);
+    const [attendance, payroll, leaveRequests, biometricTemplates, auditEvents] = await Promise.all([
+      db.collection('attendance').find(
+        { employeeId: { $in: employeeIds }, date: { $gte: attendanceStart, $lte: performanceDate } },
+        { projection: { employeeId: 1, name: 1, role: 1, date: 1, checkIn: 1, checkOut: 1, sessions: 1, status: 1 } },
+      ).sort({ date: -1 }).limit(10_000).toArray(),
+      db.collection('payroll_requests').find(
+        { employeeId: { $in: employeeIds }, periodStart: currentPeriod },
+        { projection: { status: 1, periodStart: 1 } },
+      ).limit(2_000).toArray(),
+      db.collection('leave_requests').find(
+        { employeeId: { $in: employeeIds }, $or: [{ status: 'pending' }, { startDate: { $lte: performanceDate }, endDate: { $gte: attendanceStart } }] },
+        { projection: { id: 1, employeeId: 1, startDate: 1, endDate: 1, approvedDates: 1, totalDays: 1, status: 1 } },
+      ).sort({ createdAt: -1 }).limit(2_000).toArray(),
+      db.collection('biometric_templates').find({ employeeId: { $in: employeeIds } }, { projection: { employeeId: 1 } }).toArray(),
+      db.collection('audit_events').find(
+        { occurredAt: { $gte: auditStart, $lt: auditEnd } },
+        { projection: { occurredAt: 1, actorEmail: 1, actorRole: 1, screenName: 1, action: 1, targetType: 1, targetId: 1, outcome: 1, metadata: 1 } },
+      ).sort({ occurredAt: -1, _id: -1 }).limit(100).toArray(),
+    ]);
+    const enrolledIds = new Set(biometricTemplates.map((item) => item.employeeId));
+    const onLeaveToday = new Set(leaveRequests.filter((leave) => leave.status === 'approved' && (Array.isArray(leave.approvedDates) && leave.approvedDates.length ? leave.approvedDates.includes(today) : leave.startDate <= today && leave.endDate >= today)).map((leave) => leave.employeeId));
+    res.json({
+      employees: employees.map((employee) => ({
+        status: employee.status === 'inactive' ? 'inactive' : onLeaveToday.has(employee.id) ? 'on-leave' : 'active',
+        biometricStatus: enrolledIds.has(employee.id) ? 'enrolled' : 'none',
+        createdAt: employee.createdAt,
+      })),
+      payroll,
+      attendance: attendance.map((record) => ({
+        employeeId: record.employeeId, name: record.name, role: record.role, date: record.date,
+        checkIn: record.checkIn, checkOut: record.checkOut, status: attendanceArrivalStatus(record, settings),
+      })),
+      leaveRequests,
+      auditEvents: auditEvents.map(serializedAuditEvent),
+    });
+  } catch (error) {
+    console.error('Overview fetch failed:', error instanceof Error ? error.message : error);
+    res.status(500).json({ error: 'Failed to load overview data' });
+  }
+});
+
 router.get('/audit-events', async (req, res) => {
   try {
     const db = mongoose.connection.db;
@@ -473,18 +561,7 @@ router.get('/audit-events', async (req, res) => {
       filter.occurredAt = { $gte: start, $lt: end };
     }
     const events = await db.collection('audit_events').find(filter).sort({ occurredAt: -1, _id: -1 }).limit(limit).toArray();
-    res.json(events.map((event) => ({
-      id: String(event._id),
-      occurredAt: event.occurredAt,
-      actorEmail: event.actorEmail ?? null,
-      actorRole: event.actorRole ?? 'anonymous',
-      screenName: event.screenName ?? auditScreenName(event.action, event.targetType, event.metadata),
-      action: event.action ?? 'unknown',
-      targetType: event.targetType ?? 'system',
-      targetId: event.targetId ?? null,
-      outcome: event.outcome ?? 'unknown',
-      metadata: event.metadata ?? {},
-    })));
+    res.json(events.map(serializedAuditEvent));
   } catch (error) {
     console.error('Audit event fetch failed:', error instanceof Error ? error.message : error);
     res.status(500).json({ error: 'Failed to fetch audit events' });
@@ -725,12 +802,16 @@ router.get('/employees', async (req, res) => {
     const settings = await getSettings(db);
     await enforceAutomaticClockOut(db, settings);
     const employees = await db.collection('employees').find({ archived: { $ne: true } }).toArray();
+    const employeeIds = employees.map((employee) => employee.id).filter(Boolean);
     const today = kioskTimestamp().date;
     const periodStart = currentPayrollPeriodStart();
     const [attendance, biometricTemplates, approvedLeavesToday] = await Promise.all([
-      db.collection('attendance').find({}).toArray(),
-      db.collection('biometric_templates').find({}, { projection: { employeeId: 1 } }).toArray(),
-      db.collection('leave_requests').find({ status: 'approved', $or: [{ approvedDates: today }, { approvedDates: { $exists: false }, startDate: { $lte: today }, endDate: { $gte: today } }] }, { projection: { employeeId: 1 } }).toArray(),
+      db.collection('attendance').find(
+        { employeeId: { $in: employeeIds }, date: { $gte: periodStart.toISOString().slice(0, 10) } },
+        { projection: { employeeId: 1, date: 1, checkIn: 1, checkOut: 1, sessions: 1 } },
+      ).toArray(),
+      db.collection('biometric_templates').find({ employeeId: { $in: employeeIds } }, { projection: { employeeId: 1 } }).toArray(),
+      db.collection('leave_requests').find({ employeeId: { $in: employeeIds }, status: 'approved', $or: [{ approvedDates: today }, { approvedDates: { $exists: false }, startDate: { $lte: today }, endDate: { $gte: today } }] }, { projection: { employeeId: 1 } }).toArray(),
     ]);
     const enrolledEmployeeIds = new Set(biometricTemplates.map((template) => template.employeeId));
     const employeesOnLeaveToday = new Set(approvedLeavesToday.map((leave) => leave.employeeId));
@@ -1129,7 +1210,7 @@ router.get('/payroll-requests', async (req, res) => {
     if (!db) return res.status(500).json({ error: 'MongoDB connection not ready' });
 
     const employeeIds = await visibleEmployeeIds(db);
-    const payrollRequests = await db.collection('payroll_requests').find({ employeeId: { $in: employeeIds } }).sort({ createdAt: -1, _id: -1 }).toArray();
+    const payrollRequests = await db.collection('payroll_requests').find({ employeeId: { $in: employeeIds } }).sort({ createdAt: -1, _id: -1 }).limit(2_000).toArray();
 
     res.json(
       payrollRequests.map((p) => ({
@@ -1571,7 +1652,7 @@ router.get('/leave-requests', async (req, res) => {
     if (!db) return res.status(500).json({ error: 'MongoDB connection not ready' });
 
     const employeeIds = await visibleEmployeeIds(db);
-    const leaveRequests = await db.collection('leave_requests').find({ employeeId: { $in: employeeIds } }).sort({ createdAt: -1, _id: -1 }).toArray();
+    const leaveRequests = await db.collection('leave_requests').find({ employeeId: { $in: employeeIds } }).sort({ createdAt: -1, _id: -1 }).limit(2_000).toArray();
 
     res.json(
       leaveRequests.map((r) => ({
@@ -1668,7 +1749,15 @@ router.get('/attendance', async (req, res) => {
     const settings = await getSettings(db);
     await enforceAutomaticClockOut(db, settings);
     const employeeIds = await visibleEmployeeIds(db);
-    const attendance = await db.collection('attendance').find({ employeeId: { $in: employeeIds } }).toArray();
+    const requestedLimit = Number.parseInt(String(req.query.limit ?? '5000'), 10);
+    const limit = Number.isFinite(requestedLimit) ? Math.max(1, Math.min(10_000, requestedLimit)) : 5_000;
+    const dateFilter = {};
+    if (/^\d{4}-\d{2}-\d{2}$/.test(String(req.query.from || ''))) dateFilter.$gte = String(req.query.from);
+    if (/^\d{4}-\d{2}-\d{2}$/.test(String(req.query.to || ''))) dateFilter.$lte = String(req.query.to);
+    const attendance = await db.collection('attendance').find(
+      { employeeId: { $in: employeeIds }, ...(Object.keys(dateFilter).length ? { date: dateFilter } : {}) },
+      { projection: { employeeId: 1, name: 1, role: 1, date: 1, checkIn: 1, checkOut: 1, sessions: 1, status: 1, autoClockedOut: 1 } },
+    ).sort({ date: -1 }).limit(limit).toArray();
 
     res.json(
       attendance.map((a) => ({
