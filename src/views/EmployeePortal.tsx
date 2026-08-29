@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react'
 import {
   CalendarDays, CheckCircle2, ChevronRight, Clock3, Fingerprint, LayoutDashboard, LogOut,
-  Eye, Mail, MapPin, Menu, Pencil, Phone, Printer, Save, Send, ShieldCheck, UserRound, WalletCards, X,
+  AlertTriangle, Eye, Mail, MapPin, Menu, Pencil, Phone, Printer, Save, Send, ShieldCheck, UserRound, WalletCards, X,
 } from 'lucide-react'
 import { apiFetch, clearSession } from '../lib/api'
 import { useToast } from '../components/ui/Toast'
@@ -20,7 +20,9 @@ type AttendanceSession = { checkIn: string; checkOut?: string | null; autoClocke
 type Attendance = { date: string; checkIn?: string; checkOut?: string; sessions?: AttendanceSession[]; status: string; autoClockedOut?: boolean }
 type Leave = { id: string; leaveType: string; startDate: string; endDate: string; requestedDates?: string[]; approvedDates?: string[]; totalDays: number; reason: string; status: string }
 type Payroll = { id: string; amount?: number; grossAmount?: number; currentAmount?: number; carryOverAmount?: number; additions?: { label: string; value: number }[]; hoursWorked?: number; hourlyRate?: number; status: string; periodStart?: string; paidAt?: string; warnings?: string[] }
-type Workspace = { profile: EmployeeProfile; attendance: Attendance[]; leaveRequests: Leave[]; payroll: Payroll[] }
+type AttendanceFlag = { tier: 'green' | 'orange' | 'red'; absenceDays: number; lateDays: number; periodStart: string; periodEnd: string }
+type WorkSchedule = { workWeekdays: number[]; scheduleOverrides: { date: string; working: boolean; kind?: string }[] }
+type Workspace = { profile: EmployeeProfile; attendance: Attendance[]; leaveRequests: Leave[]; payroll: Payroll[]; attendanceFlag: AttendanceFlag; workSchedule: WorkSchedule }
 type Section = 'overview' | 'attendance' | 'leave' | 'payroll' | 'profile'
 
 const money = (value: number | undefined) => new Intl.NumberFormat('en-PH', { style: 'currency', currency: 'PHP' }).format(Number(value || 0))
@@ -197,6 +199,7 @@ export function EmployeePortal() {
             <MetricCard icon={CheckCircle2} label="Pending leave" value={String(workspace.leaveRequests.filter((item) => item.status === 'pending').length)} note="Waiting for admin review" tone="amber" />
             <MetricCard icon={WalletCards} label="Latest payroll" value={workspace.payroll[0] ? money(workspace.payroll[0].amount) : 'No record'} note={workspace.payroll[0]?.status ?? 'Nothing prepared yet'} tone="blue" />
           </section>
+          <AttendanceFlagCard flag={workspace.attendanceFlag} />
           <div className="grid gap-5 xl:grid-cols-[1.15fr_.85fr]">
             <Panel title="Recent attendance" subtitle="Your latest time records"><AttendanceRows records={workspace.attendance.slice(0, 4)} /></Panel>
             <Panel title="Account summary" subtitle="Information connected to your login"><div className="grid gap-3"><ProfileItem icon={Mail} label="Email" value={profile.email || 'Not provided'} /><ProfileItem icon={Phone} label="Phone" value={profile.phone || 'Not provided'} /><ProfileItem icon={ShieldCheck} label="Biometric access" value={profile.biometricStatus} /></div></Panel>
@@ -211,7 +214,7 @@ export function EmployeePortal() {
         {section === 'payroll' && <Panel title="Payroll history" subtitle="Open any pay period to view or print your personal payslip"><DataTable headers={['Pay period', 'Current pay', 'Carried balance', 'Total payout', 'Status', 'Summary']} rows={workspace.payroll.map((item) => [formatDate(item.periodStart), money(item.currentAmount), money(item.carryOverAmount), <strong key={`${item.id}-amount`} className="text-slate-900">{money(item.amount)}</strong>, <Status key={`${item.id}-status`} value={item.status} />, <button key={`${item.id}-view`} type="button" onClick={() => setSelectedPayroll(item)} className="inline-flex h-9 items-center gap-2 whitespace-nowrap rounded-lg border border-violet-200 bg-violet-50 px-3 text-xs font-semibold text-violet-700 hover:bg-violet-100 focus:outline-none focus:ring-4 focus:ring-violet-200"><Eye className="h-4 w-4" />View summary</button>])} empty="No payroll records yet." /></Panel>}
 
         {section === 'leave' && <div className="grid gap-5 xl:grid-cols-[.82fr_1.18fr]">
-          <Panel title="Request leave" subtitle="Your administrator will review the dates you select"><MonthlyLeaveBalance balance={profile.monthlyLeaveCredits} /><form onSubmit={submitLeave} className="mt-5 space-y-4"><Field label="Leave type"><select value={leaveDraft.leaveType} onChange={(event) => setLeaveDraft((current) => ({ ...current, leaveType: event.target.value }))} className="input"><option>Annual Leave</option><option>Sick Leave</option><option>Personal Leave</option><option>Maternity Leave</option></select></Field><LeaveDatePicker selected={leaveDraft.requestedDates} onChange={(requestedDates)=>setLeaveDraft(current=>({...current,requestedDates}))}/><Field label="Reason"><textarea required minLength={5} maxLength={500} rows={4} value={leaveDraft.reason} onChange={(event) => setLeaveDraft((current) => ({ ...current, reason: event.target.value }))} className="input h-auto py-3" placeholder="Briefly explain your request" /></Field><button disabled={submitting||leaveDraft.requestedDates.length===0} className="flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-[#8642ED] text-sm font-semibold text-white shadow-lg shadow-violet-600/15 hover:bg-violet-700 disabled:opacity-60"><Send className="h-4 w-4" />{submitting ? 'Submitting...' : `Submit ${leaveDraft.requestedDates.length} ${leaveDraft.requestedDates.length===1?'date':'dates'}`}</button></form></Panel>
+          <Panel title="Request leave" subtitle="Your administrator will review the dates you select"><MonthlyLeaveBalance balance={profile.monthlyLeaveCredits} /><form onSubmit={submitLeave} className="mt-5 space-y-4"><Field label="Leave type"><select value={leaveDraft.leaveType} onChange={(event) => setLeaveDraft((current) => ({ ...current, leaveType: event.target.value }))} className="input"><option>Annual Leave</option><option>Sick Leave</option><option>Personal Leave</option><option>Maternity Leave</option></select></Field><LeaveDatePicker selected={leaveDraft.requestedDates} workSchedule={workspace.workSchedule} onChange={(requestedDates)=>setLeaveDraft(current=>({...current,requestedDates}))}/><Field label="Reason"><textarea required minLength={5} maxLength={500} rows={4} value={leaveDraft.reason} onChange={(event) => setLeaveDraft((current) => ({ ...current, reason: event.target.value }))} className="input h-auto py-3" placeholder="Briefly explain your request" /></Field><button disabled={submitting||leaveDraft.requestedDates.length===0} className="flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-[#8642ED] text-sm font-semibold text-white shadow-lg shadow-violet-600/15 hover:bg-violet-700 disabled:opacity-60"><Send className="h-4 w-4" />{submitting ? 'Submitting...' : `Submit ${leaveDraft.requestedDates.length} ${leaveDraft.requestedDates.length===1?'date':'dates'}`}</button></form></Panel>
           <Panel title="Request history" subtitle="Updates and decisions from your administrator"><DataTable headers={['Leave type', 'Dates', 'Days', 'Status']} rows={workspace.leaveRequests.map((item) => [item.leaveType, (item.approvedDates?.length?item.approvedDates:item.requestedDates)?.map(formatDate).join(', ')||`${formatDate(item.startDate)} – ${formatDate(item.endDate)}`, String(item.totalDays), <div key={item.id} className="flex flex-wrap items-center gap-2"><Status value={item.status} />{item.status==='pending'&&<button type="button" onClick={()=>setCancelLeaveTarget(item)} className="rounded-lg border border-rose-200 px-2 py-1 text-xs font-semibold text-rose-700 hover:bg-rose-50 focus:outline-none focus:ring-2 focus:ring-rose-300">Cancel</button>}</div>])} empty="No leave requests yet." /></Panel>
         </div>}
 
@@ -225,6 +228,22 @@ export function EmployeePortal() {
     {selectedPayroll && <EmployeePayslip profile={profile} payroll={selectedPayroll} onClose={() => setSelectedPayroll(null)} />}
     <Dialog open={Boolean(cancelLeaveTarget)} onClose={() => !cancellingLeave && setCancelLeaveTarget(null)} className="max-w-md"><DialogHeader><div><h2 className="text-base font-bold text-rose-700">Cancel leave request?</h2><p className="mt-1 text-sm leading-6 text-slate-600">This removes the pending request from the administrator's review list.</p></div><DialogClose onClose={() => !cancellingLeave && setCancelLeaveTarget(null)} /></DialogHeader><div className="space-y-4 px-6 pb-6 pt-3">{cancelLeaveTarget&&<div className="rounded-xl border border-slate-200 p-4"><p className="font-semibold text-slate-900">{cancelLeaveTarget.leaveType}</p><p className="mt-1 text-sm text-slate-600">{(cancelLeaveTarget.requestedDates?.length?cancelLeaveTarget.requestedDates:[cancelLeaveTarget.startDate,cancelLeaveTarget.endDate]).map(formatDate).join(', ')}</p></div>}<p className="text-sm leading-6 text-slate-600">You can submit a new request later if you still need leave.</p><div className="flex justify-end gap-2"><Button type="button" variant="outline" disabled={cancellingLeave} onClick={()=>setCancelLeaveTarget(null)}>Keep Request</Button><Button type="button" variant="destructive" disabled={cancellingLeave} onClick={()=>cancelLeaveTarget&&void cancelLeave(cancelLeaveTarget)}>{cancellingLeave?'Cancelling...':'Cancel Request'}</Button></div></div></Dialog>
   </div>
+}
+
+function AttendanceFlagCard({ flag }: { flag: AttendanceFlag }) {
+  const styles = {
+    green: { border: 'border-emerald-200', background: 'bg-emerald-50', text: 'text-emerald-900', icon: 'bg-emerald-100 text-emerald-700', label: 'Green — Regular monitoring' },
+    orange: { border: 'border-amber-200', background: 'bg-amber-50', text: 'text-amber-950', icon: 'bg-amber-100 text-amber-700', label: 'Orange — Attendance review' },
+    red: { border: 'border-red-200', background: 'bg-red-50', text: 'text-red-950', icon: 'bg-red-100 text-red-700', label: 'Red — Immediate attendance review' },
+  }[flag.tier]
+  return <section className={`rounded-2xl border p-5 ${styles.border} ${styles.background}`}>
+    <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+      <div className="flex gap-3"><span className={`grid h-11 w-11 shrink-0 place-items-center rounded-xl ${styles.icon}`}><AlertTriangle className="h-5 w-5" /></span><div><p className={`font-bold ${styles.text}`}>Your attendance status: {styles.label}</p><p className="mt-1 text-sm leading-6 text-slate-600">Automatically calculated from {formatDate(flag.periodStart)} to {formatDate(flag.periodEnd)}. Approved leave is not counted as an absence.</p></div></div>
+      <span className={`w-fit rounded-full px-3 py-1 text-xs font-bold uppercase tracking-wide ${styles.icon}`}>{flag.tier}</span>
+    </div>
+    <div className="mt-4 grid gap-3 sm:grid-cols-2"><div className="rounded-xl border border-white/80 bg-white/70 p-3"><p className="text-xs font-medium text-slate-500">Unapproved absences</p><p className="mt-1 text-2xl font-bold text-slate-950">{flag.absenceDays}</p></div><div className="rounded-xl border border-white/80 bg-white/70 p-3"><p className="text-xs font-medium text-slate-500">Late arrivals</p><p className="mt-1 text-2xl font-bold text-slate-950">{flag.lateDays}</p></div></div>
+    <p className="mt-3 text-xs leading-5 text-slate-500">This status supports awareness and human review. Contact your administrator if a record appears incorrect.</p>
+  </section>
 }
 
 function EmployeePayslip({ profile, payroll, onClose }: { profile: EmployeeProfile; payroll: Payroll; onClose: () => void }) {

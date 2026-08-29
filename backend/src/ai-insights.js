@@ -160,23 +160,32 @@ export function attendanceFlagFor(absenceDays) {
   return 'green';
 }
 
-function riskInsight(attendance, employees, leaveRequests, today) {
+export function attendanceRiskForEmployee(attendance, employeeId, leaveRequests, today) {
   const todayDate = utcDate(today);
   const periodStart = addDays(todayDate, -29).toISOString().slice(0, 10);
   const periodEnd = todayDate.toISOString().slice(0, 10);
   const coveredLeave = leaveDateSet(leaveRequests);
+  const records = attendance
+    .filter((item) => item.employeeId === employeeId)
+    .sort((a, b) => String(a.date).localeCompare(String(b.date)));
+  const absenceDates = records
+    .map((item) => ({ status: item.status, day: String(item.date).slice(0, 10) }))
+    .filter((item) => item.status === 'Absent' && item.day >= periodStart && item.day <= periodEnd && !coveredLeave.get(employeeId)?.has(item.day))
+    .map((item) => item.day);
+  const lateDays = records.filter((item) => {
+    const day = String(item.date).slice(0, 10);
+    return item.status === 'Late' && day >= periodStart && day <= periodEnd;
+  }).length;
+  return { tier: attendanceFlagFor(absenceDates.length), absenceDays: absenceDates.length, absenceDates, lateDays, periodStart, periodEnd };
+}
+
+function riskInsight(attendance, employees, leaveRequests, today) {
+  const todayDate = utcDate(today);
+  const periodStart = addDays(todayDate, -29).toISOString().slice(0, 10);
+  const periodEnd = todayDate.toISOString().slice(0, 10);
   const rows = employees.map((employee) => {
-    const records = attendance.filter((item) => item.employeeId === employee.id).sort((a, b) => String(a.date).localeCompare(String(b.date)));
-    const absenceDates = records
-      .map((item) => ({ status: item.status, day: String(item.date).slice(0, 10) }))
-      .filter((item) => item.status === 'Absent' && item.day >= periodStart && item.day <= periodEnd && !coveredLeave.get(employee.id)?.has(item.day))
-      .map((item) => item.day);
-    const lateDays = records.filter((item) => {
-      const day = String(item.date).slice(0, 10);
-      return item.status === 'Late' && day >= periodStart && day <= periodEnd;
-    }).length;
-    const tier = attendanceFlagFor(absenceDates.length);
-    return { employeeId: employee.id, name: employee.name || employee.fullName || employee.id, tier, absenceDays: absenceDates.length, absenceDates, lateDays };
+    const result = attendanceRiskForEmployee(attendance, employee.id, leaveRequests, today);
+    return { employeeId: employee.id, name: employee.name || employee.fullName || employee.id, ...result };
   }).sort((a, b) => b.absenceDays - a.absenceDays || b.lateDays - a.lateDays || a.name.localeCompare(b.name));
   const flagged = rows.filter((row) => row.tier !== 'green').length;
   return {

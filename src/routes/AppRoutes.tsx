@@ -62,6 +62,7 @@ function auditActionLabel(event: OverviewAuditEvent) {
     'individual-paid': 'Individual Payment Completed',
     'payment-held': 'Payment Held',
     'hold-removed': 'Payment Hold Removed',
+    'payment-undone': 'Payment Undone',
     printed: 'Payroll Printed',
     'payslip-emailed': 'Payslip Emailed',
     'summary-emailed': 'Payroll Summary Emailed',
@@ -93,6 +94,8 @@ function auditEventDetail(event: OverviewAuditEvent, time: string) {
     const payrollAction = String(event.metadata?.payrollAction || '');
     const recordCount = Number(event.metadata?.recordCount || 0);
     const amount = Number(event.metadata?.amount ?? event.metadata?.total ?? 0);
+    const periodStart = String(event.metadata?.periodStart || '');
+    const period = /^\d{4}-\d{2}-\d{2}$/.test(periodStart) ? ` for pay period ${new Date(`${periodStart}T00:00:00Z`).toLocaleDateString('en-PH', { timeZone: 'UTC', month: 'short', day: 'numeric', year: 'numeric' })}` : '';
     const money = amount > 0 ? ` worth ${amount.toLocaleString('en-PH', { style: 'currency', currency: 'PHP' })}` : '';
     const people = recordCount > 0 ? `${recordCount} employee${recordCount === 1 ? '' : 's'}` : 'the selected employees';
     const descriptions: Record<string, string> = {
@@ -101,12 +104,13 @@ function auditEventDetail(event: OverviewAuditEvent, time: string) {
       'individual-paid': `${actor} marked ${targetName || 'an employee'} as paid${money}`,
       'payment-held': `${actor} placed ${targetName || "an employee's"} payment on hold`,
       'hold-removed': `${actor} removed the payment hold for ${targetName || 'an employee'}`,
+      'payment-undone': `${actor} undid the latest completed payment for ${targetName || people}${money}`,
       printed: event.metadata?.printScope === 'individual-payslip' ? `${actor} printed the payslip for ${targetName || 'an employee'}` : `${actor} printed the paid payroll list${recordCount ? ` containing ${recordCount} records` : ''}`,
       'payslip-emailed': `${actor} emailed a payslip to ${targetName || 'an employee'}`,
       'summary-emailed': `${actor} emailed a payroll summary to ${targetName || 'an employee'}`,
     };
     const description = descriptions[payrollAction] || (path.includes('/undo-last-payment') ? `${actor} undid the most recent payroll payment` : path.includes('/prepare-bulk') ? `${actor} prepared payroll for ${people}` : `${actor} performed a payroll action${targetName ? ` for ${targetName}` : ''}`);
-    return `${description} at ${time}; the action ${result}.`;
+    return `${description}${period} at ${time}; the action ${result}.`;
   }
   if (path === '/settings') {
     const values = event.metadata?.settingsValues && typeof event.metadata.settingsValues === 'object' ? Object.entries(event.metadata.settingsValues).filter(([, value]) => value != null).map(([key, value]) => `${key.replace(/([A-Z])/g, ' $1').toLowerCase()}: ${value}`).join(', ') : '';

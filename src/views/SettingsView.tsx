@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { CalendarDays, Clock, Eye, EyeOff, Info, KeyRound, Save, WalletCards } from "lucide-react";
+import { CalendarDays, ChevronLeft, ChevronRight, Clock, Eye, EyeOff, Info, KeyRound, Save, WalletCards } from "lucide-react";
 
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../components/ui/Card";
 import { Input, Label } from "../components/ui/Input";
@@ -9,7 +9,7 @@ import { apiFetch } from "../lib/api";
 import { Dialog, DialogClose, DialogHeader } from "../components/ui/Dialog";
 
 type Settings = {
-  shift: { enabled: boolean; startTime: string; lateGraceMinutes: number | ""; maxHours: number; workDays: number; workWeekdays: number[]; scheduleOverrides: { date: string; working: boolean }[] };
+  shift: { enabled: boolean; startTime: string; lateGraceMinutes: number | ""; maxHours: number; workDays: number; workWeekdays: number[]; scheduleOverrides: { date: string; working: boolean; kind?: "holiday" | "rest-day" | "workday" }[] };
   leave: { monthlyCredits: number | "" };
   payroll: { hourlyRates: { regular: number | ""; extra: number | "" } };
 };
@@ -21,14 +21,13 @@ function isoDate(date: Date) {
   return `${year}-${month}-${day}`;
 }
 
-function upcomingDates(count: number) {
-  const today = new Date();
-  today.setHours(12, 0, 0, 0);
-  return Array.from({ length: count }, (_, index) => {
-    const date = new Date(today);
-    date.setDate(today.getDate() + index);
-    return { value: isoDate(date), day: date.toLocaleDateString("en-PH", { weekday: "short" }), date: date.toLocaleDateString("en-PH", { month: "short", day: "numeric" }) };
-  });
+function monthDates(month: Date) {
+  const first = new Date(month.getFullYear(), month.getMonth(), 1, 12);
+  const count = new Date(month.getFullYear(), month.getMonth() + 1, 0).getDate();
+  return {
+    leading: first.getDay(),
+    dates: Array.from({ length: count }, (_, index) => { const date = new Date(first); date.setDate(index + 1); return { value: isoDate(date), day: date.toLocaleDateString("en-PH", { weekday: "short" }), number: index + 1 }; }),
+  };
 }
 
 const defaults: Settings = {
@@ -41,11 +40,12 @@ export function SettingsView() {
   const { toast } = useToast();
   const [settings, setSettings] = useState<Settings>(defaults);
   const [saving, setSaving] = useState(false);
-  const [scheduleRange, setScheduleRange] = useState<7 | 30>(7);
+  const [scheduleMonth, setScheduleMonth] = useState(() => { const now = new Date(); return new Date(now.getFullYear(), now.getMonth(), 1); });
+  const [scheduleMode, setScheduleMode] = useState<"holiday" | "rest-day" | "workday">("holiday");
   const [passwordDialogOpen, setPasswordDialogOpen] = useState(false);
   const [adminPassword, setAdminPassword] = useState("");
   const [showAdminPassword, setShowAdminPassword] = useState(false);
-  const visibleScheduleDates = upcomingDates(scheduleRange);
+  const visibleScheduleDates = monthDates(scheduleMonth);
   const specialScheduleActive = settings.shift.scheduleOverrides.length > 0;
 
   useEffect(() => {
@@ -157,15 +157,12 @@ export function SettingsView() {
               })}</div><p className={`text-xs ${settings.shift.workWeekdays.length === settings.shift.workDays ? "text-emerald-600" : "font-medium text-amber-600"}`}>{settings.shift.workWeekdays.length} of {settings.shift.workDays} days selected{settings.shift.workWeekdays.length === settings.shift.workDays ? "." : " — select the remaining days before saving."}</p></div>}
             </div>
 
-            <div className="space-y-3 rounded-xl border border-violet-200 bg-violet-50/50 p-4">
-              <div className="flex flex-wrap items-start justify-between gap-3"><div><p className="text-sm font-semibold text-violet-950">Work Schedule</p><p className="mt-1 text-xs text-violet-700">Select a date to switch it between Work and Off.</p></div><div className="flex rounded-lg border border-violet-200 bg-white p-1"><button type="button" onClick={() => setScheduleRange(7)} className={`rounded-md px-2.5 py-1 text-xs font-semibold ${scheduleRange === 7 ? "bg-violet-600 text-white" : "text-slate-500"}`}>7 Days</button><button type="button" onClick={() => setScheduleRange(30)} className={`rounded-md px-2.5 py-1 text-xs font-semibold ${scheduleRange === 30 ? "bg-violet-600 text-white" : "text-slate-500"}`}>30 Days</button></div></div>
-              <div className="grid grid-cols-4 gap-1.5 sm:grid-cols-7">{visibleScheduleDates.map((item) => {
-                const override = settings.shift.scheduleOverrides.find((entry) => entry.date === item.value);
-                const normalWorking = settings.shift.workWeekdays.includes(new Date(`${item.value}T12:00:00`).getDay());
-                const working = override?.working ?? normalWorking;
-                return <button key={item.value} type="button" title={`${item.day}, ${item.date}: ${working ? "Work day" : "Off day"}`} onClick={() => setShift({ scheduleOverrides: [...settings.shift.scheduleOverrides.filter((entry) => entry.date !== item.value), { date: item.value, working: !working }].sort((a, b) => a.date.localeCompare(b.date)) })} className={`min-w-0 rounded-lg border px-1 py-1.5 text-center transition ${working ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-slate-200 bg-white text-slate-500"}`}><span className="block truncate text-[10px] font-bold">{item.day}</span><span className="block truncate text-[9px]">{item.date}</span><span className="mt-0.5 block text-[9px] font-bold">{working ? "Work" : "Off"}</span></button>;
-              })}</div>
-              <div className="flex flex-wrap items-center justify-between gap-2"><p className="text-[11px] text-slate-500">Green = work day. White = off day.</p>{specialScheduleActive && <Button type="button" size="sm" variant="ghost" onClick={() => setShift({ scheduleOverrides: [] })}>Clear Special Dates</Button>}</div>
+            <div className="space-y-4 rounded-2xl border border-violet-200 bg-violet-50/50 p-4 sm:p-5">
+              <div><p className="text-base font-bold text-violet-950">Holiday and Rest-Day Calendar</p><p className="mt-1 text-xs leading-5 text-violet-700">Choose a type, then select dates. Non-working dates block attendance, never create absences, and do not consume leave credits.</p></div>
+              <div className="inline-flex rounded-xl border border-violet-200 bg-white p-1">{([['holiday','Holiday'],['rest-day','Rest Day'],['workday','Workday']] as const).map(([value,label])=><button key={value} type="button" onClick={()=>setScheduleMode(value)} className={`rounded-lg px-3 py-2 text-xs font-bold transition ${scheduleMode===value?'bg-violet-600 text-white shadow-sm':'text-slate-500 hover:bg-violet-50'}`}>{label}</button>)}</div>
+              <div className="flex items-center justify-between rounded-xl bg-white px-3 py-2 shadow-sm"><button type="button" aria-label="Previous month" onClick={()=>setScheduleMonth(current=>new Date(current.getFullYear(),current.getMonth()-1,1))} className="rounded-lg p-2 text-slate-500 hover:bg-violet-50"><ChevronLeft size={18}/></button><p className="text-sm font-bold text-slate-800">{scheduleMonth.toLocaleDateString('en-PH',{month:'long',year:'numeric'})}</p><button type="button" aria-label="Next month" onClick={()=>setScheduleMonth(current=>new Date(current.getFullYear(),current.getMonth()+1,1))} className="rounded-lg p-2 text-slate-500 hover:bg-violet-50"><ChevronRight size={18}/></button></div>
+              <div className="grid grid-cols-7 gap-1.5 text-center">{['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].map(day=><span key={day} className="py-1 text-[10px] font-bold text-slate-500">{day}</span>)}{Array.from({length:visibleScheduleDates.leading},(_,index)=><span key={`blank-${index}`}/>)}{visibleScheduleDates.dates.map(item=>{const override=settings.shift.scheduleOverrides.find(entry=>entry.date===item.value);const normalWorking=settings.shift.workWeekdays.includes(new Date(`${item.value}T12:00:00`).getDay());const kind=override?.kind??(override?.working===false?'rest-day':override?.working===true?'workday':normalWorking?'workday':'rest-day');const styles=kind==='holiday'?'border-rose-300 bg-rose-50 text-rose-700':kind==='rest-day'?'border-slate-300 bg-slate-100 text-slate-600':'border-emerald-200 bg-emerald-50 text-emerald-700';return <button key={item.value} type="button" aria-label={`${item.value}: ${kind}`} title={`${item.day}, ${item.value}: ${kind.replace('-',' ')}`} onClick={()=>{const same=override?.kind===scheduleMode;const remaining=settings.shift.scheduleOverrides.filter(entry=>entry.date!==item.value);setShift({scheduleOverrides:(same?remaining:[...remaining,{date:item.value,working:scheduleMode==='workday',kind:scheduleMode}]).sort((a,b)=>a.date.localeCompare(b.date))})}} className={`min-h-16 rounded-xl border p-1 text-center transition hover:-translate-y-0.5 hover:shadow-sm ${styles}`}><span className="block text-xs font-bold">{item.number}</span><span className="mt-1 block truncate text-[9px] font-semibold capitalize">{kind.replace('-',' ')}</span></button>})}</div>
+              <div className="flex flex-wrap items-center justify-between gap-2"><div className="flex flex-wrap gap-3 text-[10px] font-semibold"><span className="text-emerald-700">● Workday</span><span className="text-rose-700">● Holiday</span><span className="text-slate-600">● Rest day</span></div>{specialScheduleActive&&<Button type="button" size="sm" variant="ghost" onClick={()=>setShift({scheduleOverrides:[]})}>Clear Special Dates</Button>}</div>
             </div>
           </CardContent>
         </Card>

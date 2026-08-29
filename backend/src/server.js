@@ -3,7 +3,7 @@ import dotenv from 'dotenv';
 import express from 'express';
 import mongoose from 'mongoose';
 import crypto from 'node:crypto';
-import apiRouter, { enforceAutomaticClockOut, getSettings } from './routes/api.js';
+import apiRouter, { enforceAutomaticAbsences, enforceAutomaticClockOut, getSettings } from './routes/api.js';
 import authRouter from './routes/auth.js';
 import { securityHeaders } from './security.js';
 
@@ -109,6 +109,7 @@ async function startServer() {
       try {
         const settings = await getSettings(mongoose.connection.db);
         await enforceAutomaticClockOut(mongoose.connection.db, settings);
+        await enforceAutomaticAbsences(mongoose.connection.db, settings);
       } catch (error) {
         console.error('Automatic clock-out check failed:', error instanceof Error ? error.message : error);
       }

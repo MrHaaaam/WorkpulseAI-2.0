@@ -2,7 +2,7 @@ import { Router } from 'express';
 import mongoose from 'mongoose';
 import nodemailer from 'nodemailer';
 import crypto from 'node:crypto';
-import { buildAIInsights } from '../ai-insights.js';
+import { attendanceRiskForEmployee, buildAIInsights } from '../ai-insights.js';
 import { hashSecret, verifyAdminPassword, verifySecret } from './auth.js';
 import { getSystemControls, updateSystemControls } from '../system-controls.js';
 import { auditEvent, auditScreenName, authenticate, csrfProtection, pick, requireRole } from '../security.js';
@@ -93,10 +93,81 @@ function scheduledWorkStatus(settings, dateValue) {
   return Array.isArray(settings?.shift?.workWeekdays) && settings.shift.workWeekdays.includes(date.getUTCDay());
 }
 
+export async function enforceAutomaticAbsences(db, settings, now = new Date()) {
+  const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Manila', year: 'numeric', month: '2-digit', day: '2-digit' }).format(now);
+  const start = new Date(`${today}T00:00:00Z`);
+  start.setUTCDate(start.getUTCDate() - 30);
+  const reviewDates = [];
+  for (const cursor = new Date(start); cursor.toISOString().slice(0, 10) < today; cursor.setUTCDate(cursor.getUTCDate() + 1)) {
+    const date = cursor.toISOString().slice(0, 10);
+    if (scheduledWorkStatus(settings, date)) reviewDates.push(date);
+  }
+  await db.collection('attendance').deleteMany({ automaticAbsence: true, date: { $gte: start.toISOString().slice(0, 10), $lt: today, $nin: reviewDates } });
+  if (!reviewDates.length) return { created: 0 };
+  const employees = await db.collection('employees').find({ archived: { $ne: true }, status: { $ne: 'inactive' } }, { projection: { id: 1, name: 1, role: 1, createdAt: 1 } }).toArray();
+  if (!employees.length) return { created: 0 };
+  const employeeIds = employees.map((employee) => employee.id);
+  const [existing, approvedLeave] = await Promise.all([
+    db.collection('attendance').find({ employeeId: { $in: employeeIds }, date: { $in: reviewDates } }, { projection: { employeeId: 1, date: 1 } }).toArray(),
+    db.collection('leave_requests').find({ employeeId: { $in: employeeIds }, status: 'approved' }).toArray(),
+  ]);
+  const occupied = new Set(existing.map((record) => `${record.employeeId}:${record.date}`));
+  const leaveDates = new Set();
+  for (const leave of approvedLeave) {
+    const dates = Array.isArray(leave.approvedDates) && leave.approvedDates.length ? leave.approvedDates : [];
+    for (const date of dates) leaveDates.add(`${leave.employeeId}:${date}`);
+  }
+  const createdAt = new Date();
+  const operations = [];
+  for (const employee of employees) {
+    const employeeStart = employee.createdAt ? new Date(employee.createdAt).toISOString().slice(0, 10) : null;
+    for (const date of reviewDates) {
+      const key = `${employee.id}:${date}`;
+      if ((employeeStart && date < employeeStart) || occupied.has(key) || leaveDates.has(key)) continue;
+      operations.push({ updateOne: {
+        filter: { employeeId: employee.id, date },
+        update: { $setOnInsert: { employeeId: employee.id, name: employee.name, role: employee.role === 'extra' ? 'Extra' : 'Regular', date, checkIn: null, checkOut: null, sessions: [], status: 'Absent', automaticAbsence: true, createdAt, updatedAt: createdAt } },
+        upsert: true,
+      } });
+    }
+  }
+  if (!operations.length) return { created: 0 };
+  const result = await db.collection('attendance').bulkWrite(operations, { ordered: false });
+  aiInsightsCache = { expiresAt: 0, value: null };
+  return { created: result.upsertedCount || 0 };
+}
+
+async function reconcileLeaveWithSchedule(db, settings) {
+  const requests = await db.collection('leave_requests').find({ status: { $in: ['pending', 'approved'] } }).toArray();
+  for (const request of requests) {
+    const field = request.status === 'approved' ? 'approvedDates' : 'requestedDates';
+    const dates = Array.isArray(request[field]) ? request[field] : [];
+    if (!dates.length) continue;
+    const eligibleDates = dates.filter((date) => scheduledWorkStatus(settings, date));
+    const removedDates = dates.filter((date) => !eligibleDates.includes(date));
+    if (!removedDates.length) continue;
+    const changes = {
+      [field]: eligibleDates,
+      totalDays: eligibleDates.length,
+      scheduleAdjustedAt: new Date(),
+      status: eligibleDates.length ? request.status : 'cancelled',
+    };
+    if (eligibleDates.length) {
+      changes.startDate = eligibleDates[0];
+      changes.endDate = eligibleDates.at(-1);
+    }
+    await db.collection('leave_requests').updateOne({ _id: request._id }, { $set: changes });
+    if (request.status === 'approved') {
+      await db.collection('attendance').deleteMany({ employeeId: request.employeeId, leaveRequestId: request.id, status: 'On Leave', date: { $in: removedDates }, $or: [{ checkIn: null }, { checkIn: '' }, { checkIn: { $exists: false } }] });
+    }
+  }
+}
+
 router.use(authenticate, csrfProtection);
 router.use((req, res, next) => {
   if (!['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method)) return next();
   res.on('finish', () => {
+    if (res.locals.skipAudit === true) return;
     const body = req.body ?? {};
     const changedFields = Object.keys(body).filter((key) => !['adminPassword', 'password', 'fingerprintSamples', 'template', 'captchaAnswer'].includes(key)).slice(0, 30);
     const targetName = String(body.employeeName || body.name || [body.firstName, body.lastName].filter(Boolean).join(' ') || '').trim().slice(0, 120) || null;
@@ -153,10 +224,13 @@ router.get('/employee/me', requireRole('regular', 'extra'), async (req, res) => 
     const monthlyLeaveCredits = monthlyLeaveSummary(leaveRequests, settings.leave.monthlyCredits);
     const today = kioskTimestamp().date;
     const onLeaveToday = leaveRequests.some((leave) => leave.status === 'approved' && (Array.isArray(leave.approvedDates) && leave.approvedDates.length ? leave.approvedDates.includes(today) : leave.startDate <= today && leave.endDate >= today));
+    const attendanceFlag = attendanceRiskForEmployee(attendance, employeeId, leaveRequests, today);
     res.json({
       profile: { id: employee.id, name: employee.name, email: employee.email, phone: employee.phone, address: employee.address, role: employee.role, status: employee.status === 'inactive' ? 'inactive' : onLeaveToday ? 'on-leave' : 'active', biometricStatus: biometricTemplate ? 'enrolled' : 'none', monthlyLeaveCredits, hourlyRate: configuredHourlyRate(employee, settings), grossSalary: employee.grossSalary, createdAt: employee.createdAt },
       attendance: attendance.map(({ _id, ...record }) => record),
       leaveRequests: leaveRequests.map(({ _id, ...record }) => record),
+      attendanceFlag,
+      workSchedule: { workWeekdays: settings.shift.workWeekdays, scheduleOverrides: settings.shift.scheduleOverrides },
       payroll: payroll.map((record) => ({
         id: record.id,
         amount: Number(record.amount || 0),
@@ -695,7 +769,7 @@ export async function getSettings(db) {
       maxHours: Number(storedShift.maxHours ?? defaultSettings.shift.maxHours),
       workDays,
       workWeekdays: storedWorkWeekdays.length === workDays ? storedWorkWeekdays : fallbackWorkWeekdays,
-      scheduleOverrides: Array.isArray(storedShift.scheduleOverrides) ? storedShift.scheduleOverrides.filter((entry) => /^\d{4}-\d{2}-\d{2}$/.test(entry?.date) && typeof entry?.working === 'boolean').slice(0, 366).map((entry) => ({ date: entry.date, working: entry.working })) : [],
+      scheduleOverrides: Array.isArray(storedShift.scheduleOverrides) ? storedShift.scheduleOverrides.filter((entry) => /^\d{4}-\d{2}-\d{2}$/.test(entry?.date) && typeof entry?.working === 'boolean').slice(0, 366).map((entry) => ({ date: entry.date, working: entry.working, kind: ['holiday', 'rest-day', 'workday'].includes(entry.kind) ? entry.kind : entry.working ? 'workday' : 'rest-day' })) : [],
     },
     leave: { monthlyCredits: Number(stored?.leave?.monthlyCredits ?? stored?.leave?.casualDays ?? defaultSettings.leave.monthlyCredits) },
     payroll: {
@@ -768,7 +842,7 @@ router.put('/settings', async (req, res) => {
         maxHours: numberInRange(incoming.shift?.maxHours, 8, 1, 24),
         workDays: numberInRange(incoming.shift?.workDays, 5, 1, 7),
         workWeekdays: Array.isArray(incoming.shift?.workWeekdays) ? [...new Set(incoming.shift.workWeekdays.map(Number).filter((day) => Number.isInteger(day) && day >= 0 && day <= 6))] : defaultSettings.shift.workWeekdays,
-        scheduleOverrides: Array.isArray(incoming.shift?.scheduleOverrides) ? incoming.shift.scheduleOverrides.filter((entry) => /^\d{4}-\d{2}-\d{2}$/.test(entry?.date) && typeof entry?.working === 'boolean').slice(0, 366).map((entry) => ({ date: entry.date, working: entry.working })) : [],
+        scheduleOverrides: Array.isArray(incoming.shift?.scheduleOverrides) ? incoming.shift.scheduleOverrides.filter((entry) => /^\d{4}-\d{2}-\d{2}$/.test(entry?.date) && typeof entry?.working === 'boolean').slice(0, 366).map((entry) => ({ date: entry.date, working: entry.working, kind: ['holiday', 'rest-day', 'workday'].includes(entry.kind) ? entry.kind : entry.working ? 'workday' : 'rest-day' })) : [],
       },
       leave: { monthlyCredits: numberInRange(incoming.leave?.monthlyCredits, 10, 0, 31) },
       payroll: {
@@ -781,6 +855,8 @@ router.put('/settings', async (req, res) => {
     if (normalized.shift.workWeekdays.length !== normalized.shift.workDays) return res.status(400).json({ error: `Select exactly ${normalized.shift.workDays} regular workdays.` });
     await mongoose.connection.db.collection('settings').updateOne({ key: 'company' }, { $set: { ...normalized, updatedAt: new Date() }, $unset: { lateness: '' } }, { upsert: true });
     await enforceAutomaticClockOut(mongoose.connection.db, normalized);
+    await reconcileLeaveWithSchedule(mongoose.connection.db, normalized);
+    await enforceAutomaticAbsences(mongoose.connection.db, normalized);
     const currentPeriod = payrollPeriodKey();
     const recalculablePayroll = await mongoose.connection.db.collection('payroll_requests').find({ periodStart: currentPeriod, status: { $in: ['processing', 'rejected'] } }, { projection: { employeeId: 1 } }).toArray();
     if (recalculablePayroll.length) {
@@ -1343,6 +1419,10 @@ async function preparePayrollRecord(db, employee, periodStart, settings) {
 
 router.post('/payroll-requests/prepare-bulk', async (req, res) => {
   try {
+    // The payroll screen calls this automatically to synchronize calculated
+    // values. It is a background refresh, not a deliberate administrator
+    // action, so do not attribute it to the signed-in administrator.
+    res.locals.skipAudit = true;
     const periodStart = String(req.body?.periodStart ?? '');
     if (periodStart !== payrollPeriodKey()) return res.status(400).json({ error: 'Only the current payroll period can be prepared' });
     const db = mongoose.connection.db;
@@ -1450,6 +1530,7 @@ router.patch('/payroll-requests/undo-last-payment', async (req, res) => {
       ? await db.collection('payroll_requests').find({ periodStart, status: 'paid', paymentActionId: latest.paymentActionId, settledBy: { $exists: false } }).toArray()
       : [latest];
     const directIds = directRecords.map((item) => item.id);
+    const total = directRecords.reduce((sum, item) => sum + Number(item.amount || 0), 0);
     await db.collection('payroll_requests').updateMany(
       { _id: { $in: directRecords.map((item) => item._id) } },
       { $set: { status: 'processing', undoneAt: new Date(), undoneBy: req.auth.actor.email }, $unset: { paidAt: '', approvedBy: '', paymentActionId: '' } },
@@ -1458,7 +1539,8 @@ router.patch('/payroll-requests/undo-last-payment', async (req, res) => {
       { settledBy: { $in: directIds }, status: 'paid' },
       { $set: { status: 'carried_over', undoneAt: new Date(), undoneBy: req.auth.actor.email }, $unset: { paidAt: '', approvedBy: '', paymentActionId: '', settledBy: '' } },
     );
-    res.json({ undone: directRecords.length, ids: directIds });
+    res.locals.auditMetadata = { payrollAction: 'payment-undone', recordCount: directRecords.length, targetName: directRecords.length === 1 ? directRecords[0].employeeName : null, total, periodStart };
+    res.json({ undone: directRecords.length, ids: directIds, total });
   } catch (error) {
     console.error('Undo payroll payment failed:', error instanceof Error ? error.message : error);
     res.status(500).json({ error: 'Failed to undo the last payroll payment' });
@@ -1695,6 +1777,8 @@ router.patch('/leave-requests/:id/status', async (req, res) => {
         getSettings(db),
         db.collection('leave_requests').find({ employeeId: pendingRequest.employeeId, status: 'approved' }).toArray(),
       ]);
+      const nonWorkingDates = approvedDates.filter((date) => scheduledWorkStatus(settings, date) === false);
+      if (nonWorkingDates.length) return res.status(409).json({ error: `${nonWorkingDates[0]} is now a holiday or rest day and cannot use leave credit.` });
       const attendanceConflict = await db.collection('attendance').findOne({ employeeId: pendingRequest.employeeId, date: { $in: approvedDates }, $or: [{ checkIn: { $nin: [null, ''] } }, { sessions: { $elemMatch: { checkIn: { $nin: [null, ''] } } } }] });
       if (attendanceConflict) return res.status(409).json({ error: `Attendance already exists on ${attendanceConflict.date}. Remove that date from the approval or resolve its attendance first.` });
       const approval = { ...pendingRequest, approvedDates };

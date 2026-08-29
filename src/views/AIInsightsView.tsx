@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Activity, AlertTriangle, BrainCircuit, CalendarDays, ChevronRight,
-  Clock3, RefreshCw, ShieldCheck, Sparkles, TrendingUp, Users,
+  Clock3, Flag, RefreshCw, ShieldCheck, Sparkles, TrendingUp, Users,
 } from "lucide-react";
 
 import { Badge } from "../components/ui/Badge";
@@ -103,8 +103,11 @@ function ForecastPanel({ data }: { data: Insights["forecast"] }) {
   </div>;
 }
 
-function tierVariant(tier: RiskEmployee["tier"]) { return tier === "green" ? "success" : tier === "orange" ? "warning" : "danger"; }
 function flagLabel(tier: RiskEmployee["tier"]) { return tier === "green" ? "Green flag" : tier === "orange" ? "Orange flag" : "Red flag"; }
+function AttendanceFlagIcon({ tier, size = 25 }: { tier: RiskEmployee["tier"]; size?: number }) {
+  const color = tier === "green" ? "text-emerald-500" : tier === "orange" ? "text-orange-500" : "text-red-600";
+  return <span className={cn("inline-grid place-items-center", color)} role="img" aria-label={flagLabel(tier)} title={flagLabel(tier)}><Flag size={size} fill="currentColor" strokeWidth={2.2} aria-hidden="true" /></span>;
+}
 function RiskPanel({ data }: { data: Insights["risk"] }) {
   return <div className="space-y-4">
     <div className="grid gap-3 sm:grid-cols-3">
@@ -119,7 +122,7 @@ function RiskPanel({ data }: { data: Insights["risk"] }) {
       </div>
       {data.employees.length ? data.employees.map((employee) => <div key={employee.employeeId} className="grid grid-cols-[1fr_auto] items-center gap-3 border-b border-slate-100 px-4 py-3 last:border-0 sm:grid-cols-[1fr_120px_180px]">
         <div className="min-w-0"><p className="truncate text-sm font-semibold text-slate-800">{employee.name}</p><p className="mt-0.5 text-xs text-slate-500">{employee.absenceDays} {employee.absenceDays === 1 ? "absence" : "absences"} without approved leave</p></div>
-        <div><Badge variant={tierVariant(employee.tier)}>{flagLabel(employee.tier)}</Badge></div>
+        <div className="flex justify-center"><AttendanceFlagIcon tier={employee.tier} /></div>
         <span className="hidden text-xs text-slate-500 sm:block">{employee.absenceDays} absent · {employee.lateDays} late</span>
       </div>) : <Empty text="No employee data is available yet." />}
     </div>
@@ -128,8 +131,7 @@ function RiskPanel({ data }: { data: Insights["risk"] }) {
 
 function FlagLegend({ color, title, range, note }: { color: "green" | "orange" | "red"; title: string; range: string; note: string }) {
   const styles = color === "green" ? "border-emerald-200 bg-emerald-50 text-emerald-800" : color === "orange" ? "border-orange-200 bg-orange-50 text-orange-800" : "border-red-200 bg-red-50 text-red-800";
-  const dot = color === "green" ? "bg-emerald-500" : color === "orange" ? "bg-orange-500" : "bg-red-500";
-  return <div className={cn("rounded-xl border p-4", styles)}><div className="flex items-center gap-2"><span aria-hidden="true" className={cn("h-2.5 w-2.5 rounded-full", dot)} /><p className="text-sm font-bold">{title}</p></div><p className="mt-2 text-sm font-semibold">{range}</p><p className="mt-1 text-xs opacity-80">{note}</p></div>;
+  return <div className={cn("rounded-xl border p-4", styles)}><div className="flex items-center gap-2"><AttendanceFlagIcon tier={color} size={20} /><p className="text-sm font-bold">{title}</p></div><p className="mt-2 text-sm font-semibold">{range}</p><p className="mt-1 text-xs opacity-80">{note}</p></div>;
 }
 
 function AnomalyPanel({ data }: { data: Insights["anomaly"] }) {
