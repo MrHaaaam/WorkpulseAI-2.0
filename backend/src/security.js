@@ -3,6 +3,7 @@ import mongoose from 'mongoose';
 import { getSystemControls } from './system-controls.js';
 
 const SESSION_COOKIE = 'workpulse_session';
+export const SESSION_LIFETIME_MS = 5 * 60 * 60_000;
 const rateBuckets = new Map();
 
 function digest(value) {
@@ -18,7 +19,7 @@ function parseCookies(header = '') {
 
 export function setSessionCookie(res, token) {
   const secure = process.env.NODE_ENV === 'production' ? '; Secure' : '';
-  res.append('Set-Cookie', `${SESSION_COOKIE}=${encodeURIComponent(token)}; HttpOnly; Path=/; Max-Age=28800; SameSite=Lax${secure}`);
+  res.append('Set-Cookie', `${SESSION_COOKIE}=${encodeURIComponent(token)}; HttpOnly; Path=/; Max-Age=${SESSION_LIFETIME_MS / 1000}; SameSite=Lax${secure}`);
 }
 
 export function clearSessionCookie(res) {
@@ -101,8 +102,15 @@ export async function authenticate(req, res, next) {
     const requestToken = getRequestToken(req);
     if (!requestToken) return res.status(401).json({ error: 'Authentication required' });
     const db = mongoose.connection.db;
-    const session = await db.collection('admin_sessions').findOne({ tokenDigest: digest(requestToken.token), expiresAt: { $gt: new Date() } });
+    const tokenDigest = digest(requestToken.token);
+    const session = await db.collection('admin_sessions').findOne({ tokenDigest, expiresAt: { $gt: new Date() } });
     if (!session) return res.status(401).json({ error: 'Your session has expired' });
+    const hardExpiry = new Date(session.createdAt).getTime() + SESSION_LIFETIME_MS;
+    if (!Number.isFinite(hardExpiry) || hardExpiry <= Date.now()) {
+      await db.collection('admin_sessions').deleteOne({ _id: session._id });
+      clearSessionCookie(res);
+      return res.status(401).json({ error: 'Your five-hour session has expired. Sign in again.' });
+    }
     const accountType = session.accountType ?? 'admin';
     const accountId = session.accountId ?? session.adminId;
     const collection = accountType === 'employee' ? 'employee_accounts' : 'admin_accounts';

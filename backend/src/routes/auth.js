@@ -3,7 +3,7 @@ import crypto from 'node:crypto';
 import { promisify } from 'node:util';
 import mongoose from 'mongoose';
 import nodemailer from 'nodemailer';
-import { auditEvent, authenticate, clearSessionCookie, createCsrfToken, csrfProtection, getRequestToken, rateLimit, setSessionCookie } from '../security.js';
+import { auditEvent, authenticate, clearSessionCookie, createCsrfToken, csrfProtection, getRequestToken, rateLimit, SESSION_LIFETIME_MS, setSessionCookie } from '../security.js';
 import { getSystemControls } from '../system-controls.js';
 
 const router = Router();
@@ -127,7 +127,9 @@ router.post('/verify-otp', otpLimit, async (request, response) => {
   const csrf = createCsrfToken();
   const accountId = record.accountId ?? record.adminId;
   const accountType = record.accountType ?? 'admin';
-  await db.collection('admin_sessions').insertOne({ tokenDigest, csrfDigest: csrf.tokenDigest, accountId, accountType, ...(accountType === 'admin' ? { adminId: accountId } : {}), createdAt: new Date(), expiresAt: new Date(Date.now() + 8 * 60 * 60_000) });
+  const createdAt = new Date();
+  const expiresAt = new Date(createdAt.getTime() + SESSION_LIFETIME_MS);
+  await db.collection('admin_sessions').insertOne({ tokenDigest, csrfDigest: csrf.tokenDigest, accountId, accountType, ...(accountType === 'admin' ? { adminId: accountId } : {}), createdAt, expiresAt });
   setSessionCookie(response, token);
   const account = await db.collection(accountType === 'employee' ? 'employee_accounts' : 'admin_accounts').findOne({ _id: accountId });
   if (accountType === 'employee' && account && typeof account.mustChangePassword !== 'boolean' && !account.passwordChangedAt) {
@@ -143,6 +145,7 @@ router.post('/verify-otp', otpLimit, async (request, response) => {
     role: account?.role ?? 'admin',
     accountType,
     mustChangePassword: accountType === 'employee' && account?.mustChangePassword === true,
+    expiresAt: expiresAt.toISOString(),
   });
 });
 
@@ -152,6 +155,12 @@ router.get('/session', async (request, response) => {
   const tokenDigest = crypto.createHash('sha256').update(requestToken.token).digest('hex');
   const session = await mongoose.connection.db.collection('admin_sessions').findOne({ tokenDigest, expiresAt: { $gt: new Date() } });
   if (!session) return response.status(401).json({ authenticated: false });
+  const hardExpiry = new Date(session.createdAt).getTime() + SESSION_LIFETIME_MS;
+  if (!Number.isFinite(hardExpiry) || hardExpiry <= Date.now()) {
+    await mongoose.connection.db.collection('admin_sessions').deleteOne({ _id: session._id });
+    clearSessionCookie(response);
+    return response.status(401).json({ authenticated: false, error: 'Your five-hour session has expired. Sign in again.' });
+  }
   const csrf = createCsrfToken();
   await mongoose.connection.db.collection('admin_sessions').updateOne({ _id: session._id }, { $set: { csrfDigest: csrf.tokenDigest } });
   const accountId = session.accountId ?? session.adminId;
@@ -167,6 +176,7 @@ router.get('/session', async (request, response) => {
     role: account.role,
     accountType,
     mustChangePassword: accountType === 'employee' && account.mustChangePassword === true,
+    expiresAt: new Date(Math.min(new Date(session.expiresAt).getTime(), hardExpiry)).toISOString(),
   });
 });
 

@@ -191,7 +191,7 @@ function riskInsight(attendance, employees, leaveRequests, today) {
   return {
     version: '30-day unapproved absence count', status: rows.length ? 'ready' : 'limited', periodStart, periodEnd,
     employeesAnalyzed: rows.length, flagged,
-    employees: rows.slice(0, 10), summary: rows.length ? `${flagged} ${flagged === 1 ? 'employee has' : 'employees have'} an Orange or Red attendance flag` : 'No employee records to analyze',
+    employees: rows, summary: rows.length ? `${flagged} ${flagged === 1 ? 'employee has' : 'employees have'} an Orange or Red attendance flag` : 'No employee records to analyze',
   };
 }
 

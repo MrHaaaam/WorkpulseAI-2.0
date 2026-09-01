@@ -10,7 +10,8 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from ".
 import { useToast } from "../components/ui/Toast";
 import { apiFetch } from "../lib/api";
 import { FingerprintEnrollment } from "../components/biometric/FingerprintEnrollment";
-import { PaginationControls, usePagination } from "../components/ui/Pagination";
+import { PaginationControls } from "../components/ui/Pagination";
+import { usePagination } from "../hooks/usePagination";
 
 export interface Employee {
   id: string;

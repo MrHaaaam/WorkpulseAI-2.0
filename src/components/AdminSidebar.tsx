@@ -37,7 +37,7 @@ export function AdminSidebar({ active, onNavigate, mobileOpen = false, onMobileC
       await apiFetch('/api/auth/logout', { method: 'POST' });
     } finally {
       clearSession();
-      window.location.href = '/';
+      window.location.replace('/');
     }
   }
   const navItems: { key: ViewKey; label: string; icon: React.ElementType }[] = [

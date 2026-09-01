@@ -68,6 +68,8 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
   )
 }
 
+// The provider and its companion hook intentionally share one module.
+// eslint-disable-next-line react-refresh/only-export-components
 export function useToast() {
   const context = useContext(ToastContext)
   if (!context) throw new Error('useToast must be used inside ToastProvider')

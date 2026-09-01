@@ -167,6 +167,9 @@ code {
   .print-payslip { position: static !important; inset: auto !important; width: 100%; max-width: none !important; padding: 0; background: white; color: #0f172a; print-color-adjust: exact; -webkit-print-color-adjust: exact; }
   .print-payslip button { display: none !important; }
   .no-print { display: none !important; }
+  .payroll-print-page { break-after: page; page-break-after: always; min-height: 272mm; }
+  .payroll-print-page:last-child { break-after: auto; page-break-after: auto; }
+  .payroll-print-card { break-inside: avoid; page-break-inside: avoid; min-height: 118mm; }
 }
 
 /* Payroll selection is deliberately labeled for non-technical users. */
@@ -185,6 +188,9 @@ code {
 [data-guide="payroll-hub"] tbody td:first-child:has(input:disabled)::after {
   content: "-";
   color: #94a3b8;
+}
+[data-guide="payroll-filters"] > div {
+  padding-top: 1rem;
 }
 .animate-pulse-ring {
   animation: pulse-ring 2s infinite;

@@ -95,7 +95,7 @@ export default function LoginSplitPage() {
       storeSession(data)
       toast({ title: 'Welcome back', description: 'Your identity was verified successfully.', variant: 'success', duration: 1800 })
       const destination = window.location.pathname === '/kiosk' ? '/kiosk' : '/overview?view=overview'
-      window.setTimeout(() => { window.location.href = destination }, 450)
+      window.setTimeout(() => { window.location.replace(destination) }, 450)
     } catch (reason) {
       toast({ title: 'Verification failed', description: reason instanceof Error ? reason.message : 'Please try again.', variant: 'error' })
     } finally { setLoading(false) }

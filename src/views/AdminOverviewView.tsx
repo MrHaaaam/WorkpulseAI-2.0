@@ -39,7 +39,8 @@ import { Tabs } from "../components/ui/Tabs";
 import { Badge } from "../components/ui/Badge";
 import { Button } from "../components/ui/Button";
 import { DateNavigator } from "../components/DateNavigator";
-import { PaginationControls, usePagination } from "../components/ui/Pagination";
+import { PaginationControls } from "../components/ui/Pagination";
+import { usePagination } from "../hooks/usePagination";
 
 type ViewMode = "daily" | "weekly" | "monthly";
 

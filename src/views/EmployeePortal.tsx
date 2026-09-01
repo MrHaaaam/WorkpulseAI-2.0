@@ -1,7 +1,7 @@
-import { useEffect, useMemo, useState, type FormEvent } from 'react'
+import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react'
 import {
   CalendarDays, CheckCircle2, ChevronRight, Clock3, Fingerprint, LayoutDashboard, LogOut,
-  AlertTriangle, Eye, Mail, MapPin, Menu, Pencil, Phone, Printer, Save, Send, ShieldCheck, UserRound, WalletCards, X,
+  AlertTriangle, Eye, Mail, MapPin, Menu, Pencil, Phone, Printer, RefreshCw, Save, Send, ShieldCheck, UserRound, WalletCards, X,
 } from 'lucide-react'
 import { apiFetch, clearSession } from '../lib/api'
 import { useToast } from '../components/ui/Toast'
@@ -21,7 +21,7 @@ type Attendance = { date: string; checkIn?: string; checkOut?: string; sessions?
 type Leave = { id: string; leaveType: string; startDate: string; endDate: string; requestedDates?: string[]; approvedDates?: string[]; totalDays: number; reason: string; status: string }
 type Payroll = { id: string; amount?: number; grossAmount?: number; currentAmount?: number; carryOverAmount?: number; additions?: { label: string; value: number }[]; hoursWorked?: number; hourlyRate?: number; status: string; periodStart?: string; paidAt?: string; warnings?: string[] }
 type AttendanceFlag = { tier: 'green' | 'orange' | 'red'; absenceDays: number; lateDays: number; periodStart: string; periodEnd: string }
-type WorkSchedule = { workWeekdays: number[]; scheduleOverrides: { date: string; working: boolean; kind?: string }[] }
+type WorkSchedule = { workWeekdays: number[]; scheduleOverrides: { date: string; working: boolean; kind?: string }[]; startTime?: string; autoClockOutTime?: string }
 type Workspace = { profile: EmployeeProfile; attendance: Attendance[]; leaveRequests: Leave[]; payroll: Payroll[]; attendanceFlag: AttendanceFlag; workSchedule: WorkSchedule }
 type Section = 'overview' | 'attendance' | 'leave' | 'payroll' | 'profile'
 
@@ -61,28 +61,35 @@ export function EmployeePortal() {
   const [editingContact, setEditingContact] = useState(false)
   const [savingContact, setSavingContact] = useState(false)
   const [contactDraft, setContactDraft] = useState({ phone: '', address: '' })
-  const [selectedPayroll, setSelectedPayroll] = useState<Payroll | null>(null)
+  const [selectedPayrollId, setSelectedPayrollId] = useState<string | null>(null)
   const [cancelLeaveTarget, setCancelLeaveTarget] = useState<Leave | null>(null)
   const [cancellingLeave, setCancellingLeave] = useState(false)
+  const [lastUpdated, setLastUpdated] = useState<Date | null>(null)
+  const [refreshing, setRefreshing] = useState(false)
+  const [refreshError, setRefreshError] = useState('')
+
+  const loadWorkspace = useCallback(async (manual = false) => {
+    if (manual) setRefreshing(true)
+    try {
+      const response = await apiFetch('/api/employee/me')
+      const data = await response.json()
+      if (!response.ok) throw new Error(data.error || 'Unable to load your workspace')
+      setWorkspace(data); setContactDraft(current => current.phone || current.address ? current : { phone: data.profile?.phone || '', address: data.profile?.address || '' }); setLastUpdated(new Date()); setRefreshError('')
+    } catch (reason) { setRefreshError(reason instanceof Error ? reason.message : 'Unable to refresh your workspace') }
+    finally { setLoading(false); setRefreshing(false) }
+  }, [])
 
   useEffect(() => {
-    let cancelled = false
-    apiFetch('/api/employee/me')
-      .then(async (response) => {
-        const data = await response.json()
-        if (!response.ok) throw new Error(data.error || 'Unable to load your workspace')
-        if (!cancelled) {
-          setWorkspace(data)
-          setContactDraft({ phone: data.profile?.phone || '', address: data.profile?.address || '' })
-        }
-      })
-      .catch((reason) => {
-        if (!cancelled) toast({ title: 'Workspace unavailable', description: reason instanceof Error ? reason.message : 'Please sign in again.', variant: 'error' })
-      })
-      .finally(() => { if (!cancelled) setLoading(false) })
-    return () => { cancelled = true }
-  }, [toast])
-
+    const initialLoad = window.setTimeout(() => { void loadWorkspace() }, 0)
+    return () => window.clearTimeout(initialLoad)
+  }, [loadWorkspace])
+  useEffect(() => {
+    const refresh = () => { if (document.visibilityState === 'visible') void loadWorkspace() }
+    const timer = window.setInterval(refresh, 60_000)
+    const visibility = () => { if (document.visibilityState === 'visible') void loadWorkspace() }
+    document.addEventListener('visibilitychange', visibility)
+    return () => { window.clearInterval(timer); document.removeEventListener('visibilitychange', visibility) }
+  }, [loadWorkspace])
   const attendanceSummary = useMemo(() => {
     const records = workspace?.attendance ?? []
     return {
@@ -103,6 +110,7 @@ export function EmployeePortal() {
       setWorkspace((current) => current ? { ...current, leaveRequests: [data, ...current.leaveRequests] } : current)
       setLeaveDraft({ leaveType: 'Annual Leave', requestedDates: [], reason: '' })
       toast({ title: 'Leave request submitted', description: 'Your request is now waiting for administrator review.', variant: 'success' })
+      await loadWorkspace()
     } catch (reason) {
       toast({ title: 'Request not submitted', description: reason instanceof Error ? reason.message : 'Please try again.', variant: 'error' })
     } finally { setSubmitting(false) }
@@ -116,6 +124,7 @@ export function EmployeePortal() {
       if (!response.ok) throw new Error(data.error || 'Leave request could not be cancelled')
       setWorkspace((current) => current ? { ...current, leaveRequests: current.leaveRequests.map((item) => item.id === request.id ? { ...item, ...data } : item) } : current)
       toast({ title: 'Leave request cancelled', description: 'The request was removed from the administrator approval queue.', variant: 'success' })
+      await loadWorkspace()
       setCancelLeaveTarget(null)
     } catch (reason) { toast({ title: 'Request was not cancelled', description: reason instanceof Error ? reason.message : 'Please try again.', variant: 'error' }) }
     finally { setCancellingLeave(false) }
@@ -144,13 +153,14 @@ export function EmployeePortal() {
   }
 
   async function logout() {
-    try { await apiFetch('/api/auth/logout', { method: 'POST' }) } finally { clearSession(); window.location.href = '/' }
+    try { await apiFetch('/api/auth/logout', { method: 'POST' }) } finally { clearSession(); window.location.replace('/') }
   }
 
   if (loading) return <div className="grid min-h-screen place-items-center bg-slate-100/70"><div className="text-center"><div className="mx-auto mb-3 h-8 w-8 animate-spin rounded-full border-4 border-violet-100 border-t-[#8642ED]" /><p className="text-sm font-medium text-slate-500">Loading your secure workspace...</p></div></div>
-  if (!workspace) return <div className="grid min-h-screen place-items-center bg-slate-100/70"><button onClick={() => { clearSession(); window.location.href = '/' }} className="rounded-xl bg-[#8642ED] px-5 py-3 text-sm font-semibold text-white">Return to sign in</button></div>
+  if (!workspace) return <div className="grid min-h-screen place-items-center bg-slate-100/70"><button onClick={() => { clearSession(); window.location.replace('/') }} className="rounded-xl bg-[#8642ED] px-5 py-3 text-sm font-semibold text-white">Return to sign in</button></div>
 
   const { profile } = workspace
+  const selectedPayroll = workspace.payroll.find((item) => item.id === selectedPayrollId) ?? null
   const initials = profile.name.split(/\s+/).filter(Boolean).map((part) => part[0]).join('').slice(0, 2).toUpperCase()
   const nav = [
     { key: 'overview' as const, label: 'Overview', icon: LayoutDashboard },
@@ -186,7 +196,9 @@ export function EmployeePortal() {
       <main className="min-w-0 overflow-x-hidden px-3 py-4 sm:px-5 sm:py-6 lg:px-8 lg:py-8"><div className="mx-auto w-full max-w-[1600px] space-y-6">
         <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
           <div><p className="text-[11px] font-bold uppercase tracking-[.18em] text-[#8642ED]">{page.eyebrow}</p><h1 className="mt-1 text-2xl font-bold tracking-tight text-slate-950 sm:text-3xl">{page.title}</h1><p className="mt-1 max-w-2xl text-sm leading-6 text-slate-500">{page.description}</p></div>
+          <div className="flex items-center gap-3"><span className="text-xs text-slate-500">{lastUpdated?`Updated ${lastUpdated.toLocaleTimeString('en-PH',{hour:'numeric',minute:'2-digit'})}`:'Not updated'}</span><Button size="sm" variant="outline" disabled={refreshing} onClick={()=>void loadWorkspace(true)}><RefreshCw className={`h-4 w-4 ${refreshing?'animate-spin':''}`}/>Refresh</Button></div>
         </div>
+        {refreshError&&workspace&&<div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">Latest refresh failed: {refreshError}. Showing the last successful information.</div>}
 
         {section === 'overview' && <div className="space-y-5">
           <section className="relative overflow-hidden rounded-3xl border border-violet-200 bg-gradient-to-br from-white via-violet-50 to-purple-100 px-6 py-7 text-slate-900 shadow-sm sm:px-8">
@@ -211,7 +223,7 @@ export function EmployeePortal() {
           <Panel title={formatDate(attendanceDate)} subtitle="Up to three complete time-in and time-out sessions per day"><AttendanceRows records={selectedAttendance} showDate={false} /></Panel>
         </div>}
 
-        {section === 'payroll' && <Panel title="Payroll history" subtitle="Open any pay period to view or print your personal payslip"><DataTable headers={['Pay period', 'Current pay', 'Carried balance', 'Total payout', 'Status', 'Summary']} rows={workspace.payroll.map((item) => [formatDate(item.periodStart), money(item.currentAmount), money(item.carryOverAmount), <strong key={`${item.id}-amount`} className="text-slate-900">{money(item.amount)}</strong>, <Status key={`${item.id}-status`} value={item.status} />, <button key={`${item.id}-view`} type="button" onClick={() => setSelectedPayroll(item)} className="inline-flex h-9 items-center gap-2 whitespace-nowrap rounded-lg border border-violet-200 bg-violet-50 px-3 text-xs font-semibold text-violet-700 hover:bg-violet-100 focus:outline-none focus:ring-4 focus:ring-violet-200"><Eye className="h-4 w-4" />View summary</button>])} empty="No payroll records yet." /></Panel>}
+        {section === 'payroll' && <Panel title="Payroll history" subtitle="Open any pay period to view or print your personal payslip"><DataTable headers={['Pay period', 'Current pay', 'Carried balance', 'Total payout', 'Status', 'Summary']} rows={workspace.payroll.map((item) => [formatDate(item.periodStart), money(item.currentAmount), money(item.carryOverAmount), <strong key={`${item.id}-amount`} className="text-slate-900">{money(item.amount)}</strong>, <Status key={`${item.id}-status`} value={item.status} />, <button key={`${item.id}-view`} type="button" onClick={() => setSelectedPayrollId(item.id)} className="inline-flex h-9 items-center gap-2 whitespace-nowrap rounded-lg border border-violet-200 bg-violet-50 px-3 text-xs font-semibold text-violet-700 hover:bg-violet-100 focus:outline-none focus:ring-4 focus:ring-violet-200"><Eye className="h-4 w-4" />View summary</button>])} empty="No payroll records yet." /></Panel>}
 
         {section === 'leave' && <div className="grid gap-5 xl:grid-cols-[.82fr_1.18fr]">
           <Panel title="Request leave" subtitle="Your administrator will review the dates you select"><MonthlyLeaveBalance balance={profile.monthlyLeaveCredits} /><form onSubmit={submitLeave} className="mt-5 space-y-4"><Field label="Leave type"><select value={leaveDraft.leaveType} onChange={(event) => setLeaveDraft((current) => ({ ...current, leaveType: event.target.value }))} className="input"><option>Annual Leave</option><option>Sick Leave</option><option>Personal Leave</option><option>Maternity Leave</option></select></Field><LeaveDatePicker selected={leaveDraft.requestedDates} workSchedule={workspace.workSchedule} onChange={(requestedDates)=>setLeaveDraft(current=>({...current,requestedDates}))}/><Field label="Reason"><textarea required minLength={5} maxLength={500} rows={4} value={leaveDraft.reason} onChange={(event) => setLeaveDraft((current) => ({ ...current, reason: event.target.value }))} className="input h-auto py-3" placeholder="Briefly explain your request" /></Field><button disabled={submitting||leaveDraft.requestedDates.length===0} className="flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-[#8642ED] text-sm font-semibold text-white shadow-lg shadow-violet-600/15 hover:bg-violet-700 disabled:opacity-60"><Send className="h-4 w-4" />{submitting ? 'Submitting...' : `Submit ${leaveDraft.requestedDates.length} ${leaveDraft.requestedDates.length===1?'date':'dates'}`}</button></form></Panel>
@@ -225,7 +237,7 @@ export function EmployeePortal() {
         </div>}
       </div></main>
     </div>
-    {selectedPayroll && <EmployeePayslip profile={profile} payroll={selectedPayroll} onClose={() => setSelectedPayroll(null)} />}
+    {selectedPayroll && <EmployeePayslip profile={profile} payroll={selectedPayroll} onClose={() => setSelectedPayrollId(null)} />}
     <Dialog open={Boolean(cancelLeaveTarget)} onClose={() => !cancellingLeave && setCancelLeaveTarget(null)} className="max-w-md"><DialogHeader><div><h2 className="text-base font-bold text-rose-700">Cancel leave request?</h2><p className="mt-1 text-sm leading-6 text-slate-600">This removes the pending request from the administrator's review list.</p></div><DialogClose onClose={() => !cancellingLeave && setCancelLeaveTarget(null)} /></DialogHeader><div className="space-y-4 px-6 pb-6 pt-3">{cancelLeaveTarget&&<div className="rounded-xl border border-slate-200 p-4"><p className="font-semibold text-slate-900">{cancelLeaveTarget.leaveType}</p><p className="mt-1 text-sm text-slate-600">{(cancelLeaveTarget.requestedDates?.length?cancelLeaveTarget.requestedDates:[cancelLeaveTarget.startDate,cancelLeaveTarget.endDate]).map(formatDate).join(', ')}</p></div>}<p className="text-sm leading-6 text-slate-600">You can submit a new request later if you still need leave.</p><div className="flex justify-end gap-2"><Button type="button" variant="outline" disabled={cancellingLeave} onClick={()=>setCancelLeaveTarget(null)}>Keep Request</Button><Button type="button" variant="destructive" disabled={cancellingLeave} onClick={()=>cancelLeaveTarget&&void cancelLeave(cancelLeaveTarget)}>{cancellingLeave?'Cancelling...':'Cancel Request'}</Button></div></div></Dialog>
   </div>
 }

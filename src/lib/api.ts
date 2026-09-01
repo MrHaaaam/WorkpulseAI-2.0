@@ -1,4 +1,4 @@
-type SessionData = { authenticated?: boolean; token?: string; csrfToken?: string; role?: string; accountType?: string; mustChangePassword?: boolean }
+type SessionData = { authenticated?: boolean; token?: string; csrfToken?: string; role?: string; accountType?: string; mustChangePassword?: boolean; expiresAt?: string }
 
 let csrfRefreshPromise: Promise<string | null> | null = null
 let sessionRestorePromise: Promise<{ response: Response; data: SessionData | null }> | null = null
@@ -26,6 +26,11 @@ export async function apiFetch(path: string, init: RequestInit = {}) {
   if (token && !headers.has('Authorization')) headers.set('Authorization', `Bearer ${token}`)
   if (csrfToken && !headers.has('X-CSRF-Token') && !['GET', 'HEAD'].includes(String(init.method ?? 'GET').toUpperCase())) headers.set('X-CSRF-Token', csrfToken)
   const response = await fetch(path, { ...init, headers, credentials: 'include' })
+  if (response.status === 401 && !path.startsWith('/api/auth/')) {
+    clearSession()
+    window.location.replace('/')
+    return response
+  }
   if (response.status !== 403 || path === '/api/auth/session') return response
 
   const error = await response.clone().json().catch(() => null)
@@ -46,15 +51,18 @@ export function restoreSession() {
   return sessionRestorePromise
 }
 
-export function storeSession(data: { token?: string; csrfToken?: string; role?: string }) {
+export function storeSession(data: { token?: string; csrfToken?: string; role?: string; expiresAt?: string }) {
   if (data.token) sessionStorage.setItem('workpulse_token', data.token)
   else sessionStorage.removeItem('workpulse_token')
   if (data.csrfToken) sessionStorage.setItem('workpulse_csrf', data.csrfToken)
   if (data.role) sessionStorage.setItem('workpulse_role', data.role)
+  if ('expiresAt' in data && typeof data.expiresAt === 'string') sessionStorage.setItem('workpulse_session_expires', data.expiresAt)
 }
 
 export function clearSession() {
   sessionStorage.removeItem('workpulse_token')
   sessionStorage.removeItem('workpulse_csrf')
   sessionStorage.removeItem('workpulse_role')
+  sessionStorage.removeItem('workpulse_session_expires')
+  sessionRestorePromise = null
 }

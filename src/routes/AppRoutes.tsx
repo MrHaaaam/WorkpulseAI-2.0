@@ -35,6 +35,10 @@ function readableAuditAction(action = 'unknown', targetType = 'system') {
 
 function auditActionLabel(event: OverviewAuditEvent) {
   const path = String(event.metadata?.path || '');
+  const leaveAction = String(event.metadata?.leaveAction || '');
+  if (String(event.metadata?.attendanceAction || '') === 'exported') return 'Attendance Exported';
+  if (leaveAction === 'bulk-approved') return 'Multiple Leave Requests Approved';
+  if (leaveAction === 'bulk-rejected') return 'Multiple Leave Requests Rejected';
   if (path.includes('/admin/') || event.action === 'auth.admin_credentials_changed' || event.action === 'admin.backup_created') {
     const adminAction = String(event.metadata?.adminAction || '');
     if (adminAction === 'credentials-updated' || path.endsWith('/account-security')) {
@@ -64,6 +68,8 @@ function auditActionLabel(event: OverviewAuditEvent) {
     'hold-removed': 'Payment Hold Removed',
     'payment-undone': 'Payment Undone',
     printed: 'Payroll Printed',
+    exported: 'Payroll Exported',
+    reset: 'Payroll Reset',
     'payslip-emailed': 'Payslip Emailed',
     'summary-emailed': 'Payroll Summary Emailed',
   };
@@ -81,12 +87,20 @@ function auditEventDetail(event: OverviewAuditEvent, time: string) {
   if (event.action === 'auth.login') return `${actor} login ${result} at ${time}.`;
   if (event.action === 'auth.logout') return `${actor} logged out at ${time}.`;
   if (path === '/attendance/kiosk') return event.outcome === 'success' ? `${targetName || 'An employee'} completed a kiosk ${String(event.metadata?.kioskAction || 'attendance scan')} at ${time}.` : `A kiosk attendance attempt ${result} at ${time}${targetName ? ` for ${targetName}` : ''}.`;
+  if (path === '/attendance/audit-export') {
+    const recordCount = Number(event.metadata?.recordCount || 0);
+    return `${actor} exported ${recordCount} attendance record${recordCount === 1 ? '' : 's'} from ${String(event.metadata?.from || '')} to ${String(event.metadata?.to || '')} as CSV at ${time}; the action ${result}.`;
+  }
   if (/^\/employees(?:\/|$)/.test(path)) {
     const operation = path.endsWith('/archive') ? 'archived' : path.endsWith('/unarchive') ? 'unarchived' : event.action === 'api.post' ? 'created' : event.action === 'api.delete' ? 'permanently deleted' : 'edited';
     return `${actor} ${operation} ${targetName || 'an employee record'} at ${time}; the action ${result}.`;
   }
   if (path.includes('leave-requests')) {
     const requestedStatus = String(event.metadata?.requestedStatus || '');
+    const leaveAction = String(event.metadata?.leaveAction || '');
+    const recordCount = Number(event.metadata?.recordCount || 0);
+    const failedCount = Number(event.metadata?.failedCount || 0);
+    if (leaveAction.startsWith('bulk-')) return `${actor} ${requestedStatus} ${recordCount} leave request${recordCount===1?'':'s'} at ${time}; ${failedCount ? `${failedCount} remained pending after validation` : 'all selected requests were processed'}; the action ${result}.`;
     const operation = path.includes('/employee/me/') ? path.endsWith('/cancel') ? 'cancelled a leave request' : 'submitted a leave request' : requestedStatus ? `${requestedStatus} a leave request` : 'updated a leave request';
     return `${actor} ${operation}${targetName ? ` for ${targetName}` : ''} at ${time}; the action ${result}.`;
   }
@@ -106,6 +120,8 @@ function auditEventDetail(event: OverviewAuditEvent, time: string) {
       'hold-removed': `${actor} removed the payment hold for ${targetName || 'an employee'}`,
       'payment-undone': `${actor} undid the latest completed payment for ${targetName || people}${money}`,
       printed: event.metadata?.printScope === 'individual-payslip' ? `${actor} printed the payslip for ${targetName || 'an employee'}` : `${actor} printed the paid payroll list${recordCount ? ` containing ${recordCount} records` : ''}`,
+      exported: `${actor} exported ${recordCount} matching payroll record${recordCount === 1 ? '' : 's'} as CSV`,
+      reset: `${actor} reset the payroll values for ${targetName || 'an employee'} to zero`,
       'payslip-emailed': `${actor} emailed a payslip to ${targetName || 'an employee'}`,
       'summary-emailed': `${actor} emailed a payroll summary to ${targetName || 'an employee'}`,
     };

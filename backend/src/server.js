@@ -99,6 +99,12 @@ async function startServer() {
         db.collection('leave_requests').createIndex({ status: 1, startDate: 1, endDate: 1 }),
         db.collection('payroll_requests').createIndex({ employeeId: 1, createdAt: -1 }),
         db.collection('payroll_requests').createIndex({ periodStart: 1, status: 1 }),
+        // Preparing payroll can be triggered by both employee and admin pages.
+        // This prevents two unpaid statements for the same employee and period.
+        db.collection('payroll_requests').createIndex(
+          { employeeId: 1, periodStart: 1 },
+          { unique: true, partialFilterExpression: { status: { $in: ['processing', 'rejected'] } }, name: 'one_unpaid_payroll_per_period' },
+        ),
         db.collection('biometric_verification_attempts').createIndex({ createdAt: -1 }),
         db.collection('biometric_evaluation_trials').createIndex({ createdAt: -1 }),
       ]);

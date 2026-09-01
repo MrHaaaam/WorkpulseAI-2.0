@@ -10,7 +10,8 @@ import { Input } from "../components/ui/Input";
 import type { Employee } from "../lib/data";
 import { useToast } from "../components/ui/Toast";
 import { apiFetch } from "../lib/api";
-import { PaginationControls, usePagination } from "../components/ui/Pagination";
+import { PaginationControls } from "../components/ui/Pagination";
+import { usePagination } from "../hooks/usePagination";
 
 const hoverScrollbarClasses = 
   "max-h-[400px] overflow-y-auto pr-2 " +
