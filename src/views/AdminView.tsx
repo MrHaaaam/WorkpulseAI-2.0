@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Archive, Check, DatabaseBackup, KeyRound, LockKeyhole, LogOut, Mail, RotateCcw, ShieldCheck, Trash2, UserPlus, Wrench, X } from "lucide-react";
+import { Archive, Check, DatabaseBackup, KeyRound, LockKeyhole, LogOut, Mail, RotateCcw, Search, ShieldCheck, Trash2, UserPlus, Wrench, X } from "lucide-react";
 
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "../components/ui/Card";
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from "../components/ui/Table";
@@ -35,6 +35,8 @@ export function AdminView() {
   const [controlBusy, setControlBusy] = useState<string | null>(null);
   const [archiveReferenceTime] = useState(() => Date.now());
   const [archiveRange, setArchiveRange] = useState<"30d" | "1y" | "5y" | "all">("all");
+  const [employeeSearch, setEmployeeSearch] = useState("");
+  const [archiveSearch, setArchiveSearch] = useState("");
   const [deleteTarget, setDeleteTarget] = useState<(typeof archivedAccounts)[number] | null>(null);
   const [deletePassword, setDeletePassword] = useState("");
   const [deleteError, setDeleteError] = useState("");
@@ -56,17 +58,23 @@ export function AdminView() {
     setConfirmation(null);
   }
 
+  const filteredEmployees = useMemo(() => {
+    const query = employeeSearch.trim().toLowerCase();
+    return query ? localEmployees.filter((employee) => `${employee.name} ${employee.id} ${employee.role}`.toLowerCase().includes(query)) : localEmployees;
+  }, [employeeSearch, localEmployees]);
   const filteredArchivedAccounts = useMemo(() => {
-    if (archiveRange === "all") return archivedAccounts;
+    const query = archiveSearch.trim().toLowerCase();
+    const matchingAccounts = query ? archivedAccounts.filter((account) => `${account.name} ${account.id} ${account.record.role}`.toLowerCase().includes(query)) : archivedAccounts;
+    if (archiveRange === "all") return matchingAccounts;
     const rangeDays = archiveRange === "30d" ? 30 : archiveRange === "1y" ? 365 : 365 * 5;
     const cutoff = archiveReferenceTime - rangeDays * 86400000;
-    return archivedAccounts.filter((account) => {
+    return matchingAccounts.filter((account) => {
       const archivedAt = new Date(account.record.archivedAt ?? "").getTime();
       return Number.isFinite(archivedAt) && archivedAt >= cutoff;
     });
-  }, [archiveRange, archiveReferenceTime, archivedAccounts]);
-  const employeePage = usePagination(localEmployees);
-  const archivePage = usePagination(filteredArchivedAccounts, archiveRange);
+  }, [archiveRange, archiveReferenceTime, archivedAccounts, archiveSearch]);
+  const employeePage = usePagination(filteredEmployees, employeeSearch);
+  const archivePage = usePagination(filteredArchivedAccounts, `${archiveRange}|${archiveSearch}`);
 
   useEffect(() => {
     if (passwordRetrySeconds <= 0) return;
@@ -269,6 +277,7 @@ export function AdminView() {
             <CardDescription>Manage all employee accounts, including employees assigned as managers</CardDescription>
           </CardHeader>
           <CardContent>
+            <div className="relative mb-4 max-w-sm"><Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" /><Input aria-label="Search employee access" value={employeeSearch} onChange={(event) => setEmployeeSearch(event.target.value)} placeholder="Search employee, ID, or role" className="pl-9" /></div>
             <div className={hoverScrollbarClasses}>
               <Table className="min-w-[620px]">
                 <TableHeader className="sticky top-0 bg-white z-10 shadow-sm">
@@ -384,14 +393,14 @@ export function AdminView() {
       {archiveOpen && (
         <Card className="border-violet-200">
           <CardHeader><div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between"><div><CardTitle className="flex items-center gap-2"><Archive className="h-5 w-5 text-[#8642ED]" /> Archived Employees</CardTitle><CardDescription>Restore employees or permanently delete an individual employee and all linked database records.</CardDescription></div><div className="flex flex-col gap-2 sm:flex-row sm:items-center"><div className="flex flex-wrap rounded-xl border border-slate-200 bg-slate-50 p-1">{([['30d','30 days'],['1y','1 year'],['5y','5 years'],['all','All']] as const).map(([value,label]) => <button key={value} type="button" onClick={() => setArchiveRange(value)} className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition ${archiveRange === value ? 'bg-white text-violet-700 shadow-sm' : 'text-slate-500 hover:text-slate-800'}`}>{label}</button>)}</div><Button className="w-full sm:w-auto" size="sm" variant="outline" onClick={() => setArchiveOpen(false)}>Close</Button></div></div></CardHeader>
-          <CardContent className="p-0"><div className="overflow-x-auto"><Table className="min-w-[720px]"><TableHeader><TableRow><TableHead>Employee</TableHead><TableHead>Archived date</TableHead><TableHead>Age</TableHead><TableHead className="text-right">Actions</TableHead></TableRow></TableHeader><TableBody>
+          <CardContent className="p-0"><div className="border-b border-slate-100 p-4"><div className="relative max-w-sm"><Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" /><Input aria-label="Search archived employees" value={archiveSearch} onChange={(event) => setArchiveSearch(event.target.value)} placeholder="Search employee, ID, or role" className="pl-9" /></div></div><div className="overflow-x-auto"><Table className="min-w-[720px]"><TableHeader><TableRow><TableHead>Employee</TableHead><TableHead>Archived date</TableHead><TableHead>Age</TableHead><TableHead className="text-right">Actions</TableHead></TableRow></TableHeader><TableBody>
             {archivePage.pageItems.map((account) => {
               const archivedAt = account.record.archivedAt ? new Date(account.record.archivedAt) : null;
               const validDate = archivedAt && !Number.isNaN(archivedAt.getTime());
               const ageDays = validDate ? Math.max(0, Math.floor((archiveReferenceTime - archivedAt.getTime()) / 86400000)) : null;
               return <TableRow key={account.id}><TableCell><div className="font-medium text-slate-900">{account.name}</div><div className="text-xs text-slate-400">{account.id}</div></TableCell><TableCell className="text-slate-600">{validDate ? archivedAt.toLocaleDateString('en-PH', { month: 'short', day: 'numeric', year: 'numeric' }) : 'Date unavailable'}</TableCell><TableCell><Badge variant="neutral">{ageDays == null ? 'Unknown' : ageDays === 0 ? 'Today' : `${ageDays} ${ageDays === 1 ? 'day' : 'days'}`}</Badge></TableCell><TableCell><div className="flex justify-end gap-2"><Button size="sm" variant="outline" onClick={() => restoreAccount(account.id)}><RotateCcw className="h-3.5 w-3.5" /> Restore</Button><Button size="sm" variant="destructive" onClick={() => { setDeleteTarget(account); setDeletePassword(''); setDeleteError(''); }}><Trash2 className="h-3.5 w-3.5" /> Delete permanently</Button></div></TableCell></TableRow>;
             })}
-          </TableBody></Table></div>{filteredArchivedAccounts.length === 0 && <div className="py-10 text-center text-sm text-slate-400">{archivedAccounts.length ? 'No archived employees match this time filter.' : 'The archive is empty.'}</div>}<PaginationControls {...archivePage} onPageChange={archivePage.setPage} /></CardContent>
+          </TableBody></Table></div>{filteredArchivedAccounts.length === 0 && <div className="py-10 text-center text-sm text-slate-400">{archivedAccounts.length ? 'No archived employees match the selected filters.' : 'The archive is empty.'}</div>}<PaginationControls {...archivePage} onPageChange={archivePage.setPage} /></CardContent>
         </Card>
       )}
 

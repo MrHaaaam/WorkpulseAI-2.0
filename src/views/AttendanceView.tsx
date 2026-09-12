@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Check, Clock, Download, X } from "lucide-react";
+import { Check, Clock, Download, Search, X } from "lucide-react";
 
 import { Card, CardContent } from "../components/ui/Card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../components/ui/Table";
@@ -9,6 +9,7 @@ import { DateNavigator } from "../components/DateNavigator";
 import { PaginationControls } from "../components/ui/Pagination";
 import { usePagination } from "../hooks/usePagination";
 import { downloadCsv } from "../lib/exportCsv";
+import { Input } from "../components/ui/Input";
 
 export interface AttendanceRecord {
   employeeId: string;
@@ -24,6 +25,7 @@ export interface AttendanceRecord {
 
 function attendanceSessions(record: AttendanceRecord) {
   if (record.sessions?.length) return record.sessions;
+  if (!record.checkIn) return [];
   return [{ checkIn: record.checkIn, checkOut: record.checkOut }];
 }
 
@@ -58,6 +60,8 @@ export function AttendanceView(props: {
   const [rangeMode, setRangeMode] = useState<"day" | "current" | "previous" | "custom">("day");
   const [customFrom, setCustomFrom] = useState(selectedDate);
   const [customTo, setCustomTo] = useState(selectedDate);
+  const [search, setSearch] = useState("");
+  const [statusFilter, setStatusFilter] = useState<"all" | AttendanceRecord["status"]>("all");
   const range = useMemo(() => {
     if (rangeMode === "day") return { from: selectedDate, to: selectedDate };
     if (rangeMode === "custom") return { from: customFrom, to: customTo };
@@ -66,8 +70,12 @@ export function AttendanceView(props: {
     const end = new Date(today); end.setUTCDate(today.getUTCDate()<=15?0:15); const start = new Date(end); start.setUTCDate(end.getUTCDate()<=15?1:16);
     return { from: start.toISOString().slice(0,10), to: end.toISOString().slice(0,10) };
   }, [customFrom, customTo, rangeMode, selectedDate]);
-  const filteredRecords = records.length ? records : localRecords;
-  const attendancePage = usePagination(filteredRecords, `${range.from}|${range.to}`);
+  const loadedRecords = records.length ? records : localRecords;
+  const filteredRecords = useMemo(() => {
+    const query = search.trim().toLowerCase();
+    return loadedRecords.filter((record) => (statusFilter === "all" || record.status === statusFilter) && (!query || `${record.name} ${record.employeeId} ${record.role}`.toLowerCase().includes(query)));
+  }, [loadedRecords, search, statusFilter]);
+  const attendancePage = usePagination(filteredRecords, `${range.from}|${range.to}|${search}|${statusFilter}`);
 
   useEffect(() => {
     if (records.length) return;
@@ -160,6 +168,7 @@ export function AttendanceView(props: {
       ) : null}
 
       <Card data-guide="attendance-table">
+        <div className="flex flex-wrap items-center gap-3 border-b border-slate-100 p-4"><div className="relative w-full max-w-sm"><Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" /><Input aria-label="Search attendance" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search employee, ID, or role" className="pl-9" /></div><label className="flex items-center gap-2 text-sm font-medium text-slate-600"><span className="sr-only">Attendance status</span><select aria-label="Filter attendance by status" value={statusFilter} onChange={(event) => setStatusFilter(event.target.value as "all" | AttendanceRecord["status"])} className="h-10 rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-violet-400 focus:ring-2 focus:ring-violet-100"><option value="all">All statuses</option><option value="Present">Present</option><option value="Late">Late</option><option value="Absent">Absent</option><option value="On Leave">On Leave</option></select></label></div>
         <CardContent className="p-0">
           <Table>
             <TableHeader>
@@ -193,9 +202,9 @@ export function AttendanceView(props: {
                         <div className="font-medium text-slate-900">{record.name}</div>
                         <div className="text-xs text-slate-400">{record.role}</div>
                       </TableCell>
-                      <TableCell className="whitespace-nowrap text-slate-600">{record.date}</TableCell>
+                      <TableCell className="whitespace-nowrap text-slate-600">{displayWorkforceDate(record.date)}</TableCell>
                       <TableCell>
-                        {record.status === "On Leave" ? <div className="min-w-[28rem] text-sm font-medium text-indigo-600">Approved leave — no time-in required</div> : <div className="flex min-w-[28rem] flex-wrap gap-2">
+                        {record.status === "On Leave" ? <div className="min-w-[28rem] text-sm font-medium text-indigo-600">Approved leave — no time-in required</div> : sessions.length === 0 ? <div className="min-w-[28rem] text-sm font-medium text-slate-400">No attendance session recorded</div> : <div className="flex min-w-[28rem] flex-wrap gap-2">
                           {sessions.map((session, index) => (
                             <div key={`${record.employeeId}-${record.date}-${index}`} className="min-w-36 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
                               <div className="mb-1 text-[10px] font-bold uppercase tracking-wide text-violet-600">Session {index + 1}</div>

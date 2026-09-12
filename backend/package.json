@@ -11,7 +11,8 @@
     "seed:admin": "node seed-admin.js",
     "seed:ai": "node seed-ai-test-data.js",
     "audit:security": "node audit-report.js",
-    "seed:employee:deocares": "node seed-employee-account.js"
+    "seed:employee:deocares": "node seed-employee-account.js",
+    "seed:test:red-flag": "node seed-red-flag-test-employee.js"
   },
   "dependencies": {
     "cors": "^2.8.5",

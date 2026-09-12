@@ -77,6 +77,10 @@ async function startServer() {
   try {
     await mongoose.connect(mongoUri);
     console.log('Connected to MongoDB Atlas.');
+    // The API can serve requests as soon as MongoDB is connected. Index checks
+    // and attendance housekeeping run afterward so a restart never holds the
+    // whole application hostage to a large historical reconciliation.
+    app.listen(port, () => console.log(`Server is running on http://localhost:${port}`));
     try {
       const db = mongoose.connection.db;
       await Promise.all([
@@ -98,6 +102,7 @@ async function startServer() {
         db.collection('leave_requests').createIndex({ employeeId: 1, createdAt: -1 }),
         db.collection('leave_requests').createIndex({ status: 1, startDate: 1, endDate: 1 }),
         db.collection('payroll_requests').createIndex({ employeeId: 1, createdAt: -1 }),
+        db.collection('payroll_requests').createIndex({ employeeId: 1, periodStart: 1, status: 1 }),
         db.collection('payroll_requests').createIndex({ periodStart: 1, status: 1 }),
         // Preparing payroll can be triggered by both employee and admin pages.
         // This prevents two unpaid statements for the same employee and period.
@@ -111,18 +116,36 @@ async function startServer() {
     } catch (error) {
       console.error('Security index setup failed:', error instanceof Error ? error.message : error);
     }
-    const enforceAttendanceLimits = async () => {
+    let clockOutJobRunning = false;
+    let absenceJobRunning = false;
+    const enforceAutomaticClockOutSafely = async () => {
+      if (clockOutJobRunning) return;
+      clockOutJobRunning = true;
       try {
         const settings = await getSettings(mongoose.connection.db);
         await enforceAutomaticClockOut(mongoose.connection.db, settings);
-        await enforceAutomaticAbsences(mongoose.connection.db, settings);
       } catch (error) {
         console.error('Automatic clock-out check failed:', error instanceof Error ? error.message : error);
+      } finally {
+        clockOutJobRunning = false;
       }
     };
-    await enforceAttendanceLimits();
-    setInterval(enforceAttendanceLimits, 60_000);
-    app.listen(port, () => console.log(`Server is running on http://localhost:${port}`));
+    const enforceAutomaticAbsencesSafely = async () => {
+      if (absenceJobRunning) return;
+      absenceJobRunning = true;
+      try {
+        const settings = await getSettings(mongoose.connection.db);
+        await enforceAutomaticAbsences(mongoose.connection.db, settings);
+      } catch (error) {
+        console.error('Automatic absence check failed:', error instanceof Error ? error.message : error);
+      } finally {
+        absenceJobRunning = false;
+      }
+    };
+    void enforceAutomaticClockOutSafely();
+    void enforceAutomaticAbsencesSafely();
+    setInterval(() => void enforceAutomaticClockOutSafely(), 60_000);
+    setInterval(() => void enforceAutomaticAbsencesSafely(), 15 * 60_000);
   } catch (error) {
     console.error('MongoDB connection failed:', error instanceof Error ? error.message : error);
     process.exit(1);

@@ -95,7 +95,12 @@ function forecastInsight(attendance, activeEmployees, today) {
   const forecast = Array.from({ length: 7 }, (_, index) => {
     const date = addDays(todayDate, index + 1);
     const day = date.getUTCDay();
-    const estimate = ready ? level + (index + 1) * trend + season[day] : weekdayAverages[day];
+    const weekdayBaseline = weekdayAverages[day];
+    const modelEstimate = level + (index + 1) * trend + season[day];
+    const maxAdjustment = Math.max(2, weekdayBaseline * 0.15);
+    const estimate = ready
+      ? weekdayBaseline + clamp(modelEstimate - weekdayBaseline, -maxAdjustment, maxAdjustment)
+      : weekdayBaseline;
     const expectedPresent = Math.round(clamp(estimate, 0, activeEmployees));
     const weekdaySamples = series.filter((item) => utcDate(item.date).getUTCDay() === day);
     const weekdayAverage = Math.round(weekdayAverages[day]);
@@ -118,7 +123,7 @@ function forecastInsight(attendance, activeEmployees, today) {
   });
   const average = forecast.reduce((sum, day) => sum + day.expectedPresent, 0) / forecast.length;
   return {
-    version: 'Holt-Winters additive · weekly seasonality', status: ready ? 'ready' : 'limited',
+    version: 'Holt-Winters additive · bounded weekly baseline', status: ready ? 'ready' : 'limited',
     sampleDays: series.length, clockInDays: clockInDates.size, activeEmployees,
     latestDataDate: latestDataDate?.toISOString().slice(0, 10) || null,
     dataStale,

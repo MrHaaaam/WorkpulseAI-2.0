@@ -1488,6 +1488,19 @@ async function preparePayrollRecord(db, employee, periodStart, settings) {
   return { record, created: true };
 }
 
+async function mapWithConcurrency(items, limit, operation) {
+  const results = new Array(items.length);
+  let nextIndex = 0;
+  const worker = async () => {
+    while (nextIndex < items.length) {
+      const index = nextIndex++;
+      results[index] = await operation(items[index]);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  return results;
+}
+
 router.post('/payroll-requests/prepare-bulk', async (req, res) => {
   try {
     // The payroll screen calls this automatically to synchronize calculated
@@ -1500,8 +1513,9 @@ router.post('/payroll-requests/prepare-bulk', async (req, res) => {
     const requestedIds = Array.isArray(req.body?.employeeIds) ? req.body.employeeIds.map(String).slice(0, 500) : [];
     const query = { archived: { $ne: true }, status: { $ne: 'inactive' }, ...(requestedIds.length ? { id: { $in: requestedIds } } : {}) };
     const [employees, settings] = await Promise.all([db.collection('employees').find(query).toArray(), getSettings(db)]);
-    const results = [];
-    for (const employee of employees) results.push(await preparePayrollRecord(db, employee, periodStart, settings));
+    // Payroll calculations are independent per employee. A small worker pool
+    // avoids the old one-request-at-a-time delay without overwhelming Atlas.
+    const results = await mapWithConcurrency(employees, 8, (employee) => preparePayrollRecord(db, employee, periodStart, settings));
     const records = results.map((item) => item.record);
     res.json({
       records,
