@@ -10,7 +10,6 @@ import {
   Calendar,
   X
 } from "lucide-react";
-import { apiFetch, clearSession } from "../lib/api";
 import { cn } from "../lib/utils";
 import { Badge } from "./ui/Badge";
 
@@ -29,17 +28,12 @@ interface SidebarProps {
   onNavigate: (view: ViewKey) => void;
   mobileOpen?: boolean;
   onMobileClose?: () => void;
+  accountName: string;
+  onLogout: () => void;
 }
 
-export function AdminSidebar({ active, onNavigate, mobileOpen = false, onMobileClose = () => {} }: SidebarProps) {
-  async function logout() {
-    try {
-      await apiFetch('/api/auth/logout', { method: 'POST' });
-    } finally {
-      clearSession();
-      window.location.replace('/');
-    }
-  }
+export function AdminSidebar({ active, onNavigate, mobileOpen = false, onMobileClose = () => {}, accountName, onLogout }: SidebarProps) {
+  const initials = accountName.split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0]).join('').toUpperCase();
   const navItems: { key: ViewKey; label: string; icon: React.ElementType }[] = [
     { key: 'overview', label: 'Overview', icon: LayoutDashboard },
     { key: 'attendance', label: 'Attendance', icon: Calendar },
@@ -61,9 +55,9 @@ export function AdminSidebar({ active, onNavigate, mobileOpen = false, onMobileC
         </div>
         <div className="min-w-0">
           <h2 className="text-[13px] font-bold leading-tight tracking-tight text-slate-900">
-            <span className="font-extrabold">Work</span>
+            <span className="font-extrabold">WORK</span>
             <span className="font-extrabold text-[#8642ED]">PULSE</span>
-            <span className="font-extrabold"> AI</span>
+            <span className="font-extrabold"> MVL</span>
           </h2>
           <p className="text-[10px] font-medium uppercase tracking-[0.18em] text-slate-400">Admin</p>
         </div>
@@ -94,9 +88,9 @@ export function AdminSidebar({ active, onNavigate, mobileOpen = false, onMobileC
 
       <div className="border-t border-slate-200/80 p-3">
         <div className="flex items-center gap-2.5 rounded-xl border border-slate-200 bg-slate-50 p-2.5">
-          <div className="flex h-9 w-9 items-center justify-center rounded-full bg-[#8642ED] text-[13px] font-bold text-white">A</div>
+          <div className="flex h-9 w-9 items-center justify-center rounded-full bg-[#8642ED] text-[13px] font-bold text-white">{initials || '?'}</div>
           <div className="min-w-0 flex-1">
-            <p className="truncate text-[13px] font-semibold text-slate-900">Admin User</p>
+            <p title={accountName} className="truncate text-[13px] font-semibold text-slate-900">{accountName || 'Loading account...'}</p>
             <div className="flex items-center gap-1.5">
               <Badge variant="success" className="px-1.5 py-0">
                 <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
@@ -104,7 +98,7 @@ export function AdminSidebar({ active, onNavigate, mobileOpen = false, onMobileC
               </Badge>
             </div>
           </div>
-          <button onClick={logout} aria-label="Log out" className="rounded-md p-1.5 text-slate-400 transition-colors hover:bg-red-50 hover:text-red-600">
+          <button onClick={onLogout} aria-label="Log out" className="rounded-md p-1.5 text-slate-400 transition-colors hover:bg-red-50 hover:text-red-600">
             <LogOut className="h-4 w-4" />
           </button>
         </div>

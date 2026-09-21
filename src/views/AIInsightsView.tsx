@@ -1,3 +1,4 @@
+import { AdminPageHeader } from "../components/AdminPageHeader";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Activity, AlertTriangle, BrainCircuit, CalendarDays, ChevronRight,
@@ -251,14 +252,8 @@ export function AIInsightsView() {
   if (loading) return <div className="grid min-h-[420px] place-items-center" role="status" aria-live="polite"><div className="text-center"><BrainCircuit className="mx-auto animate-pulse text-violet-600" size={38} aria-hidden="true" /><p className="mt-3 text-sm font-medium text-slate-600">Preparing workforce insights…</p></div></div>;
   if (!insights) return <Card className="mx-auto mt-12 max-w-lg p-8 text-center" role="alert"><AlertTriangle className="mx-auto text-red-500" aria-hidden="true" /><h2 className="mt-3 font-semibold text-slate-900">Workforce insights could not load</h2><p className="mt-2 text-sm text-slate-500">{error}</p><Button className="mt-5" onClick={() => void loadInsights(true)}>Try again</Button></Card>;
 
-  return <div className="mx-auto max-w-[1500px] space-y-6 pb-8">
-    <header data-guide="ai-heading" className="relative overflow-hidden rounded-3xl border border-violet-200 bg-gradient-to-br from-white via-violet-50 to-purple-100 px-6 py-7 text-slate-900 shadow-sm sm:px-8">
-      <div className="absolute -right-16 -top-24 h-64 w-64 rounded-full bg-[#8642ED]/10 blur-3xl" /><div className="absolute bottom-0 right-1/3 h-24 w-40 bg-fuchsia-300/10 blur-3xl" />
-      <div className="relative flex flex-col justify-between gap-5 sm:flex-row sm:items-center">
-        <div className="flex items-start gap-4"><span className="grid h-12 w-12 shrink-0 place-items-center rounded-2xl bg-[#8642ED] text-white shadow-lg shadow-violet-200"><Sparkles size={23} /></span><div><div className="flex flex-wrap items-center gap-2"><h1 className="text-2xl font-bold tracking-tight text-slate-950">AI Workforce Analytics</h1><Badge className="border-emerald-200 bg-emerald-50 text-emerald-700"><span className="h-1.5 w-1.5 rounded-full bg-emerald-500" /> Live data</Badge></div><p className="mt-1 max-w-2xl text-sm leading-6 text-slate-600">Quick summaries of attendance patterns and fingerprint scanner performance.</p></div></div>
-        <div className="flex items-center gap-3"><span className="text-xs text-slate-500">Updated {generated}</span><Button variant="outline" className="border-violet-200 bg-white text-[#8642ED] hover:bg-violet-50" onClick={() => void loadInsights(true)} disabled={refreshing}><RefreshCw size={15} className={refreshing ? "animate-spin" : ""} /> Refresh</Button></div>
-      </div>
-    </header>
+  return <div className="space-y-6 pb-8">
+    <AdminPageHeader data-guide="ai-heading" title="AI Workforce Analytics" description="Review attendance patterns and fingerprint scanner performance." icon={Sparkles} badge={<Badge className="border-emerald-200 bg-emerald-50 text-emerald-700"><span className="h-1.5 w-1.5 rounded-full bg-emerald-500" /> Live data</Badge>} actions={<><span className="text-xs text-slate-500">Updated {generated}</span><Button variant="outline" className="border-violet-200 bg-white text-[#8642ED] hover:bg-violet-50" onClick={() => void loadInsights(true)} disabled={refreshing}><RefreshCw size={15} className={refreshing ? "animate-spin" : ""} /> Refresh</Button></>} />
 
     {error && <div role="alert" className="flex items-center gap-2 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800"><AlertTriangle size={16} aria-hidden="true" /> Latest refresh failed: {error}. Showing the last successful result.</div>}
     <section data-guide="ai-models" className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">{(Object.keys(modelMeta) as InsightKey[]).map((key) => <MetricCard key={key} modelKey={key} selected={selected === key} insights={insights} onSelect={() => setSelected(key)} />)}</section>

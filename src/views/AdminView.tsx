@@ -1,3 +1,5 @@
+import { ForceClockOutDialog } from "../components/ForceClockOutDialog";
+import { AdminPageHeader } from "../components/AdminPageHeader";
 import { useEffect, useMemo, useState } from "react";
 import { Archive, Check, DatabaseBackup, KeyRound, LockKeyhole, LogOut, Mail, RotateCcw, Search, ShieldCheck, Trash2, UserPlus, Wrench, X } from "lucide-react";
 
@@ -28,6 +30,7 @@ export function AdminView() {
   const [adminUnlocked, setAdminUnlocked] = useState(false);
   const [passwordPromptOpen, setPasswordPromptOpen] = useState(false);
   const [archiveOpen, setArchiveOpen] = useState(false);
+  const [forceClockOutOpen, setForceClockOutOpen] = useState(false);
   const [password, setPassword] = useState("");
   const [passwordError, setPasswordError] = useState("");
   const [passwordRetrySeconds, setPasswordRetrySeconds] = useState(0);
@@ -146,18 +149,6 @@ export function AdminView() {
     finally { setControlBusy(null); }
   }
 
-  async function forceClockOut() {
-    if (!await askForConfirmation({ title: "Force clock out all active employees?", description: "This will close every currently open attendance session using the current time.", confirmLabel: "Force Clock Out", destructive: true })) return;
-    setControlBusy("clock-out");
-    try {
-      const response = await apiFetch('/api/admin/force-clock-out', { method: 'POST' });
-      const data = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(data.error || 'Force clock out failed');
-      toast({ title: "Force clock out complete", description: `${data.clockedOut} open ${data.clockedOut === 1 ? "session was" : "sessions were"} closed at ${data.time}.`, variant: "success" });
-    } catch (reason) { toast({ title: "Employees were not clocked out", description: reason instanceof Error ? reason.message : "Please try again.", variant: "error" }); }
-    finally { setControlBusy(null); }
-  }
-
   async function createBackup() {
     if (!await askForConfirmation({ title: "Create a system backup?", description: "A new backup containing business records and encrypted biometric templates will be saved to the location you select.", confirmLabel: "Choose Save Location" })) return;
     const suggestedName = `workpulse-backup-${new Date().toISOString().slice(0, 10)}.json`;
@@ -165,7 +156,7 @@ export function AdminView() {
     let handle: Awaited<ReturnType<NonNullable<typeof picker>>> | null = null;
     if (picker) {
       try {
-        handle = await picker({ suggestedName, types: [{ description: 'WorkPulse JSON backup', accept: { 'application/json': ['.json'] } }] });
+        handle = await picker({ suggestedName, types: [{ description: 'WORKPULSE MVL JSON backup', accept: { 'application/json': ['.json'] } }] });
       } catch (reason) {
         if (reason instanceof DOMException && reason.name === 'AbortError') return;
         return toast({ title: "Backup location was not selected", description: "No database data was downloaded.", variant: "info" });
@@ -178,7 +169,7 @@ export function AdminView() {
       const blob = await response.blob();
       if (handle) { const writable = await handle.createWritable(); await writable.write(blob); await writable.close(); }
       else { const url = URL.createObjectURL(blob); const link = document.createElement('a'); link.href = url; link.download = suggestedName; link.click(); window.setTimeout(() => URL.revokeObjectURL(url), 1000); }
-      toast({ title: "Backup saved", description: "The WorkPulse business-data backup was saved to the location you approved.", variant: "success" });
+      toast({ title: "Backup saved", description: "The WORKPULSE MVL business-data backup was saved to the location you approved.", variant: "success" });
     } catch (reason) { toast({ title: "Backup was not saved", description: reason instanceof Error ? reason.message : "Please try again.", variant: "error" }); }
     finally { setControlBusy(null); }
   }
@@ -250,24 +241,14 @@ export function AdminView() {
   }
 
   if (!adminUnlocked) return (
-    <div className="flex min-h-[calc(100svh-10rem)] items-center justify-center py-6"><Card className="w-full max-w-md"><CardContent className="flex flex-col items-center p-6 text-center sm:p-8"><div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-[#8642ED]/10"><KeyRound className="h-7 w-7 text-[#8642ED]" /></div><h2 className="mt-4 text-xl font-bold text-slate-900">Admin Controls Locked</h2><p className="mt-1 text-sm text-slate-500">Password verification is required before accessing any administrative controls.</p><Button className="mt-5" onClick={() => { setPassword(""); setPasswordError(""); setPasswordPromptOpen(true); }}>Enter Password</Button></CardContent></Card>
+    <div className="space-y-6"><AdminPageHeader title="Admin Control Panel" description="Manage user access, bans, and global system configuration" icon={ShieldCheck} /><div className="flex justify-center py-6"><Card className="w-full max-w-md"><CardContent className="flex flex-col items-center p-6 text-center sm:p-8"><div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-[#8642ED]/10"><KeyRound className="h-7 w-7 text-[#8642ED]" /></div><h2 className="mt-4 text-xl font-bold text-slate-900">Admin Controls Locked</h2><p className="mt-1 text-sm text-slate-500">Password verification is required before accessing any administrative controls.</p><Button className="mt-5" onClick={() => { setPassword(""); setPasswordError(""); setPasswordPromptOpen(true); }}>Enter Password</Button></CardContent></Card></div>
       <Dialog open={passwordPromptOpen} onClose={() => setPasswordPromptOpen(false)} className="max-w-sm"><DialogHeader><div><h3 className="flex items-center gap-2 text-base font-bold text-slate-900"><KeyRound className="h-4 w-4 text-[#8642ED]" /> Admin Password</h3><p className="mt-1 text-xs text-slate-500">Verify your current account password to continue.</p></div><DialogClose onClose={() => setPasswordPromptOpen(false)} /></DialogHeader><form onSubmit={unlockAdminControls} className="space-y-3 px-6 pb-6 pt-3"><Input type="password" autoFocus disabled={passwordRetrySeconds > 0} value={password} onChange={(event) => { setPassword(event.target.value); setPasswordError(""); }} placeholder={passwordRetrySeconds > 0 ? `Try again in ${passwordRetrySeconds}s` : "Enter admin password"} />{passwordRetrySeconds > 0 && <p className="text-xs font-medium text-amber-600">Password attempts locked for {passwordRetrySeconds} more seconds.</p>}{passwordError && <p className="text-xs text-rose-600">{passwordError}</p>}<div className="flex justify-end gap-2"><Button type="button" size="sm" variant="outline" onClick={() => setPasswordPromptOpen(false)}>Cancel</Button><Button type="submit" size="sm" disabled={passwordRetrySeconds > 0}>{passwordRetrySeconds > 0 ? `Wait ${passwordRetrySeconds}s` : "Unlock"}</Button></div></form></Dialog>
     </div>
   );
 
   return (
     <div className="space-y-6">
-      {/* Page Header */}
-      <div className="relative overflow-hidden rounded-2xl border border-slate-200/60 bg-white/70 px-5 py-5 shadow-sm backdrop-blur">
-        <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-rose-500/10 via-transparent to-transparent" />
-        <div className="relative flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-          <div>
-            <h2 className="text-2xl font-bold text-slate-900">Admin Control Panel</h2>
-            <p className="text-sm text-slate-500">Manage user access, bans, and global system configuration</p>
-          </div>
-          <div className="flex w-full flex-wrap gap-2 sm:w-auto sm:justify-end"><Button className="flex-1 sm:flex-none" variant="outline" onClick={() => setArchiveOpen(true)}><Archive className="h-4 w-4" /> Archive</Button><Button className="flex-1 sm:flex-none" variant="outline" onClick={lockAdminControls}><KeyRound className="h-4 w-4" /> Lock</Button></div>
-        </div>
-      </div>
+      <AdminPageHeader title="Admin Control Panel" description="Manage user access, bans, and global system configuration" icon={ShieldCheck} actions={<><Button className="flex-1 sm:flex-none" variant="outline" onClick={() => setArchiveOpen(true)}><Archive className="h-4 w-4" /> Archive</Button><Button className="flex-1 sm:flex-none" variant="outline" onClick={lockAdminControls}><KeyRound className="h-4 w-4" /> Lock</Button></>} />
 
       <div className="grid grid-cols-1 gap-6">
         {/* Ban / Unban Employees Table */}
@@ -361,9 +342,9 @@ export function AdminView() {
                 </TableRow>
                 <TableRow>
                   <TableCell className="font-medium text-slate-900"><span className="flex items-center gap-2"><LogOut className="h-4 w-4 text-red-500" />Force Clock Out</span></TableCell>
-                  <TableCell className="text-slate-500 text-sm">Close every attendance session that is currently clocked in</TableCell>
+                  <TableCell className="text-slate-500 text-sm">Clock out everyone or an individual who clocked in today</TableCell>
                   <TableCell><Badge variant="neutral">On demand</Badge></TableCell>
-                  <TableCell className="text-right"><Button size="sm" variant="destructive" disabled={controlBusy === "clock-out"} onClick={() => void forceClockOut()}>{controlBusy === "clock-out" ? "Clocking out…" : "Force Clock Out"}</Button></TableCell>
+                  <TableCell className="text-right"><Button size="sm" variant="destructive" disabled={controlBusy === "clock-out"} onClick={() => setForceClockOutOpen(true)}>{controlBusy === "clock-out" ? "Clocking out…" : "Force Clock Out"}</Button></TableCell>
                 </TableRow>
               </TableBody>
             </Table>
@@ -403,6 +384,8 @@ export function AdminView() {
           </TableBody></Table></div>{filteredArchivedAccounts.length === 0 && <div className="py-10 text-center text-sm text-slate-400">{archivedAccounts.length ? 'No archived employees match the selected filters.' : 'The archive is empty.'}</div>}<PaginationControls {...archivePage} onPageChange={archivePage.setPage} /></CardContent>
         </Card>
       )}
+
+      {forceClockOutOpen && <ForceClockOutDialog onClose={() => setForceClockOutOpen(false)} />}
 
       <Dialog open={Boolean(confirmation)} onClose={() => closeConfirmation(false)} className="max-w-md">
         <DialogHeader><div><div className={`mb-3 grid h-10 w-10 place-items-center rounded-xl ${confirmation?.destructive ? "bg-rose-100 text-rose-700" : "bg-violet-100 text-violet-700"}`}><ShieldCheck className="h-5 w-5" /></div><h3 className="text-lg font-bold text-slate-950">{confirmation?.title}</h3><p className="mt-2 text-sm leading-6 text-slate-600">{confirmation?.description}</p></div><DialogClose onClose={() => closeConfirmation(false)} /></DialogHeader>

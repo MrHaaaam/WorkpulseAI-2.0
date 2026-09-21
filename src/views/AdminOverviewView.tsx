@@ -1,3 +1,4 @@
+import { AdminPageHeader } from "../components/AdminPageHeader";
 import { useState } from "react";
 import { 
   Users, 
@@ -204,13 +205,7 @@ export function AdminOverviewView({
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <h2 className="text-2xl font-bold text-slate-900">Admin Overview</h2>
-          <p className="text-sm text-slate-500">Daily workforce status, attendance performance, and items requiring review</p>
-        </div>
-        <DateNavigator label="Overview date" value={performanceDate} onChange={onPerformanceDateChange} />
-      </div>
+      <AdminPageHeader title="Admin Overview" description="Track your workforce, attendance, and items to review." icon={Activity} actions={<DateNavigator label="Overview date" value={performanceDate} onChange={onPerformanceDateChange} />} />
 
       {/* Workforce inventory cards */}
       <Card data-guide="workforce-operations">
@@ -479,7 +474,7 @@ export function AdminOverviewView({
                 <Activity className="h-5 w-5 text-slate-600" />
                 System Audit Trail & Recent Activity
               </CardTitle>
-              <CardDescription>Authentication, kiosk, employee, leave, payroll, settings, and administrative actions for the selected date</CardDescription>
+              <CardDescription>Sign-ins, fingerprint scans, and workforce changes for the selected date</CardDescription>
             </div>
             <DateNavigator label="Audit date" value={auditDate} onChange={onAuditDateChange} />
           </div>
@@ -498,7 +493,7 @@ export function AdminOverviewView({
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {auditPage.pageItems.map((activity, index) => (
+                {auditPage.pageItems.map((activity) => (
                   <tr key={activity.id} tabIndex={0} title={activity.detail} aria-label={activity.detail} className="group relative outline-none hover:bg-slate-50/70 focus:bg-violet-50 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-violet-500">
                     <td className="whitespace-nowrap px-4 py-3 font-medium text-slate-900">{activity.user}</td>
                     <td className="px-4 py-3">
@@ -508,7 +503,7 @@ export function AdminOverviewView({
                         'bg-slate-100 text-slate-700'
                       }`}>{activity.role}</span>
                     </td>
-                    <td className="relative px-4 py-3 text-slate-700">{activity.action}{activity.detail && <span role="tooltip" className={`pointer-events-none absolute left-2 z-30 hidden w-80 max-w-[min(20rem,calc(100vw-3rem))] rounded-xl border border-violet-500 bg-violet-700 p-3 text-xs font-normal leading-5 text-white shadow-xl shadow-violet-900/20 group-hover:block group-focus:block ${index < 2 ? "top-full mt-2" : "bottom-full mb-2"}`}>{activity.detail}</span>}</td>
+                    <td className="min-w-64 px-4 py-3 text-slate-700"><p className="font-medium">{activity.action}</p>{activity.detail && <details className="mt-1 text-xs text-slate-500"><summary className="cursor-pointer py-1 font-medium text-violet-700">View details</summary><p className="mt-1 max-w-md whitespace-normal leading-5">{activity.detail}</p></details>}</td>
                     <td className="whitespace-nowrap px-4 py-3 text-slate-500 text-xs">
                       {activity.time} <span className="text-slate-400">({activity.date})</span>
                     </td>
@@ -516,14 +511,16 @@ export function AdminOverviewView({
                       <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${
                         activity.status === 'Success' || activity.status === 'On Time' 
                           ? 'text-emerald-700 bg-emerald-50' 
-                          : activity.status === 'Late' 
+                          : activity.status === 'Failed'
+                          ? 'text-rose-700 bg-rose-50'
+                          : activity.status === 'Late'
                           ? 'text-amber-700 bg-amber-50' 
                           : 'text-slate-600 bg-slate-100'
                       }`}>{activity.status}</span>
                     </td>
                   </tr>
                 ))}
-                {auditTrail.length === 0 && <tr><td colSpan={5} className={`px-4 py-10 text-center text-sm ${auditError ? 'text-rose-600' : 'text-slate-400'}`}>{auditLoading ? 'Loading audit events…' : auditError || 'No audit events found in audit_events.'}</td></tr>}
+                {auditTrail.length === 0 && <tr><td colSpan={5} className={`px-4 py-10 text-center text-sm ${auditError ? 'text-rose-600' : 'text-slate-400'}`}>{auditLoading ? 'Loading audit events…' : auditError || 'No activity recorded for this date.'}</td></tr>}
               </tbody>
             </table>
             <PaginationControls {...auditPage} onPageChange={auditPage.setPage} />
@@ -776,7 +773,9 @@ export function OverviewView({
                         <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${
                           activity.status === 'Success' || activity.status === 'On Time' 
                             ? 'text-emerald-700 bg-emerald-50' 
-                            : activity.status === 'Late' 
+                            : activity.status === 'Failed'
+                          ? 'text-rose-700 bg-rose-50'
+                          : activity.status === 'Late'
                             ? 'text-amber-700 bg-amber-50' 
                             : 'text-slate-600 bg-slate-100'
                         }`}>{activity.status}</span>

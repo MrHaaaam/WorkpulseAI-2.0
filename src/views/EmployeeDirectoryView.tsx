@@ -1,3 +1,4 @@
+import { AdminPageHeader } from "../components/AdminPageHeader";
 import { useEffect, useMemo, useState } from "react";
 import { Archive, BriefcaseBusiness, CalendarDays, Check, Clock, Contact, Fingerprint, Grid2X2, IdCard, KeyRound, List, Mail, MapPin, Pencil, Phone, Plus, ScanLine, Search, ShieldCheck, UserRound, X } from "lucide-react";
 
@@ -314,19 +315,12 @@ export function EmployeeDirectoryView({ employees: initialEmployees }: Partial<E
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <p className="text-xs font-bold uppercase tracking-[.16em] text-violet-600">Workforce records</p>
-          <h2 className="mt-1 text-2xl font-bold text-slate-900">Employee Directory</h2>
-          <p className="mt-1 max-w-2xl text-sm leading-6 text-slate-600">Find employees, review their work status, and manage account details.</p>
-        </div>
-        <div className="flex flex-wrap gap-2"><Button variant="outline" onClick={() => window.open('/kiosk', '_blank', 'noopener,noreferrer')}><ScanLine className="h-4 w-4" /> Open Kiosk</Button><Button data-guide="employee-add" onClick={openAdd}><Plus className="h-4 w-4" /> Add Employee</Button></div>
-      </div>
+      <AdminPageHeader title="Employee Directory" description="Find employees and manage their account details." icon={Contact} actions={<><Button variant="outline" onClick={() => window.open('/kiosk', '_blank', 'noopener,noreferrer')}><ScanLine className="h-4 w-4" /> Open Kiosk</Button><Button data-guide="employee-add" onClick={openAdd}><Plus className="h-4 w-4" /> Add Employee</Button></>} />
 
       <div data-guide="employee-filters" className="grid grid-cols-1 gap-2 sm:grid-cols-[minmax(0,1fr)_auto_auto] sm:items-center lg:grid-cols-[minmax(18rem,28rem)_auto_auto_1fr]">
         <div className="relative min-w-0">
           <label htmlFor="employee-directory-search" className="sr-only">Search employees</label><Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" aria-hidden="true" />
-          <Input id="employee-directory-search" type="search" placeholder="Search name, employee ID, government ID, role, or address..." value={search} onChange={(e) => setSearch(e.target.value)} className="pl-10" />
+          <Input id="employee-directory-search" type="search" placeholder="Search employees..." value={search} onChange={(e) => setSearch(e.target.value)} className="pl-10" />
         </div>
         <label htmlFor="employee-status-filter" className="sr-only">Filter by employment status</label><select id="employee-status-filter" aria-label="Filter by employment status" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value as typeof statusFilter)} className="h-10 w-full rounded-lg border border-slate-300 bg-white px-3 text-sm text-slate-700 focus:border-violet-500 focus:outline-none focus:ring-4 focus:ring-violet-200 sm:w-auto">
           <option value="All">All statuses</option><option value="active">Active</option><option value="on-leave">On Leave</option><option value="inactive">Inactive</option>
@@ -424,7 +418,7 @@ export function EmployeeDirectoryView({ employees: initialEmployees }: Partial<E
           </div>
           {!editingId && fingerprintSamples.length !== REQUIRED_FINGERPRINT_SCANS && <p className="mt-2 text-xs font-medium text-amber-600">Capture three scans of the same finger; all three must match accurately.</p>}
           </FormSection>
-          {!editingId && <FormSection icon={<KeyRound className="h-4 w-4" />} title="Employee login" description="A login account is created together with the employee record."><div className="rounded-xl border border-sky-200 bg-sky-50 p-4"><p className="text-sm font-semibold text-sky-900">Login email: {draft.email || "Enter the employee email above"}</p><p className="mt-1 text-xs leading-5 text-sky-700">WorkPulse generates a secure password and sends it directly to this email. The password is never displayed to the administrator.</p></div></FormSection>}
+          {!editingId && <FormSection icon={<KeyRound className="h-4 w-4" />} title="Employee login" description="A login account is created together with the employee record."><div className="rounded-xl border border-sky-200 bg-sky-50 p-4"><p className="text-sm font-semibold text-sky-900">Login email: {draft.email || "Enter the employee email above"}</p><p className="mt-1 text-xs leading-5 text-sky-700">WORKPULSE MVL generates a secure password and sends it directly to this email. The password is never displayed to the administrator.</p></div></FormSection>}
           {editingId && <FormSection icon={<KeyRound className="h-4 w-4" />} title="Confirm administrator changes" description="Your admin password is required before profile, role, or fingerprint changes can be saved."><Field label="Admin password" required><Input required type="password" autoComplete="current-password" disabled={passwordRetrySeconds > 0} placeholder={passwordRetrySeconds > 0 ? `Try again in ${passwordRetrySeconds}s` : "Enter your admin password"} value={adminPassword} onChange={(event) => { setAdminPassword(event.target.value); setFormError(""); }} /></Field>{passwordRetrySeconds > 0 && <p className="mt-2 text-xs font-medium text-amber-600">Password attempts locked for {passwordRetrySeconds} more seconds.</p>}</FormSection>}
           {formError && <p className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-medium text-rose-700">{formError}</p>}
           </div>

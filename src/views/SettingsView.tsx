@@ -1,5 +1,6 @@
+import { AdminPageHeader } from "../components/AdminPageHeader";
 import { useEffect, useState } from "react";
-import { CalendarDays, ChevronLeft, ChevronRight, Clock, Eye, EyeOff, Info, KeyRound, Save, WalletCards } from "lucide-react";
+import { Settings, CalendarDays, ChevronLeft, ChevronRight, Clock, Eye, EyeOff, Info, KeyRound, Save, WalletCards } from "lucide-react";
 
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../components/ui/Card";
 import { Input, Label } from "../components/ui/Input";
@@ -102,12 +103,8 @@ export function SettingsView() {
   };
 
   return (
-    <div className="mx-auto max-w-5xl space-y-6">
-      <div className="rounded-2xl border border-violet-100 bg-gradient-to-r from-violet-50 to-white p-5 sm:p-6">
-        <p className="text-xs font-bold uppercase tracking-[0.16em] text-violet-600">Company rules</p>
-        <h2 className="mt-1 text-2xl font-bold text-slate-900">System Settings</h2>
-        <p className="mt-1 max-w-2xl text-sm text-slate-600">Choose the basic attendance and leave rules used by WorkPulse. Save once when you are finished.</p>
-      </div>
+    <div className="space-y-6">
+      <AdminPageHeader title="System Settings" description="Set attendance, leave, and pay rules. Save when finished." icon={Settings} />
 
       <div className="grid grid-cols-1 items-start gap-6 lg:grid-cols-3">
         <Card className="overflow-hidden self-start lg:col-span-2 lg:row-span-2">
@@ -151,7 +148,7 @@ export function SettingsView() {
 
             <div className="hidden">
               <Label>Normal work days each week</Label>
-              <div className="grid grid-cols-3 gap-2">
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
                 {[5, 6, 7].map((days) => (
                   <button key={days} type="button" disabled={specialScheduleActive} onClick={() => setShift({ workDays: days, workWeekdays: Array.from({ length: days }, (_, index) => index + 1).map((day) => day === 7 ? 0 : day) })} className={`rounded-xl border px-3 py-3 text-sm font-semibold transition disabled:cursor-not-allowed disabled:border-slate-200 disabled:bg-slate-100 disabled:text-slate-400 ${!specialScheduleActive && settings.shift.workDays === days ? "border-violet-400 bg-violet-50 text-violet-700" : "border-slate-200 bg-white text-slate-600 hover:border-violet-200"}`}>
                     {days} days

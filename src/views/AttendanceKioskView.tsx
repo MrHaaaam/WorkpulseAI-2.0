@@ -152,7 +152,7 @@ export function AttendanceKioskView() {
     <div className="pointer-events-none absolute -right-24 top-0 h-96 w-96 rounded-full bg-violet-600/20 blur-3xl" />
     <div className="relative mx-auto flex min-h-[calc(100vh-3rem)] max-w-6xl flex-col">
       <header className="flex items-center justify-between gap-4">
-        <div className="flex items-center gap-3"><div className="grid h-11 w-11 place-items-center rounded-xl bg-violet-600"><FingerprintIcon className="h-5 w-5" /></div><div><p className="font-bold">WorkPULSE AI</p><p className="text-xs text-indigo-200/70">Fingerprint attendance kiosk</p></div></div>
+        <div className="flex items-center gap-3"><div className="grid h-11 w-11 place-items-center rounded-xl bg-violet-600"><FingerprintIcon className="h-5 w-5" /></div><div><p className="font-bold">WORKPULSE MVL</p><p className="text-xs text-indigo-200/70">Fingerprint attendance kiosk</p></div></div>
         <a href="/overview?view=employees" className="inline-flex min-h-11 items-center gap-2 rounded-xl border border-white/20 bg-white/10 px-4 py-2 text-sm font-semibold text-white hover:bg-white/15 focus:outline-none focus:ring-4 focus:ring-violet-300/40"><ArrowLeft className="h-4 w-4" aria-hidden="true" /> Admin workspace</a>
       </header>
 

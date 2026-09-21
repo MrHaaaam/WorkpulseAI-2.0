@@ -184,7 +184,7 @@ export default function LoginSplitPage() {
         <section className="relative hidden overflow-hidden bg-gradient-to-br from-slate-950 via-indigo-950 to-violet-900 p-12 text-white lg:flex lg:flex-col lg:justify-between xl:p-16">
           <div className="absolute -left-24 top-1/3 h-80 w-80 rounded-full bg-indigo-500/20 blur-3xl" />
           <div className="absolute -right-20 -top-16 h-80 w-80 rounded-full bg-violet-500/20 blur-3xl" />
-          <div className="relative flex items-center gap-3"><div className="grid h-11 w-11 place-items-center rounded-2xl bg-white/10 ring-1 ring-white/15"><Fingerprint className="h-5 w-5" /></div><span className="text-xl font-bold">Workpulse<span className="text-violet-300">AI</span></span></div>
+          <div className="relative flex items-center gap-3"><div className="grid h-11 w-11 place-items-center rounded-2xl bg-white/10 ring-1 ring-white/15"><Fingerprint className="h-5 w-5" /></div><span className="text-xl font-bold">WORKPULSE<span className="text-violet-300"> MVL</span></span></div>
           <div className="relative max-w-xl">
             <div className="mb-6 inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-4 py-2 text-xs font-semibold text-indigo-200"><Sparkles className="h-3.5 w-3.5" /> Smarter workforce operations</div>
             <h1 className="m-0 text-5xl font-bold leading-[1.05] tracking-[-0.04em] text-white xl:text-6xl">Your people.<br />One secure workspace.</h1>
@@ -199,10 +199,10 @@ export default function LoginSplitPage() {
 
         <section className="flex min-h-screen items-center justify-center bg-slate-50 px-4 py-8 sm:px-6 lg:min-h-0 lg:px-16 xl:px-24">
           <div className="w-full max-w-md rounded-3xl border border-slate-200 bg-white p-6 shadow-xl shadow-slate-200/50 sm:p-8 lg:border-0 lg:p-0 lg:shadow-none">
-            <div className="mb-10 flex items-center gap-3 lg:hidden"><div className="grid h-10 w-10 place-items-center rounded-xl bg-indigo-600 text-white"><Fingerprint className="h-5 w-5" /></div><span className="text-xl font-bold">Workpulse<span className="text-indigo-600">AI</span></span></div>
+            <div className="mb-10 flex items-center gap-3 lg:hidden"><div className="grid h-10 w-10 place-items-center rounded-xl bg-indigo-600 text-white"><Fingerprint className="h-5 w-5" /></div><span className="text-xl font-bold">WORKPULSE<span className="text-indigo-600"> MVL</span></span></div>
             <div className="mb-8">
               <p className="mb-3 text-xs font-bold uppercase tracking-[.18em] text-indigo-600">{recoveryStep !== 'login' ? 'Employee account recovery' : verificationId ? 'Step 2 of 2' : 'Secure workspace access'}</p>
-              <h1 className="m-0 text-3xl font-bold tracking-tight text-slate-950 sm:text-4xl">{recoveryStep !== 'login' ? recoveryTitle : verificationId ? 'Check your email' : 'Sign in to WorkpulseAI'}</h1>
+              <h1 className="m-0 text-3xl font-bold tracking-tight text-slate-950 sm:text-4xl">{recoveryStep !== 'login' ? recoveryTitle : verificationId ? 'Check your email' : 'Sign in to WORKPULSE MVL'}</h1>
               <p className="mt-3 text-sm leading-6 text-slate-600">{recoveryStep !== 'login' ? recoveryDescription : verificationId ? `Enter the 6-digit code sent to ${email}.` : 'Use your organization account to continue securely.'}</p>
             </div>
 

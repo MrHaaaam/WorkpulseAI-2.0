@@ -40,14 +40,16 @@ export function Dialog({ open, onClose, children, className }: DialogProps) {
 }
 
 export function DialogHeader({ children }: { children: React.ReactNode }) {
-  return <div className="flex items-start justify-between gap-3 p-4 pb-2 sm:p-6 sm:pb-2">{children}</div>;
+  return <div className="flex shrink-0 items-start justify-between gap-3 p-4 pb-2 sm:p-6 sm:pb-2">{children}</div>;
 }
 
 export function DialogClose({ onClose }: { onClose: () => void }) {
   return (
     <button
+      type="button"
+      aria-label="Close dialog"
       onClick={onClose}
-      className="rounded-lg p-1.5 text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-600"
+      className="grid h-11 w-11 shrink-0 place-items-center rounded-lg text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-600"
     >
       <X className="h-5 w-5" />
     </button>

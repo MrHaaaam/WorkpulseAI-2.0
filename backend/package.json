@@ -12,6 +12,7 @@
     "seed:ai": "node seed-ai-test-data.js",
     "audit:security": "node audit-report.js",
     "seed:employee:deocares": "node seed-employee-account.js",
+    "seed:attendance:deocares": "node seed-deocares-attendance.js",
     "seed:test:red-flag": "node seed-red-flag-test-employee.js"
   },
   "dependencies": {

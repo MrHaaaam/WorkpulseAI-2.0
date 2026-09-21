@@ -1,5 +1,7 @@
 import { useState, useEffect, useMemo } from 'react';
-import { Menu } from 'lucide-react';
+import { Bell, CalendarDays, Clock, LogOut, Menu, Sparkles } from 'lucide-react';
+import { Dialog, DialogHeader } from '../components/ui/Dialog';
+import { Button } from '../components/ui/Button';
 import { AdminSidebar, type ViewKey } from '../components/AdminSidebar';
 import { AdminOverviewView } from '../views/AdminOverviewView';
 import { EmployeeDirectoryView } from '../views/EmployeeDirectoryView';
@@ -10,13 +12,13 @@ import { AIInsightsView } from '../views/AIInsightsView';
 import { LeaveRequestsView } from '../views/LeaveRequestsView';
 import { AdminView } from '../views/AdminView';
 import { AttendanceView } from '../views/AttendanceView';
-import { apiFetch } from '../lib/api';
+import { apiFetch, clearSession } from '../lib/api';
 
 type OverviewEmployee = { status: string; biometricStatus: string; createdAt?: string };
 type OverviewPayroll = { status: string; periodStart?: string };
 type OverviewAttendance = { employeeId?: string; name?: string; role?: string; date?: string; checkIn?: string; checkOut?: string; status: string };
 type OverviewLeave = { id: string; employeeId?: string; startDate: string; endDate: string; approvedDates?: string[]; totalDays: number; status: string };
-type OverviewAuditEvent = { id: string; occurredAt?: string; actorEmail?: string | null; actorRole?: string; screenName?: string; action?: string; targetType?: string; targetId?: string | null; outcome?: string; metadata?: Record<string, unknown> };
+type OverviewAuditEvent = { id: string; executedAction?: string; detail?: string; occurredAt?: string; actorEmail?: string | null; actorRole?: string; screenName?: string; action?: string; targetType?: string; targetId?: string | null; outcome?: string; metadata?: Record<string, unknown> };
 
 function readableAuditAction(action = 'unknown', targetType = 'system') {
   const labels: Record<string, string> = {
@@ -34,6 +36,7 @@ function readableAuditAction(action = 'unknown', targetType = 'system') {
 }
 
 function auditActionLabel(event: OverviewAuditEvent) {
+  if (event.executedAction) return event.executedAction;
   const path = String(event.metadata?.path || '');
   const leaveAction = String(event.metadata?.leaveAction || '');
   if (String(event.metadata?.attendanceAction || '') === 'exported') return 'Attendance Exported';
@@ -80,7 +83,10 @@ function auditActionLabel(event: OverviewAuditEvent) {
 }
 
 function auditEventDetail(event: OverviewAuditEvent, time: string) {
+  if (event.detail) return event.detail;
+  if (event.outcome === 'failure') return `${event.actorEmail || "User"}: ${auditActionLabel(event)} at ${time}.`;
   const actor = event.actorEmail || String(event.metadata?.attemptedEmail || '') || (event.actorRole === 'anonymous' ? 'Unknown user' : 'System');
+  if (event.executedAction) return `${actor}: ${event.executedAction} at ${time}.${typeof event.metadata?.recordCount === 'number' ? ` Records affected: ${event.metadata.recordCount}.` : ''}`;
   const path = String(event.metadata?.path || '');
   const targetName = String(event.metadata?.targetName || event.targetId || '').trim();
   const result = event.outcome === 'success' ? 'succeeded' : event.outcome === 'failure' ? 'failed' : 'finished with an unknown result';
@@ -216,6 +222,109 @@ export function AppRoutes() {
   const initialView: ViewKey = validViews.includes(paramView) ? paramView : 'overview';
   const [active, setActive] = useState<ViewKey>(initialView);
   const [mobileNavigationOpen, setMobileNavigationOpen] = useState(false);
+  const [accountName, setAccountName] = useState('');
+  const [logoutOpen, setLogoutOpen] = useState(false);
+  const [loggingOut, setLoggingOut] = useState(false);
+  const [logoutError, setLogoutError] = useState('');
+  const [notificationsOpen, setNotificationsOpen] = useState(false);
+  const [notifications, setNotifications] = useState<{ id: string; category: 'leave' | 'attendance' | 'insights'; title: string; description: string; createdAt: string; expiresAt: string; read: boolean }[]>([]);
+  const [notificationCategory, setNotificationCategory] = useState<'all' | 'leave' | 'attendance' | 'insights'>('all');
+  const [newNotificationIds, setNewNotificationIds] = useState<string[]>([]);
+  const [notificationNow, setNotificationNow] = useState(Date.now);
+  const visibleNotifications = notifications.filter((item) => new Date(item.expiresAt).getTime() > notificationNow).sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  const filteredNotifications = visibleNotifications.filter((item) => notificationCategory === 'all' || item.category === notificationCategory);
+  const notificationCategories = [
+    { key: 'all', label: 'All', icon: Bell },
+    { key: 'leave', label: 'Leave Requests', icon: CalendarDays },
+    { key: 'attendance', label: 'Attendance', icon: Clock },
+    { key: 'insights', label: 'AI Insights', icon: Sparkles },
+  ] as const;
+  useEffect(() => {
+    const timer = window.setInterval(() => setNotificationNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, []);
+  const [notificationsLoading, setNotificationsLoading] = useState(true);
+  const [notificationsError, setNotificationsError] = useState('');
+  const [notificationReadError, setNotificationReadError] = useState('');
+  const unreadCount = notificationsOpen ? 0 : visibleNotifications.filter((request) => !request.read).length;
+
+  useEffect(() => {
+    let cancelled = false;
+    apiFetch('/api/admin/account-security').then(async (response) => {
+      if (!response.ok) throw new Error('Unable to load account');
+      const account = await response.json();
+      if (!cancelled) setAccountName(account.name?.trim() || account.email);
+    }).catch(() => { if (!cancelled) setAccountName('Account unavailable'); });
+    return () => { cancelled = true; };
+  }, [active]);
+
+  useEffect(() => {
+    let cancelled = false;
+    let refreshing = false;
+    async function refreshNotifications() {
+      if (refreshing || document.visibilityState === 'hidden') return;
+      refreshing = true;
+      try {
+        const response = await apiFetch('/api/admin/notifications');
+        if (!response.ok) throw new Error('Unable to load notifications. Please try again.');
+        const requests = await response.json() as typeof notifications;
+        if (!cancelled) {
+          setNotifications(requests);
+          setNotificationsError('');
+          if (notificationsOpen) {
+            const ids = requests.filter((request) => !request.read).map((request) => request.id);
+            if (ids.length) {
+              setNewNotificationIds((current) => [...new Set([...current, ...ids])]);
+              try {
+                const readResponse = await apiFetch('/api/admin/notifications/read', {
+                  method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids }),
+                });
+                if (!readResponse.ok) throw new Error('Unable to save read state');
+                const { readIds } = await readResponse.json() as { readIds: string[] };
+                if (!cancelled) {
+                  setNotifications((current) => current.map((request) => readIds.includes(request.id) ? { ...request, read: true } : request));
+                  setNotificationReadError('');
+                }
+              } catch {
+                if (!cancelled) setNotificationReadError('Could not save read status. The badge may return. Reopen notifications to retry.');
+              }
+            } else setNotificationReadError('');
+          }
+        }
+      } catch {
+        if (!cancelled) setNotificationsError('Unable to load notifications. Please try again.');
+      } finally {
+        refreshing = false;
+        if (!cancelled) setNotificationsLoading(false);
+      }
+    }
+    void refreshNotifications();
+    const timer = window.setInterval(() => void refreshNotifications(), 30_000);
+    const refreshWhenVisible = () => { if (document.visibilityState === 'visible') void refreshNotifications(); };
+    document.addEventListener('visibilitychange', refreshWhenVisible);
+    return () => { cancelled = true; window.clearInterval(timer); document.removeEventListener('visibilitychange', refreshWhenVisible); };
+  }, [active, notificationsOpen]);
+
+  function requestLogout() {
+    setMobileNavigationOpen(false);
+    setLogoutError('');
+    setLogoutOpen(true);
+  }
+
+  async function logout() {
+    if (loggingOut) return;
+    setLoggingOut(true);
+    setLogoutError('');
+    try {
+      const response = await apiFetch('/api/auth/logout', { method: 'POST' });
+      if (!response.ok && response.status !== 401) throw new Error('Logout failed');
+      clearSession();
+      window.location.replace('/');
+    } catch {
+      setLogoutError('Unable to log out. Please try again.');
+      setLoggingOut(false);
+    }
+  }
   const [overviewPerformanceDate, setOverviewPerformanceDate] = useState(manilaDateToday);
   const [overviewViewMode, setOverviewViewMode] = useState<'daily' | 'weekly' | 'monthly'>('weekly');
 
@@ -309,17 +418,17 @@ export function AppRoutes() {
     };
   }, [overviewAttendance, overviewPayroll]);
 
-  const auditTrail = useMemo(() => overviewAuditEvents.map((event) => {
+  const auditTrail = useMemo(() => overviewAuditEvents.filter((event) => !['auth.otp_sent', 'auth.otp_verify'].includes(event.action || '') && event.metadata?.path !== '/admin/notifications/read').map((event) => {
     const occurredAt = event.occurredAt ? new Date(event.occurredAt) : null;
     const validDate = occurredAt && !Number.isNaN(occurredAt.getTime()) ? occurredAt : null;
-    const time = validDate ? validDate.toLocaleTimeString('en-PH', { hour: '2-digit', minute: '2-digit' }) : '—';
+    const time = validDate ? validDate.toLocaleTimeString('en-PH', { timeZone: 'Asia/Manila', hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '—';
     return {
       id: event.id,
       user: event.screenName || 'System',
       role: event.actorRole === 'admin' ? 'Admin' : event.actorRole === 'manager' ? 'Manager' : event.actorRole === 'anonymous' ? 'System' : 'Staff',
       action: auditActionLabel(event),
       time,
-      date: validDate ? validDate.toLocaleDateString('en-PH', { month: 'short', day: 'numeric', year: 'numeric' }) : '—',
+      date: validDate ? validDate.toLocaleDateString('en-PH', { timeZone: 'Asia/Manila', month: 'short', day: 'numeric', year: 'numeric' }) : '—',
       status: event.outcome === 'success' ? 'Success' : event.outcome === 'failure' ? 'Failed' : 'Unknown',
       detail: auditEventDetail(event, time),
     };
@@ -377,23 +486,59 @@ export function AppRoutes() {
       newParams.delete('role');
       
       const targetUrl = `${window.location.pathname}?${newParams.toString()}`;
-      window.history.replaceState(null, '', targetUrl);
+      window.history.replaceState(window.history.state, '', targetUrl);
     }
   }, [active]);
 
   return (
     <div className="flex min-h-screen w-full bg-slate-100/70">
-      <AdminSidebar active={active} onNavigate={setActive} mobileOpen={mobileNavigationOpen} onMobileClose={() => setMobileNavigationOpen(false)} />
+      <AdminSidebar active={active} onNavigate={setActive} mobileOpen={mobileNavigationOpen} onMobileClose={() => setMobileNavigationOpen(false)} accountName={accountName} onLogout={requestLogout} />
       <div className="min-w-0 flex-1">
         <header className="sticky top-0 z-30 flex h-16 items-center border-b border-slate-200/80 bg-white/90 px-4 backdrop-blur-xl sm:px-6 lg:px-8">
-          <button onClick={() => setMobileNavigationOpen(true)} aria-label="Open navigation" className="mr-3 rounded-xl border border-slate-200 p-2 text-slate-600 hover:bg-slate-50 lg:hidden"><Menu className="h-5 w-5" /></button>
+          <button onClick={() => setMobileNavigationOpen(true)} aria-label="Open navigation" className="mr-2 grid h-11 w-11 shrink-0 place-items-center rounded-xl border border-slate-200 sm:mr-3 text-slate-600 hover:bg-slate-50 lg:hidden"><Menu className="h-5 w-5" /></button>
           <div className="min-w-0"><p className="text-[10px] font-bold uppercase tracking-[0.16em] text-violet-600">Admin workspace</p><h1 className="truncate text-base font-bold text-slate-900 sm:text-lg">{viewLabels[active]}</h1></div>
-          <div className="ml-auto hidden items-center gap-2 rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-semibold text-emerald-700 sm:flex"><span className="h-2 w-2 rounded-full bg-emerald-500" />System online</div>
+          <div className="ml-auto flex shrink-0 items-center gap-2 pl-2">
+            <button type="button" onClick={() => { setNotificationCategory('all'); setNewNotificationIds([]); setNotificationReadError(''); setNotificationsOpen(true); }} aria-label={`Notifications${!notificationsError && unreadCount ? `, ${unreadCount} unread notifications` : ''}`} className="relative grid h-11 w-11 place-items-center rounded-xl border border-slate-200 text-slate-600 hover:bg-violet-50 hover:text-violet-700">
+              <Bell className="h-5 w-5" />
+              {!notificationsError && unreadCount > 0 && <span className="absolute -right-1 -top-1 rounded-full bg-violet-600 px-1.5 text-[10px] font-bold text-white">{unreadCount > 99 ? '99+' : unreadCount}</span>}
+            </button>
+            <Button variant="outline" className="h-11 w-11 px-0 sm:w-auto sm:px-4" onClick={requestLogout}><LogOut className="h-4 w-4" /><span className="hidden sm:inline">Log out</span><span className="sr-only sm:hidden">Log out</span></Button>
+          </div>
         </header>
         <main className="min-w-0 overflow-x-hidden px-3 py-4 sm:px-5 sm:py-6 lg:px-8 lg:py-8">
           <div className="mx-auto w-full max-w-[1600px]">{viewMap[active] || viewMap.overview}</div>
         </main>
       </div>
+      <Dialog open={logoutOpen} onClose={() => !loggingOut && setLogoutOpen(false)} className="max-w-sm">
+        <div role="dialog" aria-modal="true" aria-labelledby="logout-title" onKeyDown={(event) => { if (event.key === 'Escape' && !loggingOut) setLogoutOpen(false); }}>
+          <DialogHeader><div><h2 id="logout-title" className="text-lg font-bold text-slate-900">Log out?</h2><p className="mt-2 text-sm text-slate-600">Are you sure you want to log out?</p></div></DialogHeader>
+          {logoutError && <p role="alert" className="px-6 py-2 text-sm text-red-600">{logoutError}</p>}
+          <div className="flex justify-end gap-2 p-6"><Button autoFocus variant="outline" disabled={loggingOut} onClick={() => setLogoutOpen(false)}>Cancel</Button><Button variant="destructive" disabled={loggingOut} onClick={() => void logout()}>{loggingOut ? 'Logging out...' : 'Log out'}</Button></div>
+        </div>
+      </Dialog>
+      <Dialog open={notificationsOpen} onClose={() => setNotificationsOpen(false)} className="h-[90dvh] max-h-[90dvh] max-w-2xl overflow-hidden sm:h-[640px] sm:max-h-[calc(100dvh-2rem)]">
+        <div className="flex h-full min-h-0 flex-col" role="dialog" aria-modal="true" aria-labelledby="notifications-title" onKeyDown={(event) => { if (event.key === 'Escape') setNotificationsOpen(false); }}>
+          <DialogHeader><div><h2 id="notifications-title" className="text-lg font-bold text-slate-900">Notifications</h2><p className="mt-1 text-sm text-slate-500">Latest updates from the last 3 days. Opening this panel marks them as read.</p></div></DialogHeader>
+          {notificationReadError && <p role="alert" className="shrink-0 px-4 pt-3 text-xs text-amber-700 sm:px-6">{notificationReadError}</p>}
+          <div className="grid shrink-0 grid-cols-2 gap-2 px-4 pt-3 sm:grid-cols-4 sm:px-6" aria-label="Notification categories">
+            {notificationCategories.map(({ key, label, icon: Icon }) => <button key={key} type="button" aria-pressed={notificationCategory === key} onClick={() => setNotificationCategory(key)} className={`inline-flex min-h-11 min-w-0 items-center justify-center gap-1.5 rounded-lg px-2 py-2 text-xs font-semibold transition ${notificationCategory === key ? 'bg-violet-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-violet-50'}`}><Icon className="h-3.5 w-3.5" />{label}<span className="rounded-full bg-white/20 px-1.5">{visibleNotifications.filter((item) => key === 'all' || item.category === key).length}</span></button>)}
+          </div>
+          <div className="min-h-0 flex-1 space-y-2 overflow-y-auto overscroll-contain px-4 py-4 sm:px-6">
+            {notificationsLoading ? <p className="text-sm text-slate-500">Loading notifications...</p> : notificationsError ? <p role="alert" className="text-sm text-red-600">{notificationsError}</p> : filteredNotifications.length === 0 ? <p className="flex h-full min-h-24 items-center justify-center text-center text-sm text-slate-500">No updates in the last 3 days{notificationCategory === 'all' ? '.' : ' in this category.'}</p> : filteredNotifications.map((item) => {
+              const category = notificationCategories.find((category) => category.key === item.category)!;
+              const Icon = category.icon;
+              const isNew = newNotificationIds.includes(item.id) || !item.read;
+              return <button key={item.id} onClick={() => { setActive(item.category); setNotificationsOpen(false); }} className={`block w-full rounded-xl border p-4 text-left transition hover:border-violet-300 hover:bg-violet-50 ${isNew ? 'border-violet-200 bg-violet-50/70' : 'border-slate-200 bg-white'}`}>
+                <div className="flex items-center gap-2 text-xs font-semibold text-violet-700"><Icon className="h-4 w-4" />{category.label}{isNew && <span className="rounded-full bg-violet-600 px-2 py-0.5 text-[10px] text-white">New</span>}</div>
+                <p className="mt-2 break-words text-sm font-semibold text-slate-900">{item.title}</p>
+                <p className="mt-1 break-words text-sm leading-5 text-slate-600">{item.description}</p>
+                <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-xs"><time dateTime={item.createdAt} className="text-slate-500">{new Date(item.createdAt).toLocaleString('en-PH', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}</time><span className="font-semibold text-violet-700">Open {category.label}</span></div>
+              </button>;
+            })}
+          </div>
+          <div className="flex shrink-0 justify-end border-t border-slate-100 px-4 pt-3 pb-[max(1rem,env(safe-area-inset-bottom))] sm:px-6"><Button autoFocus className="w-full sm:w-auto" variant="outline" onClick={() => setNotificationsOpen(false)}>Close</Button></div>
+        </div>
+      </Dialog>
     </div>
   );
 }

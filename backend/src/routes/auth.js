@@ -88,7 +88,7 @@ router.post('/login', loginLimit, async (request, response) => {
     if (!account || !(await verifySecret(password, account.passwordHash))) { await auditEvent({ req: request, actor: account, action: 'auth.login', targetType: 'session', outcome: 'failure', metadata: { reason: 'credentials', attemptedEmail: email } }); return response.status(401).json({ error: 'Invalid email or password' }); }
     if (accountType === 'employee' && (await getSystemControls(db)).maintenanceMode) {
       await auditEvent({ req: request, actor: account, action: 'auth.login', targetType: 'session', outcome: 'failure', metadata: { reason: 'maintenance_mode' } });
-      return response.status(503).json({ error: 'WorkPulse is temporarily available to administrators only while maintenance is in progress.' });
+      return response.status(503).json({ error: 'WORKPULSE MVL is temporarily available to administrators only while maintenance is in progress.' });
     }
 
     if (!process.env.SMTP_USER || !process.env.SMTP_APP_PASSWORD) return response.status(503).json({ error: 'Email OTP is not configured on the server' });
@@ -101,7 +101,7 @@ router.post('/login', loginLimit, async (request, response) => {
     }
 
     const transport = nodemailer.createTransport({ service: 'gmail', auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_APP_PASSWORD } });
-    await transport.sendMail({ from: `Workpulse AI <${process.env.SMTP_USER}>`, to: account.email, subject: 'Your Workpulse AI login code', text: `Your Workpulse AI verification code is ${otp}. It expires in 10 minutes.` });
+    await transport.sendMail({ from: `WORKPULSE MVL <${process.env.SMTP_USER}>`, to: account.email, subject: 'Your WORKPULSE MVL login code', text: `Your WORKPULSE MVL verification code is ${otp}. It expires in 10 minutes.` });
     await auditEvent({ req: request, actor: account, action: 'auth.otp_sent', targetType: 'session', outcome: 'success' });
     response.json({ verificationId, message: 'OTP sent to your email' });
   } catch (error) {
@@ -168,7 +168,7 @@ router.get('/session', async (request, response) => {
   const account = await mongoose.connection.db.collection(accountType === 'employee' ? 'employee_accounts' : 'admin_accounts').findOne({ _id: accountId, active: true });
   if (!account) return response.status(401).json({ authenticated: false });
   if (accountType === 'employee' && (await getSystemControls(mongoose.connection.db)).maintenanceMode) {
-    return response.status(503).json({ authenticated: false, error: 'WorkPulse is temporarily available to administrators only while maintenance is in progress.' });
+    return response.status(503).json({ authenticated: false, error: 'WORKPULSE MVL is temporarily available to administrators only while maintenance is in progress.' });
   }
   response.json({
     authenticated: true,
@@ -212,10 +212,10 @@ router.post('/forgot-password/request', passwordResetRequestLimit, async (reques
     if (process.env.NODE_ENV !== 'production') console.log(`[DEV] Employee password reset code for ${account.email}: ${code}`);
     const transport = nodemailer.createTransport({ service: 'gmail', auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_APP_PASSWORD } });
     await transport.sendMail({
-      from: `Workpulse AI <${process.env.SMTP_USER}>`,
+      from: `WORKPULSE MVL <${process.env.SMTP_USER}>`,
       to: account.email,
-      subject: 'Reset your Workpulse AI employee password',
-      text: `Your Workpulse AI password reset code is ${code}. It expires in 10 minutes. If you did not request this change, you can ignore this email.`,
+      subject: 'Reset your WORKPULSE MVL employee password',
+      text: `Your WORKPULSE MVL password reset code is ${code}. It expires in 10 minutes. If you did not request this change, you can ignore this email.`,
     });
     await auditEvent({ req: request, actor: account, action: 'auth.password_reset_requested', targetType: 'employee_account', targetId: account.employeeId, outcome: 'success' });
     response.json({ verificationId, message: genericMessage });

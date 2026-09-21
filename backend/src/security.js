@@ -61,7 +61,9 @@ export function auditScreenName(action, targetType, metadata = {}) {
   const path = String(metadata?.path || '').toLowerCase();
   const target = String(targetType || '').toLowerCase();
   if (['auth.login', 'auth.logout', 'auth.otp_sent', 'auth.otp_verify'].includes(String(action || '')) || target === 'session') return 'Login';
-  if (path.includes('/attendance/kiosk') || target === 'attendance') return 'Kiosk';
+  if (path.includes('/attendance/kiosk')) return 'Kiosk';
+  if (path.startsWith('/attendance') || target === 'attendance') return 'Attendance';
+  if (path.startsWith('/admin/')) return 'Admin Controls';
   if (path.includes('/payroll') || target.includes('payroll')) return 'Payroll';
   if (path.includes('/leave-requests') || target.includes('leave')) return 'Leave Requests';
   if (path.includes('/employees') || target === 'employees' || target.includes('employee')) return 'Employee Directory';
@@ -118,7 +120,7 @@ export async function authenticate(req, res, next) {
     if (!actor) return res.status(401).json({ error: 'Account is unavailable' });
     if (accountType === 'employee') {
       const controls = await getSystemControls(db);
-      if (controls.maintenanceMode) return res.status(503).json({ error: 'WorkPulse is temporarily available to administrators only while maintenance is in progress.' });
+      if (controls.maintenanceMode) return res.status(503).json({ error: 'WORKPULSE MVL is temporarily available to administrators only while maintenance is in progress.' });
     }
     req.auth = { actor, session, accountType, tokenSource: requestToken.source };
     next();

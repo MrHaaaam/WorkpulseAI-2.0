@@ -1,3 +1,6 @@
+import { clockOutSessions, forcedClockOutUpdate } from '../force-clock-out.js';
+import { activityFilter, auditPresentation } from '../audit-display.js';
+import { loadNotifications } from '../notifications.js';
 import { Router } from 'express';
 import mongoose from 'mongoose';
 import nodemailer from 'nodemailer';
@@ -167,7 +170,7 @@ router.use(authenticate, csrfProtection);
 router.use((req, res, next) => {
   if (!['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method)) return next();
   res.on('finish', () => {
-    if (res.locals.skipAudit === true) return;
+    if (res.locals.skipAudit === true || req.path === '/admin/notifications/read') return;
     const body = req.body ?? {};
     const changedFields = Object.keys(body).filter((key) => !['adminPassword', 'password', 'fingerprintSamples', 'template', 'captchaAnswer'].includes(key)).slice(0, 30);
     const targetName = String(body.employeeName || body.name || [body.firstName, body.lastName].filter(Boolean).join(' ') || '').trim().slice(0, 120) || null;
@@ -177,7 +180,7 @@ router.use((req, res, next) => {
       action: `api.${req.method.toLowerCase()}`,
       targetType: req.path.split('/').filter(Boolean)[0] ?? 'api',
       targetId: req.params?.id ?? req.params?.employeeId ?? null,
-      outcome: res.statusCode < 400 ? 'success' : 'failure',
+      outcome: res.locals.auditOutcome || (res.statusCode < 400 ? 'success' : 'failure'),
       metadata: {
         path: req.path, method: req.method, statusCode: res.statusCode, changedFields, targetName,
         requestedStatus: typeof body.status === 'string' ? body.status : null,
@@ -331,8 +334,43 @@ router.patch('/employee/me/leave-requests/:id/cancel', requireRole('regular', 'e
 
 router.use(requireRole('admin'));
 
+// Read state belongs to the account, so it survives logout and device changes.
+router.get('/admin/notifications', async (req, res) => {
+  try {
+    const db = mongoose.connection.db;
+    const notifications = await loadNotifications(db);
+    const seen = new Set(req.auth.actor.seenNotificationIds || []);
+    const legacySeen = new Set(req.auth.actor.seenLeaveNotifications || []);
+    res.json(notifications.map(({ _id, ...event }) => ({
+      ...event, id: _id, read: seen.has(_id) || (event.category === 'leave' && legacySeen.has(_id.slice(6))),
+    })));
+  } catch {
+    res.status(500).json({ error: 'Unable to load notifications' });
+  }
+});
+
+router.post('/admin/notifications/read', async (req, res) => {
+  const ids = req.body?.ids;
+  if (!Array.isArray(ids) || ids.length > 2_000 || ids.some((id) => typeof id !== 'string' || !id || id.length > 200)) {
+    return res.status(400).json({ error: 'Invalid notification IDs' });
+  }
+  try {
+    const db = mongoose.connection.db;
+    const notifications = await db.collection('admin_notifications').find({ _id: { $in: ids }, expiresAt: { $gt: new Date() } }, { projection: { _id: 1 } }).toArray();
+    const readIds = notifications.map((notification) => notification._id);
+    if (readIds.length) {
+      await db.collection(req.auth.accountType === 'employee' ? 'employee_accounts' : 'admin_accounts').updateOne(
+        { _id: req.auth.actor._id }, { $addToSet: { seenNotificationIds: { $each: readIds } } },
+      );
+    }
+    res.json({ readIds });
+  } catch {
+    res.status(500).json({ error: 'Unable to mark notifications as read' });
+  }
+});
+
 router.get('/admin/account-security', (req, res) => {
-  res.json({ email: req.auth.actor.email });
+  res.json({ email: req.auth.actor.email, name: req.auth.actor.name || req.auth.actor.fullName || '' });
 });
 
 router.patch('/admin/account-security', async (req, res) => {
@@ -365,7 +403,7 @@ router.patch('/admin/account-security', async (req, res) => {
         db.collection('admin_accounts').findOne({ email, _id: { $ne: admin._id } }, { projection: { _id: 1 } }),
         db.collection('employee_accounts').findOne({ email }, { projection: { _id: 1 } }),
       ]);
-      if (adminConflict || employeeConflict) return res.status(409).json({ error: 'That email address is already used by another WorkPulse account.' });
+      if (adminConflict || employeeConflict) return res.status(409).json({ error: 'That email address is already used by another WORKPULSE MVL account.' });
     }
 
     const changedAt = new Date();
@@ -375,10 +413,11 @@ router.patch('/admin/account-security', async (req, res) => {
     const revoked = await db.collection('admin_sessions').deleteMany({ _id: { $ne: req.auth.session._id }, $or: [{ accountType: 'admin', accountId: admin._id }, { adminId: admin._id }] });
     await db.collection('login_otps').deleteMany({ $or: [{ accountType: 'admin', accountId: admin._id }, { adminId: admin._id }] });
     await auditEvent({ req, actor: { ...admin, email }, action: 'auth.admin_credentials_changed', targetType: 'admin_account', targetId: String(admin._id), outcome: 'success', metadata: { emailChanged, passwordChanged, revokedSessions: revoked.deletedCount } });
+    res.locals.skipAudit = true;
     res.locals.auditMetadata = { adminAction: 'credentials-updated', emailChanged, passwordChanged, revokedSessions: revoked.deletedCount };
     res.json({ email, emailChanged, passwordChanged, revokedSessions: revoked.deletedCount });
   } catch (error) {
-    if (error?.code === 11000) return res.status(409).json({ error: 'That email address is already used by another WorkPulse account.' });
+    if (error?.code === 11000) return res.status(409).json({ error: 'That email address is already used by another WORKPULSE MVL account.' });
     console.error('Admin credential update failed:', error instanceof Error ? error.message : error);
     res.status(500).json({ error: 'Unable to update administrator credentials.' });
   }
@@ -419,28 +458,47 @@ router.patch('/admin/employees/:id/access', async (req, res) => {
   } catch { res.status(500).json({ error: 'Unable to update employee access' }); }
 });
 
+router.get('/admin/force-clock-out', async (req, res) => {
+  try {
+    const stamp = kioskTimestamp();
+    const records = await mongoose.connection.db.collection('attendance').find({ date: stamp.date }).sort({ name: 1 }).toArray();
+    res.json({ date: stamp.date, employees: records.filter((record) => clockOutSessions(record).some((session) => session.checkIn)).map((record) => {
+      const sessions = clockOutSessions(record);
+      return { employeeId: record.employeeId, name: record.name || record.employeeId, checkIn: sessions[0]?.checkIn, lastCheckIn: sessions.at(-1)?.checkIn, checkOut: sessions.at(-1)?.checkOut || null, clockedIn: sessions.some((session) => session.checkIn && !session.checkOut) };
+    }) });
+  } catch { res.status(500).json({ error: "Unable to load today's attendance" }); }
+});
+
 router.post('/admin/force-clock-out', async (req, res) => {
+  const { scope, employeeIds, date } = req.body || {};
+  if (!['all', 'individual'].includes(scope) || !Array.isArray(employeeIds) || !employeeIds.length || employeeIds.length > 2000 || employeeIds.some((id) => typeof id !== 'string' || !id || id.length > 200) || (scope === 'individual' && employeeIds.length !== 1)) {
+    return res.status(400).json({ error: 'Choose an employee or all clocked-in employees.' });
+  }
+  const stamp = kioskTimestamp();
+  if (date !== stamp.date) return res.status(409).json({ error: 'The day has changed. Refresh the list before clocking out.' });
+  let clockedOut = 0;
+  const names = [];
+  const failedIds = [];
   try {
     const db = mongoose.connection.db;
-    const stamp = kioskTimestamp();
-    const openRecords = await db.collection('attendance').find({ $or: [
-      { sessions: { $elemMatch: { $or: [{ checkOut: null }, { checkOut: '' }, { checkOut: { $exists: false } }] } } },
-      { sessions: { $exists: false }, checkIn: { $nin: [null, ''] }, $or: [{ checkOut: null }, { checkOut: '' }, { checkOut: { $exists: false } }] },
-    ] }).toArray();
-    const operations = [];
-    for (const record of openRecords) {
-      const sessions = attendanceSessions(record);
-      const openIndex = sessions.findLastIndex((session) => !session.checkOut);
-      if (openIndex < 0) continue;
-      sessions[openIndex] = { ...sessions[openIndex], checkOut: stamp.time, checkOutAt: stamp.now, forcedClockOut: true, forcedClockOutBy: req.auth.actor.email };
-      operations.push({ updateOne: { filter: { _id: record._id }, update: { $set: { sessions, sessionCount: sessions.length, checkOut: stamp.time, lastAction: 'time-out', forcedClockOut: true, forcedClockOutAt: stamp.now, forcedClockOutBy: req.auth.actor.email, updatedAt: stamp.now } } } });
+    const ids = [...new Set(employeeIds)];
+    const records = await db.collection('attendance').find({ date: stamp.date, employeeId: { $in: ids } }).toArray();
+    for (const record of records) {
+      const operation = forcedClockOutUpdate(record, stamp, req.auth.actor.email);
+      if (!operation) continue;
+      try {
+        const result = await db.collection('attendance').updateOne(operation.filter, operation.update);
+        if (result.modifiedCount) { clockedOut += 1; names.push(record.name || record.employeeId); }
+      } catch { failedIds.push(record.employeeId); }
     }
-    if (operations.length) await db.collection('attendance').bulkWrite(operations);
-    res.locals.auditMetadata = { adminAction: 'force-clock-out', recordCount: operations.length, eventTime: stamp.time };
-    res.json({ clockedOut: operations.length, time: stamp.time, date: stamp.date });
+    const skipped = ids.length - clockedOut - failedIds.length;
+    res.locals.auditMetadata = { adminAction: 'force-clock-out', scope, recordCount: clockedOut, skippedCount: skipped, failedCount: failedIds.length, targetName: scope === 'individual' ? records[0]?.name : null, eventTime: stamp.time };
+    if (failedIds.length) res.locals.auditOutcome = 'failure';
+    res.json({ clockedOut, skipped, failed: failedIds.length, names, time: stamp.time, date: stamp.date });
   } catch (error) {
+    res.locals.auditMetadata = { adminAction: 'force-clock-out', scope, recordCount: clockedOut, eventTime: stamp.time };
     console.error('Force clock out failed:', error instanceof Error ? error.message : error);
-    res.status(500).json({ error: 'Unable to force clock out active employees' });
+    res.status(500).json({ error: 'Unable to complete force clock out. Refresh attendance before retrying.' });
   }
 });
 
@@ -560,12 +618,13 @@ function serializedAuditEvent(event) {
     occurredAt: event.occurredAt,
     actorEmail: event.actorEmail ?? null,
     actorRole: event.actorRole ?? 'anonymous',
-    screenName: event.screenName ?? auditScreenName(event.action, event.targetType, event.metadata),
+    screenName: auditScreenName(event.action, event.targetType, event.metadata),
     action: event.action ?? 'unknown',
     targetType: event.targetType ?? 'system',
     targetId: event.targetId ?? null,
     outcome: event.outcome ?? 'unknown',
     metadata: event.metadata ?? {},
+    ...auditPresentation(event),
   };
 }
 
@@ -604,7 +663,7 @@ router.get('/overview', requireRole('admin', 'manager'), async (req, res) => {
       ).sort({ createdAt: -1 }).limit(2_000).toArray(),
       db.collection('biometric_templates').find({ employeeId: { $in: employeeIds } }, { projection: { employeeId: 1 } }).toArray(),
       db.collection('audit_events').find(
-        { occurredAt: { $gte: auditStart, $lt: auditEnd } },
+        { ...activityFilter, occurredAt: { $gte: auditStart, $lt: auditEnd } },
         { projection: { occurredAt: 1, actorEmail: 1, actorRole: 1, screenName: 1, action: 1, targetType: 1, targetId: 1, outcome: 1, metadata: 1 } },
       ).sort({ occurredAt: -1, _id: -1 }).limit(100).toArray(),
     ]);
@@ -637,7 +696,7 @@ router.get('/audit-events', async (req, res) => {
     const requestedLimit = Number.parseInt(String(req.query.limit ?? '20'), 10);
     const limit = Number.isFinite(requestedLimit) ? Math.max(1, Math.min(100, requestedLimit)) : 20;
     const date = String(req.query.date ?? '').trim();
-    const filter = {};
+    const filter = { ...activityFilter };
     if (date) {
       if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return res.status(400).json({ error: 'Audit date must use YYYY-MM-DD format' });
       const start = new Date(`${date}T00:00:00+08:00`);
@@ -694,7 +753,7 @@ async function nextEmployeeId(db) {
 
 function duplicateEmployeeMessage(error) {
   const fields = Object.keys(error?.keyPattern ?? error?.keyValue ?? {});
-  if (fields.includes('email')) return 'This email address is already used by another WorkPulse account.';
+  if (fields.includes('email')) return 'This email address is already used by another WORKPULSE MVL account.';
   if (fields.includes('employeeId')) return 'The generated employee ID is still reserved by linked account or fingerprint data. Refresh the form and try again.';
   if (fields.includes('id')) return 'The generated employee ID is already in use. Refresh the form and try again.';
   return 'A unique employee account value already exists. Refresh the form and try again.';
@@ -1000,6 +1059,8 @@ router.post('/fingerprints/identify', async (req, res) => {
         accepted: false, classification: null, score: decision.best?.score ?? null, threshold: decision.threshold,
         deviceUid: deviceUid || null, responseTimeMs, createdAt: new Date(), createdBy: req.auth.actor.email,
       });
+      res.locals.auditMetadata = { fingerprintRecognized: false };
+      res.locals.auditOutcome = 'failure';
       return res.json({ recognized: false, employeeId: null, employeeName: null, matchStrength: fingerprintMatchStrength(decision.best?.score, decision.threshold) });
     }
     const employee = await db.collection('employees').findOne(
@@ -1013,6 +1074,7 @@ router.post('/fingerprints/identify', async (req, res) => {
       accepted: true, classification: null, score: decision.best.score, threshold: decision.threshold,
       deviceUid: deviceUid || null, responseTimeMs, createdAt: new Date(), createdBy: req.auth.actor.email,
     });
+    res.locals.auditMetadata = { fingerprintRecognized: true, targetName: employee.name, employeeId: employee.id };
     res.json({
       recognized: true, employeeId: employee.id, employeeName: employee.name,
       matchStrength: fingerprintMatchStrength(decision.best.score, decision.threshold),
@@ -1038,7 +1100,7 @@ router.post('/employees', async (req, res) => {
       db.collection('employee_accounts').findOne({ email: employee.email }, { projection: { _id: 1 }, collation: { locale: 'en', strength: 2 } }),
       db.collection('employees').findOne({ email: employee.email }, { projection: { _id: 1 }, collation: { locale: 'en', strength: 2 } }),
     ]);
-    if (adminEmail || employeeAccountEmail || employeeRecordEmail) return res.status(409).json({ error: 'This email address is already used by another WorkPulse account.' });
+    if (adminEmail || employeeAccountEmail || employeeRecordEmail) return res.status(409).json({ error: 'This email address is already used by another WORKPULSE MVL account.' });
     const transport = nodemailer.createTransport({ service: 'gmail', auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_APP_PASSWORD } });
     try { await transport.verify(); }
     catch (emailError) {
@@ -1073,13 +1135,13 @@ router.post('/employees', async (req, res) => {
     try {
       const loginUrl = String(process.env.APP_URL || process.env.FRONTEND_URL || 'http://localhost:5173').replace(/\/$/, '');
       const delivery = await transport.sendMail({
-          from: `WorkPulseAI <${process.env.SMTP_USER}>`,
+          from: `WORKPULSE MVL <${process.env.SMTP_USER}>`,
           to: employee.email,
-          subject: 'Your WorkPulseAI employee login details',
+          subject: 'Your WORKPULSE MVL employee login details',
           text: [
             `Hello ${employee.firstName},`,
             '',
-            'Your WorkPulseAI employee account is ready.',
+            'Your WORKPULSE MVL employee account is ready.',
             `Employee ID: ${employee.id}`,
             `Login page: ${loginUrl}`,
             `Email: ${employee.email}`,
@@ -1139,13 +1201,13 @@ router.put('/employees/:id', async (req, res) => {
       db.collection('employee_accounts').findOne({ email: employee.email, employeeId: { $ne: employee.id } }, { projection: { _id: 1 }, collation: { locale: 'en', strength: 2 } }),
       db.collection('employees').findOne({ email: employee.email, id: { $ne: employee.id } }, { projection: { _id: 1 }, collation: { locale: 'en', strength: 2 } }),
     ]);
-    if (adminEmail || employeeAccountEmail || employeeRecordEmail) return res.status(409).json({ error: 'This email address is already used by another WorkPulse account.' });
+    if (adminEmail || employeeAccountEmail || employeeRecordEmail) return res.status(409).json({ error: 'This email address is already used by another WORKPULSE MVL account.' });
     const result = await db.collection('employees').updateOne({ id: req.params.id }, { $set: { ...employee, updatedAt: new Date() } });
     if (!result.matchedCount) return res.status(404).json({ error: 'Employee not found' });
     await db.collection('employee_accounts').updateOne({ employeeId: employee.id }, { $set: { email: employee.email, role: employee.role, updatedAt: new Date() } });
     res.json({ ...employee, createdAt: existing.createdAt });
   } catch (error) {
-    if (error?.code === 11000) return res.status(409).json({ error: 'This email address is already used by another WorkPulse account.' });
+    if (error?.code === 11000) return res.status(409).json({ error: 'This email address is already used by another WORKPULSE MVL account.' });
     res.status(500).json({ error: 'Failed to update employee' });
   }
 });
@@ -1205,9 +1267,9 @@ router.post('/employees/:id/send-login-email', async (req, res) => {
       await transport.verify();
       const loginUrl = String(process.env.APP_URL || process.env.FRONTEND_URL || 'http://localhost:5173').replace(/\/$/, '');
       const delivery = await transport.sendMail({
-        from: `WorkPulseAI <${process.env.SMTP_USER}>`, to: employee.email,
-        subject: 'Your new WorkPulseAI login details',
-        text: [`Hello ${employee.firstName || employee.name},`, '', 'A new WorkPulseAI password was requested for your employee account.', `Employee ID: ${employee.id}`, `Login page: ${loginUrl}`, `Email: ${employee.email}`, `New generated password: ${generatedPassword}`, '', 'Complete the verification code sent to this email after signing in.', 'You will be required to create a new password before opening your workspace.', 'Keep this message private.'].join('\n'),
+        from: `WORKPULSE MVL <${process.env.SMTP_USER}>`, to: employee.email,
+        subject: 'Your new WORKPULSE MVL login details',
+        text: [`Hello ${employee.firstName || employee.name},`, '', 'A new WORKPULSE MVL password was requested for your employee account.', `Employee ID: ${employee.id}`, `Login page: ${loginUrl}`, `Email: ${employee.email}`, `New generated password: ${generatedPassword}`, '', 'Complete the verification code sent to this email after signing in.', 'You will be required to create a new password before opening your workspace.', 'Keep this message private.'].join('\n'),
       });
       const accepted = (delivery.accepted ?? []).map((address) => String(address).toLowerCase());
       if (!accepted.includes(employee.email)) throw new Error('The recipient address was not accepted by the mail service');
@@ -1758,7 +1820,7 @@ router.post('/payroll-requests/:id/email', async (req, res) => {
     const money = (value) => new Intl.NumberFormat('en-PH', { style: 'currency', currency: 'PHP' }).format(Number(value || 0));
     const additions = Array.isArray(payroll.additions) ? payroll.additions : [];
     const text = [
-      'WorkPulseAI Payslip',
+      'WORKPULSE MVL Payslip',
       `Pay period: ${payroll.periodStart}`,
       `Employee: ${employee.name}`,
       `Employee ID: ${employee.id}`,
@@ -1773,7 +1835,7 @@ router.post('/payroll-requests/:id/email', async (req, res) => {
       `Status: ${payroll.status === 'paid' ? 'Paid' : payroll.status === 'rejected' ? 'Payment on hold - carries forward' : payroll.status === 'carried_over' ? 'Carried to the next pay period' : 'Ready to pay'}`,
     ].join('\n');
     const transport = nodemailer.createTransport({ service: 'gmail', auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_APP_PASSWORD } });
-    await transport.sendMail({ from: `Workpulse AI <${process.env.SMTP_USER}>`, to: employee.email, subject: `Payslip ${payroll.periodStart} - ${employee.name}`, text });
+    await transport.sendMail({ from: `WORKPULSE MVL <${process.env.SMTP_USER}>`, to: employee.email, subject: `Payslip ${payroll.periodStart} - ${employee.name}`, text });
     res.locals.auditMetadata = { payrollAction: 'payslip-emailed', targetName: employee.name, employeeId: employee.id, periodStart: payroll.periodStart };
     res.json({ message: `Payslip sent to ${employee.email}` });
   } catch (error) {
@@ -1809,7 +1871,7 @@ router.post('/payroll/:employeeId/email-summary', async (req, res) => {
     const carryOver = Number(activePayroll?.carryOverAmount || 0);
     const text = `Payroll Summary (15-day period)\nEmployee: ${employee.name}\nEmployee ID: ${employee.id}${identifierText}\nHours Worked: ${hoursWorked.toFixed(2)}\nHourly Rate: ${money(hourlyRate)}\n\nGross Salary: ${money(gross)}\n${additionLines.map(([label, value]) => `${label}: +${money(value)}`).join('\n')}\nTotal Additions: +${money(total)}\nUnpaid Balance Carried Forward: +${money(carryOver)}\nNet Salary: ${money(gross + total + carryOver)}`;
     const transport = nodemailer.createTransport({ service: 'gmail', auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_APP_PASSWORD } });
-    await transport.sendMail({ from: `Workpulse AI <${process.env.SMTP_USER}>`, to: employee.email, subject: `Payroll Summary - ${employee.name}`, text });
+    await transport.sendMail({ from: `WORKPULSE MVL <${process.env.SMTP_USER}>`, to: employee.email, subject: `Payroll Summary - ${employee.name}`, text });
     res.locals.auditMetadata = { payrollAction: 'summary-emailed', targetName: employee.name, employeeId: employee.id };
     res.json({ message: `Payroll summary sent to ${employee.email}` });
   } catch (error) {
@@ -2061,10 +2123,14 @@ function kioskTimestamp() {
 }
 
 router.post('/attendance/kiosk', async (req, res) => {
+  res.locals.auditMetadata = { kioskAction: 'fingerprint scan', attendanceRecorded: false };
+  const rejectScan = (status, reason, error, extra = {}) => {
+    res.locals.auditMetadata = { ...res.locals.auditMetadata, kioskReason: reason, failureReason: error };
+    return res.status(status).json({ error, ...extra });
+  };
   try {
-    res.locals.auditMetadata = { kioskAction: 'fingerprint scan' };
     const db = mongoose.connection?.db;
-    if (!db) return res.status(503).json({ error: 'MongoDB connection not ready' });
+    if (!db) return rejectScan(503, 'database-unavailable', 'MongoDB connection not ready');
     const [probe] = normalizeFingerprintSamples(req.body?.fingerprintSamples, 1);
     const deviceUid = String(req.body?.deviceUid ?? '').trim().slice(0, 200);
     const templates = await activeBiometricTemplates(db);
@@ -2084,10 +2150,10 @@ router.post('/attendance/kiosk', async (req, res) => {
     } catch (attemptError) {
       console.error('Fingerprint verification attempt could not be logged:', attemptError instanceof Error ? attemptError.message : attemptError);
     }
-    if (!matched) return res.status(404).json({ error: 'Fingerprint not recognized. Ask an administrator to register it again.' });
+    if (!matched) return rejectScan(404, 'no-match', 'Fingerprint not recognized. Use a registered finger.');
     const employeeId = matched.employeeId;
     const employee = await db.collection('employees').findOne({ id: employeeId, archived: { $ne: true }, status: { $ne: 'inactive' } });
-    if (!employee) return res.status(404).json({ error: 'Active employee not found' });
+    if (!employee) return rejectScan(404, 'employee-unavailable', 'Active employee not found');
     res.locals.auditMetadata = { ...res.locals.auditMetadata, targetName: employee.name, employeeId };
 
     const stamp = kioskTimestamp();
@@ -2097,11 +2163,11 @@ router.post('/attendance/kiosk', async (req, res) => {
     const approvedLeave = await db.collection('leave_requests').findOne({ employeeId, status: 'approved', $or: [{ approvedDates: stamp.date }, { approvedDates: { $exists: false }, startDate: { $lte: stamp.date }, endDate: { $gte: stamp.date } }] });
     if (approvedLeave && !hasOpenSession) {
       if (verificationAttemptId) await db.collection('biometric_verification_attempts').updateOne({ _id: verificationAttemptId }, { $set: { action: 'approved-leave', eventTime: stamp.time, attendanceDate: stamp.date } });
-      return res.status(403).json({ error: 'Time-in is unavailable because you have approved leave today.' });
+      return rejectScan(403, 'approved-leave', 'Time-in is unavailable because you have approved leave today.');
     }
     if (scheduledWorkStatus(settings, stamp.date) === false && !hasOpenSession) {
       if (verificationAttemptId) await db.collection('biometric_verification_attempts').updateOne({ _id: verificationAttemptId }, { $set: { action: 'non-working-day', eventTime: stamp.time, attendanceDate: stamp.date } });
-      return res.status(403).json({ error: 'Time-in is unavailable today because this date is marked as a non-working day.' });
+      return rejectScan(403, 'non-working-day', 'Time-in is unavailable today because this date is marked as a non-working day.');
     }
     if (!existing) {
       const record = {
@@ -2116,9 +2182,10 @@ router.post('/attendance/kiosk', async (req, res) => {
       };
       try { await db.collection('attendance').insertOne(record); }
       catch (error) {
-        if (error?.code === 11000) return res.status(409).json({ error: 'Attendance was already recorded for this employee today' });
+        if (error?.code === 11000) return rejectScan(409, 'conflict', 'Attendance was already recorded for this employee today');
         throw error;
       }
+      res.locals.auditMetadata = { ...res.locals.auditMetadata, attendanceRecorded: true, kioskAction: 'time-in', eventTime: stamp.time };
       if (verificationAttemptId) await db.collection('biometric_verification_attempts').updateOne({ _id: verificationAttemptId }, { $set: { action: 'time-in', eventTime: stamp.time, attendanceDate: stamp.date } });
       res.locals.auditMetadata = { ...res.locals.auditMetadata, kioskAction: 'time-in', eventTime: stamp.time };
       return res.status(201).json({ action: 'time-in', record: { ...record, eventTime: stamp.time, _id: undefined } });
@@ -2130,7 +2197,7 @@ router.post('/attendance/kiosk', async (req, res) => {
     if (Number.isFinite(lastAttendanceUpdate) && elapsedSinceTimeIn >= 0 && elapsedSinceTimeIn < duplicateScanWindowMs) {
       const retryAfterSeconds = Math.max(1, Math.ceil((duplicateScanWindowMs - elapsedSinceTimeIn) / 1000));
       res.setHeader('Retry-After', String(retryAfterSeconds));
-      return res.status(429).json({ error: 'Attendance was just recorded. Remove your finger before the next scan.', retryAfterSeconds });
+      return rejectScan(429, 'duplicate-scan', 'Attendance was just recorded. Remove your finger before the next scan.', { retryAfterSeconds });
     }
 
     const sessions = attendanceSessions(existing);
@@ -2152,7 +2219,7 @@ router.post('/attendance/kiosk', async (req, res) => {
     } else {
       if (sessions.length >= MAX_DAILY_ATTENDANCE_SESSIONS) {
         if (verificationAttemptId) await db.collection('biometric_verification_attempts').updateOne({ _id: verificationAttemptId }, { $set: { action: 'daily-limit', eventTime: stamp.time, attendanceDate: stamp.date } });
-        return res.status(409).json({ error: 'Daily attendance limit reached: three time-in/time-out sessions are already complete.' });
+        return rejectScan(409, 'daily-limit', 'Daily attendance limit reached: three time-in/time-out sessions are already complete.');
       }
       sessions.push({ checkIn: stamp.time, checkOut: null, checkInAt: stamp.now, deviceUid: deviceUid || null, matchScore: matched.score });
       action = 'time-in';
@@ -2163,7 +2230,8 @@ router.post('/attendance/kiosk', async (req, res) => {
     }
 
     const updated = await db.collection('attendance').findOneAndUpdate(versionFilter, { $set: update }, { returnDocument: 'after' });
-    if (!updated) return res.status(409).json({ error: 'Attendance was updated by another request' });
+    if (!updated) return rejectScan(409, 'conflict', 'Attendance was updated by another request');
+    res.locals.auditMetadata = { ...res.locals.auditMetadata, attendanceRecorded: true, kioskAction: action, eventTime: stamp.time };
     if (action === 'time-out') {
       const attendancePeriod = payrollPeriodKey(new Date(`${stamp.date}T12:00:00+08:00`));
       await preparePayrollRecord(db, employee, attendancePeriod, settings);
@@ -2172,9 +2240,9 @@ router.post('/attendance/kiosk', async (req, res) => {
     res.locals.auditMetadata = { ...res.locals.auditMetadata, kioskAction: action, eventTime: stamp.time };
     return res.json({ action, record: { ...updated, eventTime: stamp.time, _id: undefined } });
   } catch (error) {
-    if (error instanceof BiometricError) return res.status(error.status).json({ error: error.message });
+    if (error instanceof BiometricError) return rejectScan(error.status, error.status === 503 ? 'matcher-unavailable' : error.status === 422 ? 'unsupported-sample' : 'invalid-sample', error.message);
     console.error('Kiosk attendance failed:', error instanceof Error ? error.message : error);
-    res.status(500).json({ error: 'Unable to record kiosk attendance' });
+    rejectScan(500, 'internal-error', res.locals.auditMetadata.attendanceRecorded ? 'Attendance was saved, but a follow-up operation failed.' : 'Unable to record kiosk attendance');
   }
 });
 

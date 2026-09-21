@@ -1,3 +1,4 @@
+import { AdminPageHeader } from "../components/AdminPageHeader";
 import { useEffect, useState } from "react";
 import { 
   Check, 
@@ -149,14 +150,8 @@ export function LeaveRequestsView({
   const allPagePendingSelected = pendingOnPage.length > 0 && pendingOnPage.every(id => selectedIds.includes(id));
 
   return (
-    <div className="space-y-6 max-w-7xl mx-auto p-1">
-      {/* Page Header */}
-      <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <h2 className="text-2xl font-extrabold text-slate-900 tracking-tight">Leave Requests</h2>
-          <p className="text-sm leading-6 text-slate-600">Pending requests appear first. Review the employee's dates and reason before making a decision.</p>
-        </div>
-      </div>
+    <div className="space-y-6">
+      <AdminPageHeader title="Leave Requests" description="Review leave dates and reasons. Pending requests appear first." icon={Calendar} />
 
       {/* Modern Stats Bar */}
       <div data-guide="leave-summary" className="grid gap-4 sm:grid-cols-3">
@@ -207,9 +202,9 @@ export function LeaveRequestsView({
         </div>
 
         {/* Status Filter Pills (Leave Type Pills have been completely removed) */}
-        <div className="flex gap-2 overflow-x-auto scrollbar-thin">
+        <div className="flex flex-wrap gap-2">
           {[
-            ["all", "All Statuses"],
+            ["all", "All"],
             ["pending", "Pending"],
             ["approved", "Approved"],
             ["rejected", "Declined"]
