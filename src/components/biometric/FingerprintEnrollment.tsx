@@ -27,7 +27,7 @@ export function FingerprintEnrollment({ onComplete, onCancel, validateScan }: {
   const reconnectRef = useRef<() => void>(() => undefined);
   const feedbackTimerRef = useRef<number | undefined>(undefined);
   const rearmTimerRef = useRef<number | undefined>(undefined);
-  const countdownTimerRef = useRef<number | undefined>(undefined);
+  const processingRef = useRef(false);
   const startCaptureRef = useRef<() => Promise<void>>(async () => undefined);
   const qualityRef = useRef<number | null>(null);
   const [samples, setSamples] = useState<string[]>([]);
@@ -36,14 +36,14 @@ export function FingerprintEnrollment({ onComplete, onCancel, validateScan }: {
   const [message, setMessage] = useState('Connecting to the fingerprint reader...');
   const [quality, setQuality] = useState<number | null>(null);
   const [justCaptured, setJustCaptured] = useState(false);
-  const [countdown, setCountdown] = useState(0);
+
 
   useEffect(() => { onCompleteRef.current = onComplete; }, [onComplete]);
   useEffect(() => { validateScanRef.current = validateScan; }, [validateScan]);
 
   async function startAutomaticCapture() {
-    if (!apiRef.current || !deviceRef.current || acquiringRef.current || samplesRef.current.length >= REQUIRED_SCANS) return;
-    qualityRef.current = null; setQuality(null); setJustCaptured(false); setCountdown(0);
+    if (!apiRef.current || !deviceRef.current || acquiringRef.current || processingRef.current || samplesRef.current.length >= REQUIRED_SCANS) return;
+    qualityRef.current = null; setQuality(null); setJustCaptured(false);
     try {
       await apiRef.current.startAcquisition(Fingerprint.SampleFormat.Raw, deviceRef.current);
       acquiringRef.current = true;
@@ -56,17 +56,12 @@ export function FingerprintEnrollment({ onComplete, onCancel, validateScan }: {
 
   useEffect(() => { startCaptureRef.current = startAutomaticCapture; });
 
-  function scheduleNextScan(delay = 3000, waitingMessage = 'Scan saved — lift your finger. The next scan starts automatically.') {
-    window.clearTimeout(rearmTimerRef.current); window.clearInterval(countdownTimerRef.current);
-    const startedAt = Date.now();
-    setState('waiting'); setCountdown(Math.ceil(delay / 1000));
+  function scheduleNextScan(delay = 0, waitingMessage = 'Lift and replace your finger for the next scan.') {
+    window.clearTimeout(rearmTimerRef.current);
+    setState('waiting');
     setMessage(waitingMessage);
-    countdownTimerRef.current = window.setInterval(() => setCountdown(Math.max(0, Math.ceil((delay - (Date.now() - startedAt)) / 1000))), 250);
-    rearmTimerRef.current = window.setTimeout(() => {
-      window.clearInterval(countdownTimerRef.current); setCountdown(0); void startCaptureRef.current();
-    }, delay);
+    rearmTimerRef.current = window.setTimeout(() => void startCaptureRef.current(), delay);
   }
-
   useEffect(() => {
     let mounted = true;
     const api = new Fingerprint.WebApi();
@@ -90,13 +85,13 @@ export function FingerprintEnrollment({ onComplete, onCancel, validateScan }: {
     api.onDeviceConnected = () => { if (mounted && !deviceRef.current) reconnect(); };
     api.onDeviceDisconnected = (event) => {
       if (!mounted || event.deviceUid !== deviceRef.current) return;
-      window.clearTimeout(rearmTimerRef.current); window.clearInterval(countdownTimerRef.current);
+      window.clearTimeout(rearmTimerRef.current);
       acquiringRef.current = false; deviceRef.current = ''; setDeviceUid(''); setState('offline'); setMessage('Fingerprint reader disconnected');
       reconnectTimer = window.setTimeout(reconnect, 1000);
     };
     api.onCommunicationFailed = () => {
       if (!mounted) return;
-      window.clearTimeout(rearmTimerRef.current); window.clearInterval(countdownTimerRef.current);
+      window.clearTimeout(rearmTimerRef.current);
       acquiringRef.current = false; setState('offline'); setMessage('Scanner bridge connection was interrupted. Retrying...');
       window.clearTimeout(reconnectTimer); reconnectTimer = window.setTimeout(reconnect, 3000);
     };
@@ -108,17 +103,23 @@ export function FingerprintEnrollment({ onComplete, onCancel, validateScan }: {
       if (mounted) { acquiringRef.current = false; qualityRef.current = null; setQuality(null); setState('ready'); setMessage(`Scanner error ${event.error}. Retrying automatically.`); window.clearTimeout(rearmTimerRef.current); rearmTimerRef.current = window.setTimeout(() => void startCaptureRef.current(), 3000); }
     };
     api.onAcquisitionStarted = () => {
-      if (mounted) { acquiringRef.current = true; setQuality(null); setJustCaptured(false); setState('capturing'); setMessage('Reader is active — place your finger flat and hold still'); }
+      if (mounted) { acquiringRef.current = true; setQuality(null); setJustCaptured(false); setState('capturing'); setMessage('Lift and place the same finger flat on the reader'); }
     };
     api.onSamplesAcquired = (event) => {
-      if (!mounted || event.deviceUid !== deviceRef.current) return;
-      void api.stopAcquisition(event.deviceUid).catch(() => undefined);
+      if (!mounted || event.deviceUid !== deviceRef.current || processingRef.current || samplesRef.current.length >= REQUIRED_SCANS) return;
+      processingRef.current = true;
+      const capturedQuality = qualityRef.current;
+      setState('waiting'); setMessage('Checking scan...');
       acquiringRef.current = false;
       void (async () => { try {
-        if (qualityRef.current !== null && qualityRef.current !== 0) throw new Error(qualityMessages[qualityRef.current] || 'Scan quality was too low');
+        await api.stopAcquisition(event.deviceUid);
+        if (!mounted) return;
+        if (capturedQuality !== null && capturedQuality !== 0) throw new Error(qualityMessages[capturedQuality] || 'Scan quality was too low');
         const sample = readCapturedFingerprintSample(event.samples);
         setState('waiting'); setMessage('Checking whether this fingerprint is already registered...');
         if (validateScanRef.current) await validateScanRef.current(sample);
+        if (!mounted) return;
+        if (samplesRef.current.includes(sample)) throw new Error('Lift your finger fully and place it again for a fresh scan.');
         const next = [...samplesRef.current, sample].slice(0, REQUIRED_SCANS);
         samplesRef.current = next; setSamples(next); setQuality(0); setJustCaptured(true);
         window.clearTimeout(feedbackTimerRef.current);
@@ -128,25 +129,26 @@ export function FingerprintEnrollment({ onComplete, onCancel, validateScan }: {
         } else {
           setState('ready'); setMessage(`Scan ${next.length} saved — lift your finger before the next scan`);
         }
-        if (next.length < REQUIRED_SCANS) scheduleNextScan(3000);
+        if (next.length < REQUIRED_SCANS) scheduleNextScan();
       } catch (error) {
+        if (!mounted) return;
         const retryMessage = error instanceof Error ? error.message : 'Could not read the fingerprint sample';
         setState('ready'); setMessage(retryMessage);
-        scheduleNextScan(3000, `${retryMessage} Retrying automatically.`);
-      } })();
+        scheduleNextScan(1000, `${retryMessage} Retrying automatically.`);
+      } finally { processingRef.current = false; } })();
     };
     reconnect();
     return () => {
-      mounted = false; window.clearTimeout(reconnectTimer); window.clearTimeout(feedbackTimerRef.current); window.clearTimeout(rearmTimerRef.current); window.clearInterval(countdownTimerRef.current);
+      mounted = false; window.clearTimeout(reconnectTimer); window.clearTimeout(feedbackTimerRef.current); window.clearTimeout(rearmTimerRef.current);
       if (acquiringRef.current) void api.stopAcquisition().catch(() => undefined);
       acquiringRef.current = false; api.off(); apiRef.current = null;
     };
   }, []);
 
   function reset() {
-    window.clearTimeout(rearmTimerRef.current); window.clearInterval(countdownTimerRef.current);
+    window.clearTimeout(rearmTimerRef.current);
     samplesRef.current = []; setSamples([]); qualityRef.current = null; setQuality(null); setJustCaptured(false);
-    setCountdown(0); setState(deviceRef.current ? 'ready' : 'offline'); setMessage(deviceRef.current ? 'Reader ready — automatic capture starting' : 'Reader unavailable');
+    setState(deviceRef.current ? 'ready' : 'offline'); setMessage(deviceRef.current ? 'Reader ready — automatic capture starting' : 'Reader unavailable');
     if (deviceRef.current) rearmTimerRef.current = window.setTimeout(() => void startCaptureRef.current(), 700);
   }
 
@@ -164,7 +166,7 @@ export function FingerprintEnrollment({ onComplete, onCancel, validateScan }: {
     : state === 'offline' ? 'Reader offline'
       : state === 'complete' ? 'Enrollment ready'
         : state === 'capturing' ? 'Live capture'
-          : state === 'waiting' ? `Next scan in ${countdown}s`
+          : state === 'waiting' ? 'Checking scan'
             : `${samples.length} of ${REQUIRED_SCANS} saved`;
 
   return <div className="overflow-hidden rounded-2xl border border-violet-200/80 bg-gradient-to-br from-white via-white to-violet-50/60 shadow-sm">
@@ -189,7 +191,7 @@ export function FingerprintEnrollment({ onComplete, onCancel, validateScan }: {
       <div className="min-w-0">
         <p className={`text-base font-semibold ${poorQuality ? 'text-amber-700' : justCaptured || state === 'complete' ? 'text-emerald-700' : 'text-slate-900'}`}>{message}</p>
         <p className="mt-1 text-xs text-slate-500">Keep your finger centered and still until the scan is saved{deviceUid ? ` · Reader ${deviceUid.slice(-8)}` : ''}.</p>
-        <div className="mt-5 grid grid-cols-4 gap-2">
+        <div className="mt-5 grid grid-cols-3 gap-2">
           {Array.from({ length: REQUIRED_SCANS }, (_, index) => {
             const saved = index < samples.length;
             const current = index === samples.length && state !== 'complete';
@@ -204,10 +206,10 @@ export function FingerprintEnrollment({ onComplete, onCancel, validateScan }: {
 
     <div className="flex flex-wrap items-center justify-end gap-2 border-t border-violet-100 bg-white/70 px-5 py-4">
       <Button type="button" variant="ghost" onClick={onCancel}>Cancel</Button>
-      {samples.length > 0 && <Button type="button" variant="outline" onClick={reset}><RotateCcw className="h-4 w-4" /> Start over</Button>}
+      {samples.length > 0 && <Button type="button" variant="outline" onClick={reset} disabled={state === 'waiting' || state === 'capturing'}><RotateCcw className="h-4 w-4" /> Start over</Button>}
       <Button type="button" className="min-w-44" onClick={() => state === 'offline' ? reconnectRef.current() : undefined} disabled={state !== 'offline'}>
         {state === 'connecting' || state === 'capturing' ? <LoaderCircle className="h-4 w-4 animate-spin" /> : state === 'offline' ? <RotateCcw className="h-4 w-4" /> : state === 'complete' ? <Check className="h-4 w-4" /> : <FingerprintIcon className="h-4 w-4" />}
-        {state === 'connecting' ? 'Connecting...' : state === 'offline' ? 'Reconnect reader' : state === 'capturing' ? 'Hold finger still' : state === 'waiting' ? `Next scan in ${countdown}s` : state === 'complete' ? 'Scans complete' : 'Starting automatically'}
+        {state === 'connecting' ? 'Connecting...' : state === 'offline' ? 'Reconnect reader' : state === 'capturing' ? 'Hold finger still' : state === 'waiting' ? 'Checking scan' : state === 'complete' ? 'Scans complete' : 'Starting automatically'}
       </Button>
     </div>
   </div>;

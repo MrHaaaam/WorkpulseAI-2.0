@@ -8,7 +8,7 @@ import crypto from 'node:crypto';
 import { attendanceRiskForEmployee, buildAIInsights } from '../ai-insights.js';
 import { hashSecret, verifyAdminPassword, verifySecret } from './auth.js';
 import { getSystemControls, updateSystemControls } from '../system-controls.js';
-import { auditEvent, auditScreenName, authenticate, csrfProtection, pick, requireRole } from '../security.js';
+import { auditEvent, auditScreenName, authenticate, csrfProtection, pick, requireRole, rateLimit } from '../security.js';
 import {
   BiometricError,
   encryptFingerprintSamples,
@@ -1086,15 +1086,60 @@ router.post('/fingerprints/identify', async (req, res) => {
   }
 });
 
+router.post('/employees/email-verification', rateLimit({ windowMs: 10 * 60_000, max: 5, keyPrefix: 'employee-email-verification' }), async (req, res) => {
+  try {
+    const db = mongoose.connection.db;
+    if (!(await getSystemControls(db)).registrationOpen) return res.status(403).json({ error: 'New employee registration is currently restricted in Admin Controls' });
+    const email = String(req.body?.email ?? '').trim().toLowerCase();
+    if (email.length > 254 || !/^[^\s@<>(),;:"\\]+@[^\s@<>(),;:"\\]+\.[^\s@<>(),;:"\\]+$/.test(email)) return res.status(400).json({ error: 'Enter a valid employee email address.' });
+    if (!process.env.SMTP_USER || !process.env.SMTP_APP_PASSWORD) return res.status(503).json({ error: 'Employee email delivery is not configured.' });
+    const existing = await Promise.all(['employees', 'employee_accounts', 'admin_accounts'].map((name) => db.collection(name).findOne({ email }, { projection: { _id: 1 }, collation: { locale: 'en', strength: 2 } })));
+    if (existing.some(Boolean)) return res.status(409).json({ error: 'This email address is already used by another WORKPULSE MVL account.' });
+    const verificationId = crypto.randomUUID();
+    const code = String(crypto.randomInt(100000, 1_000_000));
+    const records = db.collection('employee_email_verifications');
+    await records.createIndex({ expiresAt: 1 }, { expireAfterSeconds: 0 });
+    await records.insertOne({ verificationId, email, requestedBy: req.auth.actor.email, codeHash: await hashSecret(code), attempts: 0, expiresAt: new Date(Date.now() + 10 * 60_000) });
+    try {
+      const transport = nodemailer.createTransport({ service: 'gmail', auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_APP_PASSWORD } });
+      const delivery = await transport.sendMail({
+        from: `WORKPULSE MVL <${process.env.SMTP_USER}>`, to: email,
+        subject: 'Verify your email for WORKPULSE MVL employee registration',
+        text: `Your employee registration code is ${code}. It expires in 10 minutes. Give this code to the administrator assisting with your registration. Your account will only be created after this code is entered. If you did not request an employee account, ignore this email.`,
+      });
+      if (!(delivery.accepted ?? []).some((address) => String(address).toLowerCase() === email)) throw new Error('Recipient not accepted');
+    } catch (error) {
+      await records.deleteOne({ verificationId });
+      throw error;
+    }
+    if (process.env.NODE_ENV !== 'production') {
+      console.log(`[DEV] Employee registration verification code for ${email}: ${code}`);
+    }
+    res.json({ verificationId, message: 'Ask the employee for the code in their email. No account has been created yet.' });
+  } catch (error) {
+    console.error('Employee verification email failed:', error instanceof Error ? error.message : error);
+    res.status(502).json({ error: 'Unable to send the verification email. Check the address and try again. No account was created.' });
+  }
+});
+
 router.post('/employees', async (req, res) => {
   try {
     if (!(await getSystemControls(mongoose.connection.db)).registrationOpen) return res.status(403).json({ error: 'New employee registration is currently restricted in Admin Controls' });
     const employee = normalizedEmployee(req.body);
     if (!employee.firstName || !employee.lastName) return res.status(400).json({ error: 'First name and last name are required' });
     if (!employee.email || !employee.phone || !employee.address) return res.status(400).json({ error: 'Email, phone number, and address are required' });
+    if (!/^[^\s@<>(),;:"\\]+@[^\s@<>(),;:"\\]+\.[^\s@<>(),;:"\\]+$/.test(employee.email)) return res.status(400).json({ error: 'Enter a valid employee email address.' });
     if (!/^\+639\d{9}$/.test(employee.phone)) return res.status(400).json({ error: 'Phone number must use +639XXXXXXXXX with no spaces' });
     if (!process.env.SMTP_USER || !process.env.SMTP_APP_PASSWORD) return res.status(503).json({ error: 'Employee email delivery is not configured. Ask the system owner to configure SMTP before creating an account.' });
     const db = mongoose.connection.db;
+    const verificationId = String(req.body?.emailVerificationId ?? '');
+    const code = String(req.body?.emailVerificationCode ?? '').trim();
+    if (!verificationId || !/^\d{6}$/.test(code)) return res.status(400).json({ error: 'Enter the six-digit registration code received by the employee before creating the account.' });
+    const verification = await db.collection('employee_email_verifications').findOneAndUpdate(
+      { verificationId, email: employee.email, requestedBy: req.auth.actor.email, expiresAt: { $gt: new Date() }, attempts: { $lt: 5 } },
+      { $inc: { attempts: 1 } }, { returnDocument: 'after' },
+    );
+    if (!verification || !(await verifySecret(code, verification.codeHash))) return res.status(400).json({ error: 'The registration code is incorrect, expired, or has reached its attempt limit. Check the code or request a new one.' });
     const [adminEmail, employeeAccountEmail, employeeRecordEmail] = await Promise.all([
       db.collection('admin_accounts').findOne({ email: employee.email }, { projection: { _id: 1 }, collation: { locale: 'en', strength: 2 } }),
       db.collection('employee_accounts').findOne({ email: employee.email }, { projection: { _id: 1 }, collation: { locale: 'en', strength: 2 } }),
@@ -1118,10 +1163,12 @@ router.post('/employees', async (req, res) => {
     const session = await mongoose.startSession();
     try {
       await session.withTransaction(async () => {
+        const consumed = await db.collection('employee_email_verifications').deleteOne({ _id: verification._id, expiresAt: { $gt: new Date() } }, { session });
+        if (consumed.deletedCount !== 1) throw new Error('Email verification expired or was already used. Request a new code.');
         await db.collection('employees').insertOne({ ...employee, biometricStatus: 'enrolled', createdAt, updatedAt: createdAt }, { session });
         await db.collection('employee_accounts').insertOne({
           employeeId: employee.id, email: employee.email, passwordHash,
-          role: employee.role, active: true, mustChangePassword: true, createdAt, updatedAt: createdAt,
+          role: employee.role, active: true, mustChangePassword: true, emailVerifiedAt: createdAt, createdAt, updatedAt: createdAt,
         }, { session });
         await db.collection('biometric_templates').insertOne({
           employeeId: employee.id,
@@ -1166,7 +1213,7 @@ router.post('/employees', async (req, res) => {
       } finally {
         await cleanupSession.endSession();
       }
-      return res.status(502).json({ error: 'The login email could not be delivered, so no employee account was created. Check the address and try again.' });
+      return res.status(502).json({ error: 'The login email could not be sent, so the employee account was removed. Request a new verification code before trying again.' });
     }
     res.locals.auditMetadata = { targetName: employee.name, employeeId: employee.id, employeeAction: 'created' };
     res.status(201).json({ ...employee, biometricStatus: 'enrolled', createdAt, loginEmailSent: true });
@@ -1477,7 +1524,7 @@ async function carryPayrollCorrectionForward(db, payrollId, difference) {
   if (nextPayroll.rolledInto) await carryPayrollCorrectionForward(db, nextPayroll.rolledInto, difference);
 }
 
-async function preparePayrollRecord(db, employee, periodStart, settings) {
+export async function preparePayrollRecord(db, employee, periodStart, settings) {
   const existing = await reconcileDuplicateUnpaidPayrollRecords(db, employee.id, periodStart)
     ?? await db.collection('payroll_requests').findOne({ employeeId: employee.id, periodStart });
   if (existing) {
@@ -1542,7 +1589,20 @@ async function preparePayrollRecord(db, employee, periodStart, settings) {
   ];
   const id = `PR-${Date.now()}-${crypto.randomBytes(3).toString('hex')}-${employee.id}`;
   const record = { id, employeeId: employee.id, employeeName: employee.name, employeeEmail: employee.email, grossAmount, additions, hoursWorked, hourlyRate, currentAmount, carryOverAmount, amount: currentAmount + carryOverAmount, periodStart, periodDays: 15, status: 'processing', warnings, createdAt: new Date() };
-  await db.collection('payroll_requests').insertOne(record);
+  try {
+    await db.collection('payroll_requests').insertOne(record);
+  } catch (error) {
+    const periodConflict = error?.code === 11000 && (
+      (error.keyPattern?.employeeId === 1 && error.keyPattern?.periodStart === 1)
+      || String(error.message).includes('index: one_unpaid_payroll_per_period ')
+    );
+    if (!periodConflict) throw error;
+    // Another preparation won the insert race. Only that request should link
+    // outstanding balances; the losing request must not apply them again.
+    const concurrent = await db.collection('payroll_requests').findOne({ employeeId: employee.id, periodStart });
+    if (!concurrent) throw error;
+    return { record: { ...concurrent, periodStart: payrollPeriodKeyForRecord(concurrent) }, created: false };
+  }
   if (outstanding.length) await db.collection('payroll_requests').updateMany(
     { _id: { $in: outstanding.map((item) => item._id) } },
     { $set: { status: 'carried_over', rolledInto: id, rolledAt: new Date() } },

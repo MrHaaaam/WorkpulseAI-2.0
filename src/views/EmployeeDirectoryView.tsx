@@ -10,6 +10,7 @@ import { Input } from "../components/ui/Input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../components/ui/Table";
 import { useToast } from "../components/ui/Toast";
 import { apiFetch } from "../lib/api";
+import { EmployeeEmailVerification } from "../components/EmployeeEmailVerification";
 import { FingerprintEnrollment } from "../components/biometric/FingerprintEnrollment";
 import { PaginationControls } from "../components/ui/Pagination";
 import { usePagination } from "../hooks/usePagination";
@@ -101,6 +102,9 @@ export function EmployeeDirectoryView({ employees: initialEmployees }: Partial<E
   const [fingerprintDeviceUid, setFingerprintDeviceUid] = useState("");
   const [fingerprintEnrollmentKey, setFingerprintEnrollmentKey] = useState(0);
   const [saving, setSaving] = useState(false);
+  const [emailVerificationId, setEmailVerificationId] = useState("");
+  const [emailVerificationCode, setEmailVerificationCode] = useState("");
+  const [sendingVerification, setSendingVerification] = useState(false);
   const [sendingLogin, setSendingLogin] = useState(false);
   const [formError, setFormError] = useState("");
   const [archiveTarget, setArchiveTarget] = useState<Employee | null>(null);
@@ -161,6 +165,8 @@ export function EmployeeDirectoryView({ employees: initialEmployees }: Partial<E
   const employeePage = usePagination(filtered, `${search}|${statusFilter}`);
 
   async function openAdd() {
+    setEmailVerificationId("");
+    setEmailVerificationCode("");
     const nextNumber = employees.reduce((maximum, employee) => {
       const match = /^EMP-(\d+)$/i.exec(employee.id);
       return match ? Math.max(maximum, Number(match[1])) : maximum;
@@ -202,6 +208,7 @@ export function EmployeeDirectoryView({ employees: initialEmployees }: Partial<E
   }
 
   function closeEditor() {
+    if (saving || sendingVerification) return;
     setEditorOpen(false);
     setAdminPassword("");
     setFormError("");
@@ -221,7 +228,30 @@ export function EmployeeDirectoryView({ employees: initialEmployees }: Partial<E
   }
 
   function update<K extends keyof Employee>(field: K, value: Employee[K]) {
+    if (field === 'email') {
+      setEmailVerificationId("");
+      setEmailVerificationCode("");
+    }
     setDraft((current) => ({ ...current, [field]: value }));
+  }
+
+  async function sendEmailVerification() {
+    if (sendingVerification || saving) return;
+    setSendingVerification(true);
+    setFormError("");
+    setEmailVerificationId("");
+    setEmailVerificationCode("");
+    try {
+      const response = await apiFetch('/api/employees/email-verification', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: draft.email }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Unable to send verification code');
+      setEmailVerificationId(data.verificationId);
+    } catch (reason) {
+      setFormError(reason instanceof Error ? reason.message : 'Unable to send verification code');
+    } finally { setSendingVerification(false); }
   }
 
   function updateRole(role: "regular" | "extra") {
@@ -231,6 +261,8 @@ export function EmployeeDirectoryView({ employees: initialEmployees }: Partial<E
 
   async function saveEmployee(event: React.FormEvent) {
     event.preventDefault();
+    if (saving) return;
+    if (!editingId && (!emailVerificationId || !/^\d{6}$/.test(emailVerificationCode))) { setFormError('Request a verification code and enter the code received by the employee.'); return; }
     if (!draft.firstName?.trim() || !draft.lastName?.trim()) return;
     if (!editingId && fingerprintSamples.length !== REQUIRED_FINGERPRINT_SCANS) { setFormError('Capture three fingerprint scans before creating the employee.'); return; }
     setSaving(true); setFormError("");
@@ -258,15 +290,21 @@ export function EmployeeDirectoryView({ employees: initialEmployees }: Partial<E
         const fingerprintData = await fingerprintResponse.json().catch(() => ({}));
         if (!fingerprintResponse.ok) throw new Error(fingerprintData.error || 'Unable to replace the fingerprint registration');
       }
-      const payload = editingId ? { ...draft, adminPassword } : { ...draft, fingerprintSamples, fingerprintDeviceUid };
+      const payload = editingId ? { ...draft, adminPassword } : { ...draft, fingerprintSamples, fingerprintDeviceUid, emailVerificationId, emailVerificationCode };
       const response = await apiFetch(`/api/employees${editingId ? `/${editingId}` : ''}`, { method: editingId ? 'PUT' : 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || 'Unable to save employee');
       if (fingerprintSamples.length === REQUIRED_FINGERPRINT_SCANS) data.biometricStatus = 'enrolled';
       const { loginEmailSent, ...employeeData } = data;
+      if (!editingId && loginEmailSent !== true) {
+        throw new Error('The server did not confirm that the login email was sent. Check the employee directory before trying again.');
+      }
       setEmployees((current) => editingId ? current.map((employee) => employee.id === editingId ? employeeData : employee) : [...current, employeeData]);
-      closeEditor();
-      toast({ title: editingId ? "Employee updated" : "Employee account created", description: editingId ? `${employeeData.name}'s record was saved successfully.` : loginEmailSent ? `Login details were sent to ${employeeData.email}.` : "The employee account was created.", variant: "success" });
+      setEditorOpen(false);
+      setAdminPassword("");
+      setFingerprintSamples([]);
+      setFingerprintDeviceUid("");
+      toast({ title: editingId ? "Employee updated" : "Employee account created", description: editingId ? `${employeeData.name}'s record was saved successfully.` : `Email verified. Login details were sent to ${employeeData.email}.`, variant: "success" });
     } catch (reason) { const message = reason instanceof Error ? reason.message : 'Unable to save employee'; setFormError(message); toast({ title: editingId ? "Update failed" : "Account creation failed", description: message, variant: "error" }); }
     finally { setSaving(false); }
   }
@@ -367,7 +405,7 @@ export function EmployeeDirectoryView({ employees: initialEmployees }: Partial<E
               <Field label="Last name" required><Input required placeholder="e.g. Dela Cruz" value={draft.lastName ?? ""} onChange={(e) => update("lastName", e.target.value)} /></Field>
               <Field label="Employee ID" required hint="Assigned automatically"><Input required readOnly className="bg-slate-100 text-slate-500" value={draft.id} /></Field>
               <Field label="Account creation date" hint="Cannot be edited"><div className="relative"><CalendarDays className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" /><Input readOnly className="bg-slate-100 pl-9 text-slate-500" value={draft.createdAt ? new Date(draft.createdAt).toLocaleString("en-PH") : "Assigned when employee is created"} /></div></Field>
-              <Field label="Email address" required><div className="relative"><Mail className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" /><Input required className="pl-9" type="email" placeholder="name@company.com" value={draft.email ?? ""} onChange={(e) => update("email", e.target.value)} /></div></Field>
+              <Field label="Email address" required><div className="relative"><Mail className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" /><Input required disabled={sendingVerification || saving} className="pl-9" type="email" placeholder="name@company.com" value={draft.email ?? ""} onChange={(e) => update("email", e.target.value)} /></div></Field>
               <Field label="Phone number" required hint="No spaces"><div className="relative"><Phone className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" /><Input required className="pl-9" type="tel" inputMode="numeric" pattern="\+639[0-9]{9}" maxLength={13} placeholder="+639123456789" value={draft.phone ?? ""} onChange={(e) => { const digits = e.target.value.replace(/\D/g, "").replace(/^63?/, "").slice(0, 10); update("phone", `+63${digits.startsWith("9") ? digits : `9${digits.replace(/^9/, "")}`}`.slice(0, 13)); }} /></div></Field>
               <div className="sm:col-span-2"><Field label="Home address" required><div className="relative"><MapPin className="absolute left-3 top-3 h-4 w-4 text-slate-400" /><textarea required rows={2} placeholder="Street, barangay, city, province" value={draft.address ?? ""} onChange={(e) => update("address", e.target.value)} className="w-full resize-none rounded-lg border border-slate-200 bg-white py-2 pl-9 pr-3 text-sm text-slate-900 outline-none transition focus:border-[#8642ED] focus:ring-2 focus:ring-[#8642ED]/20" /></div></Field></div>
             </div>
@@ -418,11 +456,13 @@ export function EmployeeDirectoryView({ employees: initialEmployees }: Partial<E
           </div>
           {!editingId && fingerprintSamples.length !== REQUIRED_FINGERPRINT_SCANS && <p className="mt-2 text-xs font-medium text-amber-600">Capture three scans of the same finger; all three must match accurately.</p>}
           </FormSection>
-          {!editingId && <FormSection icon={<KeyRound className="h-4 w-4" />} title="Employee login" description="A login account is created together with the employee record."><div className="rounded-xl border border-sky-200 bg-sky-50 p-4"><p className="text-sm font-semibold text-sky-900">Login email: {draft.email || "Enter the employee email above"}</p><p className="mt-1 text-xs leading-5 text-sky-700">WORKPULSE MVL generates a secure password and sends it directly to this email. The password is never displayed to the administrator.</p></div></FormSection>}
+          {!editingId && <FormSection icon={<KeyRound className="h-4 w-4" />} title="Verify employee email" description="The employee must receive a code before their account can be created.">
+            <EmployeeEmailVerification email={draft.email ?? ""} sent={!!emailVerificationId} code={emailVerificationCode} sending={sendingVerification} saving={saving} onSend={sendEmailVerification} onChange={setEmailVerificationCode} />
+          </FormSection>}
           {editingId && <FormSection icon={<KeyRound className="h-4 w-4" />} title="Confirm administrator changes" description="Your admin password is required before profile, role, or fingerprint changes can be saved."><Field label="Admin password" required><Input required type="password" autoComplete="current-password" disabled={passwordRetrySeconds > 0} placeholder={passwordRetrySeconds > 0 ? `Try again in ${passwordRetrySeconds}s` : "Enter your admin password"} value={adminPassword} onChange={(event) => { setAdminPassword(event.target.value); setFormError(""); }} /></Field>{passwordRetrySeconds > 0 && <p className="mt-2 text-xs font-medium text-amber-600">Password attempts locked for {passwordRetrySeconds} more seconds.</p>}</FormSection>}
           {formError && <p className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-medium text-rose-700">{formError}</p>}
           </div>
-          <div className="flex items-center justify-between border-t border-slate-200 bg-white px-6 py-4"><p className="hidden text-xs text-slate-400 sm:block"><span className="text-rose-500">*</span> Required fields</p><div className="ml-auto flex flex-wrap justify-end gap-2">{editingId && <Button type="button" variant="outline" disabled={!adminPassword || sendingLogin} onClick={sendNewLoginEmail}><Mail className="h-4 w-4" />{sendingLogin ? "Sending..." : "Send new login email"}</Button>}{editingId && <Button type="button" variant="outline" onClick={revertChanges}>Revert changes</Button>}<Button type="button" variant="outline" onClick={closeEditor}>Cancel</Button><Button type="submit" disabled={saving || fingerprintRegistering || passwordRetrySeconds > 0 || (editingId ? !adminPassword : fingerprintSamples.length !== REQUIRED_FINGERPRINT_SCANS)}><Fingerprint className="h-4 w-4" /> {saving ? 'Saving...' : passwordRetrySeconds > 0 ? `Wait ${passwordRetrySeconds}s` : editingId ? "Save changes" : "Create employee"}</Button></div></div>
+          <div className="flex items-center justify-between border-t border-slate-200 bg-white px-6 py-4"><p className="hidden text-xs text-slate-400 sm:block"><span className="text-rose-500">*</span> Required fields</p><div className="ml-auto flex flex-wrap justify-end gap-2">{editingId && <Button type="button" variant="outline" disabled={!adminPassword || sendingLogin} onClick={sendNewLoginEmail}><Mail className="h-4 w-4" />{sendingLogin ? "Sending..." : "Send new login email"}</Button>}{editingId && <Button type="button" variant="outline" onClick={revertChanges}>Revert changes</Button>}<Button type="button" variant="outline" onClick={closeEditor}>Cancel</Button><Button type="submit" disabled={saving || sendingVerification || (!editingId && (!emailVerificationId || emailVerificationCode.length !== 6)) || fingerprintRegistering || passwordRetrySeconds > 0 || (editingId ? !adminPassword : fingerprintSamples.length !== REQUIRED_FINGERPRINT_SCANS)}><Fingerprint className="h-4 w-4" /> {saving ? (editingId ? 'Saving...' : 'Creating account and sending email...') : passwordRetrySeconds > 0 ? `Wait ${passwordRetrySeconds}s` : editingId ? "Save changes" : "Create employee"}</Button></div></div>
         </form>
       </Dialog>
       <Dialog open={!!archiveTarget} onClose={() => setArchiveTarget(null)} className="max-w-sm"><DialogHeader><div><h3 className="flex items-center gap-2 text-base font-bold text-slate-900"><KeyRound className="h-4 w-4 text-rose-600" /> Archive employee</h3><p className="mt-1 text-xs text-slate-500">{archiveTarget?.name} will become inactive and move to Admin Controls.</p></div><DialogClose onClose={() => setArchiveTarget(null)} /></DialogHeader><form onSubmit={archiveEmployee} className="space-y-3 px-6 pb-6 pt-3"><Field label="Confirm your admin password" required><Input type="password" autoFocus value={archivePassword} onChange={(event) => { setArchivePassword(event.target.value); setArchiveError(""); }} placeholder="Enter your password" /></Field>{archiveError && <p className="text-xs font-medium text-rose-600">{archiveError}</p>}<div className="flex justify-end gap-2"><Button type="button" variant="outline" onClick={() => setArchiveTarget(null)}>Cancel</Button><Button type="submit" variant="destructive" disabled={archiving || !archivePassword}><Archive className="h-4 w-4" />{archiving ? "Archiving..." : "Archive employee"}</Button></div></form></Dialog>
