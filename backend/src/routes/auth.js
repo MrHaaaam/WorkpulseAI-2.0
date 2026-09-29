@@ -1,3 +1,6 @@
+import { LOGIN_PASSWORD_MAX, passwordValidationError } from '../../../shared/password-policy.js';
+import { validEmail } from '../input-validation.js';
+import { createLoginCooldown } from '../login-cooldown.js';
 import { Router } from 'express';
 import crypto from 'node:crypto';
 import { promisify } from 'node:util';
@@ -11,7 +14,7 @@ const scrypt = promisify(crypto.scrypt);
 let operationIndex = 0;
 const operations = ['+', '-', '×', '÷'];
 const captchaLimit = rateLimit({ windowMs: 60_000, max: 20, keyPrefix: 'captcha' });
-const loginLimit = rateLimit({ windowMs: 15 * 60_000, max: 8, keyPrefix: 'login' });
+const loginCooldown = createLoginCooldown();
 const otpLimit = rateLimit({ windowMs: 10 * 60_000, max: 10, keyPrefix: 'otp' });
 const passwordResetRequestLimit = rateLimit({ windowMs: 15 * 60_000, max: 5, keyPrefix: 'password-reset-request' });
 const passwordResetVerifyLimit = rateLimit({ windowMs: 10 * 60_000, max: 10, keyPrefix: 'password-reset-verify' });
@@ -72,20 +75,31 @@ router.get('/captcha', captchaLimit, async (_request, response) => {
   response.json({ captchaId, challenge });
 });
 
-router.post('/login', loginLimit, async (request, response) => {
+router.post('/login', async (request, response) => {
   try {
     const { email, password, captchaId, captchaAnswer } = request.body ?? {};
     if (!email || !password || !captchaId || captchaAnswer === undefined) return response.status(400).json({ error: 'Complete all login fields' });
-    if (String(email).length > 254 || String(password).length > 200 || String(captchaAnswer).length > 20) return response.status(400).json({ error: 'Invalid login input' });
+    if (String(email).length > 254 || String(password).length > LOGIN_PASSWORD_MAX || String(captchaAnswer).length > 20) return response.status(400).json({ error: 'Invalid login input' });
+    if (typeof password !== 'string' || /\s/.test(password)) return response.status(400).json({ error: 'Passwords cannot contain spaces.' });
+    if (!validEmail(email)) return response.status(400).json({ error: 'Enter a valid email address.' });
+    const cooldownKey = `${request.ip}:${String(email).trim().toLowerCase()}`;
+    const lockedSeconds = loginCooldown.remaining(cooldownKey);
+    if (lockedSeconds) { response.setHeader('Retry-After', String(lockedSeconds)); return response.status(429).json({ error: `Try again in ${lockedSeconds} seconds.`, retryAfterSeconds: lockedSeconds }); }
+    const failedLogin = (status, error) => {
+      const retryAfterSeconds = loginCooldown.fail(cooldownKey);
+      if (retryAfterSeconds) response.setHeader('Retry-After', String(retryAfterSeconds));
+      return response.status(retryAfterSeconds ? 429 : status).json({ error, retryAfterSeconds });
+    };
     const db = mongoose.connection.db;
     const captcha = await db.collection('login_captchas').findOneAndDelete({ captchaId });
-    if (!captcha || captcha.expiresAt < new Date() || !(await verifySecret(String(captchaAnswer).trim(), captcha.answerHash))) { await auditEvent({ req: request, action: 'auth.login', targetType: 'session', outcome: 'failure', metadata: { reason: 'captcha', attemptedEmail: email } }); return response.status(400).json({ error: 'Invalid or expired CAPTCHA' }); }
+    if (!captcha || captcha.expiresAt < new Date() || !(await verifySecret(String(captchaAnswer).trim(), captcha.answerHash))) { await auditEvent({ req: request, action: 'auth.login', targetType: 'session', outcome: 'failure', metadata: { reason: 'captcha', attemptedEmail: email } }); return failedLogin(400, 'Invalid or expired CAPTCHA'); }
 
     const normalizedEmail = String(email).trim().toLowerCase();
     let account = await db.collection('admin_accounts').findOne({ email: normalizedEmail, active: true });
     let accountType = 'admin';
     if (!account) { account = await db.collection('employee_accounts').findOne({ email: normalizedEmail, active: true }); accountType = 'employee'; }
-    if (!account || !(await verifySecret(password, account.passwordHash))) { await auditEvent({ req: request, actor: account, action: 'auth.login', targetType: 'session', outcome: 'failure', metadata: { reason: 'credentials', attemptedEmail: email } }); return response.status(401).json({ error: 'Invalid email or password' }); }
+    if (!account || !(await verifySecret(password, account.passwordHash))) { await auditEvent({ req: request, actor: account, action: 'auth.login', targetType: 'session', outcome: 'failure', metadata: { reason: 'credentials', attemptedEmail: email } }); return failedLogin(401, 'Invalid email or password'); }
+    loginCooldown.reset(cooldownKey);
     if (accountType === 'employee' && (await getSystemControls(db)).maintenanceMode) {
       await auditEvent({ req: request, actor: account, action: 'auth.login', targetType: 'session', outcome: 'failure', metadata: { reason: 'maintenance_mode' } });
       return response.status(503).json({ error: 'WORKPULSE MVL is temporarily available to administrators only while maintenance is in progress.' });
@@ -184,7 +198,7 @@ router.post('/forgot-password/request', passwordResetRequestLimit, async (reques
   const genericMessage = 'If that email belongs to an active employee, a 6-digit reset code has been sent.';
   try {
     const email = String(request.body?.email ?? '').trim().toLowerCase();
-    if (!email || email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    if (!validEmail(email)) {
       return response.status(400).json({ error: 'Enter a valid employee email address.' });
     }
     const db = mongoose.connection.db;
@@ -259,9 +273,8 @@ router.post('/forgot-password/reset', passwordResetCompleteLimit, async (request
     const resetToken = String(request.body?.resetToken ?? '');
     const newPassword = request.body?.newPassword;
     if (!verificationId || verificationId.length > 100 || resetToken.length !== 64) return response.status(401).json({ error: 'Your password reset request has expired.' });
-    if (typeof newPassword !== 'string' || newPassword.length < 8 || newPassword.length > 32) {
-      return response.status(400).json({ error: 'Your new password must be between 8 and 32 characters.' });
-    }
+    const passwordError = passwordValidationError(newPassword);
+    if (passwordError) return response.status(400).json({ error: passwordError });
     const db = mongoose.connection.db;
     const resetTokenDigest = crypto.createHash('sha256').update(resetToken).digest('hex');
     const record = await db.collection('password_reset_otps').findOne({ verificationId, resetTokenDigest, resetExpiresAt: { $gt: new Date() }, usedAt: { $exists: false } });
@@ -289,9 +302,8 @@ router.post('/change-initial-password', authenticate, csrfProtection, async (req
   try {
     if (request.auth?.accountType !== 'employee') return response.status(403).json({ error: 'Employee account required' });
     const newPassword = request.body?.newPassword;
-    if (typeof newPassword !== 'string' || newPassword.length < 8 || newPassword.length > 32) {
-      return response.status(400).json({ error: 'Your new password must be between 8 and 32 characters.' });
-    }
+    const passwordError = passwordValidationError(newPassword);
+    if (passwordError) return response.status(400).json({ error: passwordError });
     const account = request.auth.actor;
     if (account.mustChangePassword !== true) return response.status(409).json({ error: 'This temporary password has already been replaced.' });
     if (await verifySecret(newPassword, account.passwordHash)) {

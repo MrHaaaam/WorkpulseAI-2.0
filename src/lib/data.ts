@@ -2,33 +2,32 @@ export interface Employee {
   id: string;
   name: string;
   role: "employee" | "extra" | string;
-  casualLeave: { used: number; total: number };
-  sickLeave: { used: number; total: number };
   biometricStatus: "enrolled" | "pending" | "none";
   grossSalary: number;
   hoursWorked?: number;
   hourlyRate?: number;
+  hourlyRateOverride?: number | null;
   carryOverAmount?: number;
   status: "active" | "on-leave" | "inactive";
   email?: string;
   phone?: string;
   address?: string;
-  identifiers?: { type: string; value: string; amount: number }[];
+  identifiers?: { type: string; value: string; amount: number; frequency?: "quarterly" | "per-payroll"; eligibleFromQuarter?: string; frequencyHistory?: { fromQuarter: string; frequency: "quarterly" | "per-payroll" }[] }[];
 }
 
 export const employees: Employee[] = [
-  { id: "EMP-001", name: "Maria Santos", role: "employee", casualLeave: { used: 3, total: 10 }, sickLeave: { used: 1, total: 10 }, biometricStatus: "enrolled", grossSalary: 85000, status: "active" },
-  { id: "EMP-002", name: "Juan Dela Cruz", role: "employee", casualLeave: { used: 5, total: 10 }, sickLeave: { used: 2, total: 10 }, biometricStatus: "enrolled", grossSalary: 65000, status: "active" },
-  { id: "EMP-003", name: "Ana Reyes", role: "employee", casualLeave: { used: 2, total: 10 }, sickLeave: { used: 0, total: 10 }, biometricStatus: "enrolled", grossSalary: 55000, status: "active" },
-  { id: "EMP-004", name: "Carlos Mendoza", role: "employee", casualLeave: { used: 7, total: 10 }, sickLeave: { used: 4, total: 10 }, biometricStatus: "pending", grossSalary: 72000, status: "active" },
-  { id: "EMP-005", name: "Liza Garcia", role: "employee", casualLeave: { used: 1, total: 10 }, sickLeave: { used: 1, total: 10 }, biometricStatus: "enrolled", grossSalary: 60000, status: "on-leave" },
-  { id: "EMP-006", name: "Roberto Lim", role: "employee", casualLeave: { used: 4, total: 10 }, sickLeave: { used: 2, total: 10 }, biometricStatus: "enrolled", grossSalary: 78000, status: "active" },
-  { id: "EMP-007", name: "Patricia Tan", role: "employee", casualLeave: { used: 0, total: 10 }, sickLeave: { used: 0, total: 10 }, biometricStatus: "none", grossSalary: 58000, status: "active" },
-  { id: "EMP-008", name: "Miguel Fernandez", role: "employee", casualLeave: { used: 6, total: 10 }, sickLeave: { used: 3, total: 10 }, biometricStatus: "enrolled", grossSalary: 70000, status: "active" },
-  { id: "EMP-009", name: "Sofia Villanueva", role: "employee", casualLeave: { used: 2, total: 10 }, sickLeave: { used: 1, total: 10 }, biometricStatus: "enrolled", grossSalary: 82000, status: "active" },
-  { id: "EMP-010", name: "Diego Ramos", role: "employee", casualLeave: { used: 3, total: 10 }, sickLeave: { used: 0, total: 10 }, biometricStatus: "pending", grossSalary: 68000, status: "active" },
-  { id: "EMP-011", name: "Carmela Ong", role: "employee", casualLeave: { used: 1, total: 10 }, sickLeave: { used: 1, total: 10 }, biometricStatus: "enrolled", grossSalary: 90000, status: "active" },
-  { id: "EMP-012", name: "Jorge Aquino", role: "extra", casualLeave: { used: 8, total: 10 }, sickLeave: { used: 5, total: 10 }, biometricStatus: "none", grossSalary: 52000, status: "inactive" },
+  { id: "EMP-001", name: "Maria Santos", role: "employee", biometricStatus: "enrolled", grossSalary: 85000, status: "active" },
+  { id: "EMP-002", name: "Juan Dela Cruz", role: "employee", biometricStatus: "enrolled", grossSalary: 65000, status: "active" },
+  { id: "EMP-003", name: "Ana Reyes", role: "employee", biometricStatus: "enrolled", grossSalary: 55000, status: "active" },
+  { id: "EMP-004", name: "Carlos Mendoza", role: "employee", biometricStatus: "pending", grossSalary: 72000, status: "active" },
+  { id: "EMP-005", name: "Liza Garcia", role: "employee", biometricStatus: "enrolled", grossSalary: 60000, status: "on-leave" },
+  { id: "EMP-006", name: "Roberto Lim", role: "employee", biometricStatus: "enrolled", grossSalary: 78000, status: "active" },
+  { id: "EMP-007", name: "Patricia Tan", role: "employee", biometricStatus: "none", grossSalary: 58000, status: "active" },
+  { id: "EMP-008", name: "Miguel Fernandez", role: "employee", biometricStatus: "enrolled", grossSalary: 70000, status: "active" },
+  { id: "EMP-009", name: "Sofia Villanueva", role: "employee", biometricStatus: "enrolled", grossSalary: 82000, status: "active" },
+  { id: "EMP-010", name: "Diego Ramos", role: "employee", biometricStatus: "pending", grossSalary: 68000, status: "active" },
+  { id: "EMP-011", name: "Carmela Ong", role: "employee", biometricStatus: "enrolled", grossSalary: 90000, status: "active" },
+  { id: "EMP-012", name: "Jorge Aquino", role: "extra", biometricStatus: "none", grossSalary: 52000, status: "inactive" },
 ];
 
 export const attendanceData = {

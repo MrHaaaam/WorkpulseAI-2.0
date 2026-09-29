@@ -1,3 +1,10 @@
+import { payrollTransaction } from '../payroll-transaction.js';
+import { additionFrequency, validQuarter, quarterForDate, scheduleIdentifierFrequencies } from '../../../shared/quarterly-additions.js';
+import { previewQuarterlyAdditions, includeQuarterlyAdditions, removeQuarterlyAdditions, quarterlySelectionError, recurringPayrollAdditions, automaticQuarterlyAdditions, undoPaymentValidationError } from '../quarterly-additions.js';
+import { identifiersValidationError, settingsNumbersValidationError } from '../../../shared/field-limits.js';
+import { passwordValidationError } from '../../../shared/password-policy.js';
+import { normalizeName, validEmail, validAddress, employeeValidationError } from '../input-validation.js';
+import { checkoutIsChronological } from '../attendance-validation.js';
 import { clockOutSessions, forcedClockOutUpdate } from '../force-clock-out.js';
 import { activityFilter, auditPresentation } from '../audit-display.js';
 import { loadNotifications } from '../notifications.js';
@@ -49,45 +56,6 @@ function generateTemporaryPassword() {
   return Array.from(crypto.randomBytes(14), (byte) => alphabet[byte % alphabet.length]).join('');
 }
 
-function monthKeyInManila(date = new Date()) {
-  const parts = Object.fromEntries(new Intl.DateTimeFormat('en-US', {
-    timeZone: 'Asia/Manila', year: 'numeric', month: '2-digit',
-  }).formatToParts(date).filter((part) => part.type !== 'literal').map((part) => [part.type, part.value]));
-  return `${parts.year}-${parts.month}`;
-}
-
-function leaveDaysInMonth(request, monthKey) {
-  const exactDates = Array.isArray(request.approvedDates) && request.approvedDates.length ? request.approvedDates : Array.isArray(request.requestedDates) ? request.requestedDates : null;
-  if (exactDates) return exactDates.filter((date) => String(date).startsWith(`${monthKey}-`)).length;
-  const monthStart = new Date(`${monthKey}-01T00:00:00Z`);
-  const monthEnd = new Date(monthStart);
-  monthEnd.setUTCMonth(monthEnd.getUTCMonth() + 1);
-  monthEnd.setUTCDate(0);
-  const requestStart = new Date(`${request.startDate}T00:00:00Z`);
-  const requestEnd = new Date(`${request.endDate}T00:00:00Z`);
-  if ([monthStart, monthEnd, requestStart, requestEnd].some((date) => Number.isNaN(date.getTime()))) return 0;
-  const overlapStart = Math.max(monthStart.getTime(), requestStart.getTime());
-  const overlapEnd = Math.min(monthEnd.getTime(), requestEnd.getTime());
-  return overlapEnd < overlapStart ? 0 : Math.floor((overlapEnd - overlapStart) / 86400000) + 1;
-}
-
-function monthlyLeaveSummary(requests, monthlyCredits, month = monthKeyInManila()) {
-  const used = requests.filter((request) => request.status === 'approved').reduce((total, request) => total + leaveDaysInMonth(request, month), 0);
-  const allowance = Math.max(0, Number(monthlyCredits || 0));
-  return { month, total: allowance, used, remaining: Math.max(0, allowance - used) };
-}
-
-function monthKeysForRange(startDate, endDate) {
-  const start = new Date(`${String(startDate).slice(0, 7)}-01T00:00:00Z`);
-  const end = new Date(`${String(endDate).slice(0, 7)}-01T00:00:00Z`);
-  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || end < start) return [];
-  const months = [];
-  for (const cursor = new Date(start); cursor <= end; cursor.setUTCMonth(cursor.getUTCMonth() + 1)) {
-    months.push(cursor.toISOString().slice(0, 7));
-  }
-  return months;
-}
-
 function scheduledWorkStatus(settings, dateValue) {
   const override = settings?.shift?.scheduleOverrides?.find((entry) => entry.date === dateValue);
   if (override) return override.working === true;
@@ -129,7 +97,7 @@ export async function enforceAutomaticAbsences(db, settings, now = new Date()) {
       if ((employeeStart && date < employeeStart) || occupied.has(key) || leaveDates.has(key)) continue;
       operations.push({ updateOne: {
         filter: { employeeId: employee.id, date },
-        update: { $setOnInsert: { employeeId: employee.id, name: employee.name, role: employee.role === 'extra' ? 'Extra' : 'Regular', date, checkIn: null, checkOut: null, sessions: [], status: 'Absent', automaticAbsence: true, createdAt, updatedAt: createdAt } },
+        update: { $setOnInsert: { employeeId: employee.id, name: employee.name, role: employeeRoleLabel(employee.role), date, checkIn: null, checkOut: null, sessions: [], status: 'Absent', automaticAbsence: true, createdAt, updatedAt: createdAt } },
         upsert: true,
       } });
     }
@@ -192,7 +160,6 @@ router.use((req, res, next) => {
         settingsValues: req.path === '/settings' ? {
           workStart: body.shift?.startTime, lateGraceMinutes: body.shift?.lateGraceMinutes,
           automaticClockOutTime: body.shift?.autoClockOutTime, workDays: body.shift?.workDays,
-          monthlyLeaveCredits: body.leave?.monthlyCredits,
           regularHourlyRate: body.payroll?.hourlyRates?.regular, extraHourlyRate: body.payroll?.hourlyRates?.extra,
         } : null,
         ...(res.locals.auditMetadata || {}),
@@ -211,7 +178,7 @@ router.use((req, res, next) => {
   next();
 });
 
-router.get('/employee/me', requireRole('regular', 'extra'), async (req, res) => {
+router.get('/employee/me', requireRole('regular', 'extra', 'manager', 'supervisor'), async (req, res) => {
   try {
     const db = mongoose.connection.db;
     const employeeId = req.auth.actor.employeeId;
@@ -234,12 +201,11 @@ router.get('/employee/me', requireRole('regular', 'extra'), async (req, res) => 
       await preparePayrollRecord(db, employee, activePeriod, settings);
     }
     const payroll = await db.collection('payroll_requests').find({ employeeId }).sort({ createdAt: -1, _id: -1 }).limit(12).toArray();
-    const monthlyLeaveCredits = monthlyLeaveSummary(leaveRequests, settings.leave.monthlyCredits);
     const today = kioskTimestamp().date;
     const onLeaveToday = leaveRequests.some((leave) => leave.status === 'approved' && (Array.isArray(leave.approvedDates) && leave.approvedDates.length ? leave.approvedDates.includes(today) : leave.startDate <= today && leave.endDate >= today));
     const attendanceFlag = attendanceRiskForEmployee(attendance, employeeId, leaveRequests, today);
     res.json({
-      profile: { id: employee.id, name: employee.name, email: employee.email, phone: employee.phone, address: employee.address, role: employee.role, status: employee.status === 'inactive' ? 'inactive' : onLeaveToday ? 'on-leave' : 'active', biometricStatus: biometricTemplate ? 'enrolled' : 'none', monthlyLeaveCredits, hourlyRate: configuredHourlyRate(employee, settings), grossSalary: employee.grossSalary, createdAt: employee.createdAt },
+      profile: { id: employee.id, name: employee.name, email: employee.email, phone: employee.phone, address: employee.address, role: employee.role, status: employee.status === 'inactive' ? 'inactive' : onLeaveToday ? 'on-leave' : 'active', biometricStatus: biometricTemplate ? 'enrolled' : 'none', hourlyRate: configuredHourlyRate(employee, settings), grossSalary: employee.grossSalary, createdAt: employee.createdAt },
       attendance: attendance.map(({ _id, ...record }) => record),
       leaveRequests: leaveRequests.map(({ _id, ...record }) => record),
       attendanceFlag,
@@ -250,9 +216,11 @@ router.get('/employee/me', requireRole('regular', 'extra'), async (req, res) => 
         grossAmount: Number(record.grossAmount || 0),
         currentAmount: Number(record.currentAmount || 0),
         carryOverAmount: Number(record.carryOverAmount || 0),
-        additions: Array.isArray(record.additions) ? record.additions.slice(0, 20).map((item) => ({ label: String(item.label || 'Addition').slice(0, 80), value: Number(item.value || 0) })) : [],
+        additions: Array.isArray(record.additions) ? record.additions.map((item) => ({ label: String(item.label || 'Addition').slice(0, 80), value: Number(item.value || 0) })) : [],
+        carriedQuarterlyAdditions: record.carriedQuarterlyAdditions ?? [],
         hoursWorked: Number(record.hoursWorked || 0),
         hourlyRate: Number(record.hourlyRate || 0),
+        rateBreakdown: Array.isArray(record.rateBreakdown) ? record.rateBreakdown : [],
         status: record.status,
         periodStart: payrollPeriodKeyForRecord(record),
         paidAt: record.paidAt,
@@ -263,15 +231,15 @@ router.get('/employee/me', requireRole('regular', 'extra'), async (req, res) => 
   } catch { res.status(500).json({ error: 'Unable to load employee workspace' }); }
 });
 
-router.patch('/employee/me/contact', requireRole('regular', 'extra'), async (req, res) => {
+router.patch('/employee/me/contact', requireRole('regular', 'extra', 'manager', 'supervisor'), async (req, res) => {
   try {
     const phone = String(req.body?.phone ?? '').trim();
     const address = String(req.body?.address ?? '').trim().replace(/\s+/g, ' ');
     if (phone.length < 7 || phone.length > 30 || !/^[0-9+()\-\s.]+$/.test(phone)) {
       return res.status(400).json({ error: 'Enter a valid phone number using 7 to 30 characters.' });
     }
-    if (address.length < 5 || address.length > 200) {
-      return res.status(400).json({ error: 'Enter an address using 5 to 200 characters.' });
+    if (!validAddress(address)) {
+      return res.status(400).json({ error: 'Enter an address using 5 to 255 characters.' });
     }
     const db = mongoose.connection.db;
     const employeeId = req.auth.actor.employeeId;
@@ -289,7 +257,7 @@ router.patch('/employee/me/contact', requireRole('regular', 'extra'), async (req
   }
 });
 
-router.post('/employee/me/leave-requests', requireRole('regular', 'extra'), async (req, res) => {
+router.post('/employee/me/leave-requests', requireRole('regular', 'extra', 'manager', 'supervisor'), async (req, res) => {
   try {
     const db = mongoose.connection.db;
     const employeeId = req.auth.actor.employeeId;
@@ -313,14 +281,14 @@ router.post('/employee/me/leave-requests', requireRole('regular', 'extra'), asyn
     if (overlap) return res.status(409).json({ error: 'One or more selected dates already belong to another leave request.' });
     const id = `LR-${Date.now().toString(36).toUpperCase()}-${crypto.randomBytes(2).toString('hex').toUpperCase()}`;
     const initials = employee.name.split(/\s+/).filter(Boolean).map((part) => part[0]).join('').slice(0, 2).toUpperCase();
-    const request = { id, employeeId, employeeName: employee.name, role: employee.role === 'extra' ? 'Extra' : 'Regular', leaveType, startDate, endDate, requestedDates, approvedDates: [], totalDays, reason, status: 'pending', initials, createdAt: new Date() };
+    const request = { id, employeeId, employeeName: employee.name, role: employeeRoleLabel(employee.role), leaveType, startDate, endDate, requestedDates, approvedDates: [], totalDays, reason, status: 'pending', initials, createdAt: new Date() };
     await db.collection('leave_requests').insertOne(request);
     res.locals.auditMetadata = { targetName: employee.name, employeeId, leaveType, requestedDates, leaveAction: 'submitted' };
     res.status(201).json({ ...request, _id: undefined });
   } catch { res.status(500).json({ error: 'Unable to submit leave request' }); }
 });
 
-router.patch('/employee/me/leave-requests/:id/cancel', requireRole('regular', 'extra'), async (req, res) => {
+router.patch('/employee/me/leave-requests/:id/cancel', requireRole('regular', 'extra', 'manager', 'supervisor'), async (req, res) => {
   try {
     const request = await mongoose.connection.db.collection('leave_requests').findOneAndUpdate(
       { id: req.params.id, employeeId: req.auth.actor.employeeId, status: 'pending' },
@@ -379,8 +347,9 @@ router.patch('/admin/account-security', async (req, res) => {
     const email = String(req.body?.email ?? '').trim().toLowerCase();
     const newPassword = String(req.body?.newPassword ?? '');
     if (!currentPassword) return res.status(400).json({ error: 'Enter your current administrator password.' });
-    if (!email || email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return res.status(400).json({ error: 'Enter a valid administrator email address.' });
-    if (newPassword && (newPassword.length < 8 || newPassword.length > 64)) return res.status(400).json({ error: 'The new password must be between 8 and 64 characters.' });
+    if (!validEmail(email)) return res.status(400).json({ error: 'Enter a valid administrator email address.' });
+    const passwordError = newPassword ? passwordValidationError(newPassword) : null;
+    if (passwordError) return res.status(400).json({ error: passwordError });
 
     const verification = await verifyAdminPassword(req, currentPassword);
     if (!verification.valid) {
@@ -610,7 +579,8 @@ router.post('/biometric-evaluation-trials', async (req, res) => {
   }
 });
 
-const employeeFields = ['id', 'firstName', 'lastName', 'name', 'role', 'casualLeave', 'sickLeave', 'status', 'grossSalary', 'hoursWorked', 'hourlyRate', 'email', 'phone', 'address', 'identifiers'];
+const employeeFields = ['id', 'firstName', 'lastName', 'name', 'role', 'status', 'grossSalary', 'hoursWorked', 'hourlyRate', 'hourlyRateOverride', 'email', 'phone', 'address', 'identifiers'];
+const employeeRoleLabel = (role) => ({ regular: 'Regular', extra: 'Extra', manager: 'Manager', supervisor: 'Supervisor' })[role] ?? 'Regular';
 
 function serializedAuditEvent(event) {
   return {
@@ -714,21 +684,19 @@ router.get('/audit-events', async (req, res) => {
 function normalizedEmployee(input) {
   const employee = pick(input ?? {}, employeeFields);
   employee.id = String(employee.id ?? '').trim().slice(0, 40);
-  employee.firstName = String(employee.firstName ?? '').trim().slice(0, 60);
-  employee.lastName = String(employee.lastName ?? '').trim().slice(0, 60);
+  employee.firstName = normalizeName(employee.firstName);
+  employee.lastName = normalizeName(employee.lastName);
   employee.name = `${employee.firstName} ${employee.lastName}`.trim() || String(employee.name ?? '').trim().slice(0, 120);
-  employee.role = ['regular', 'extra'].includes(employee.role) ? employee.role : 'regular';
+  employee.role = ['regular', 'extra', 'manager', 'supervisor'].includes(employee.role) ? employee.role : 'regular';
   employee.status = employee.status === 'inactive' ? 'inactive' : 'active';
-  if (employee.email != null) employee.email = String(employee.email).trim().toLowerCase().slice(0, 254);
+  if (employee.email != null) employee.email = String(employee.email).trim().toLowerCase();
   if (employee.phone != null) employee.phone = String(employee.phone).trim().slice(0, 30);
-  if (employee.address != null) employee.address = String(employee.address).trim().slice(0, 300);
+  if (employee.address != null) employee.address = String(employee.address).trim();
   employee.grossSalary = Math.max(0, Number(employee.grossSalary || 0));
   employee.hoursWorked = Math.max(0, Number(employee.hoursWorked || 0));
   employee.hourlyRate = Math.max(0, Number(employee.hourlyRate || 0));
-  employee.identifiers = Array.isArray(employee.identifiers) ? employee.identifiers.slice(0, 20).map((item) => ({ type: String(item?.type ?? '').slice(0, 50), value: String(item?.value ?? '').slice(0, 100), amount: Math.max(0, Number(item?.amount || 0)) })) : [];
-  const leaveBalance = (value) => ({ used: Math.max(0, Number(value?.used || 0)), total: Math.max(0, Number(value?.total || 0)) });
-  employee.casualLeave = leaveBalance(employee.casualLeave);
-  employee.sickLeave = leaveBalance(employee.sickLeave);
+  employee.hourlyRateOverride = employee.hourlyRateOverride == null || employee.hourlyRateOverride === '' ? null : Number(employee.hourlyRateOverride);
+  employee.identifiers = Array.isArray(employee.identifiers) ? employee.identifiers.slice(0, 20).map((item) => ({ type: String(item?.type ?? '').slice(0, 50), value: String(item?.value ?? '').slice(0, 100), amount: Math.max(0, Number(item?.amount || 0)), frequency: additionFrequency(item) })) : [];
   return employee;
 }
 
@@ -761,14 +729,16 @@ function duplicateEmployeeMessage(error) {
 
 const defaultSettings = {
   shift: { enabled: true, startTime: '09:00', autoClockOutTime: '18:00', lateGraceMinutes: 0, workDays: 5, workWeekdays: [1, 2, 3, 4, 5], scheduleOverrides: [] },
-  leave: { monthlyCredits: 10 },
-  payroll: { hourlyRates: { regular: 50, extra: 40 } },
+  payroll: { hourlyRates: { regular: 50, extra: 40, manager: 50, supervisor: 50 } },
 };
 
 function configuredHourlyRate(employee, settings) {
-  return String(employee?.role ?? '').toLowerCase() === 'extra'
-    ? Number(settings?.payroll?.hourlyRates?.extra ?? defaultSettings.payroll.hourlyRates.extra)
-    : Number(settings?.payroll?.hourlyRates?.regular ?? defaultSettings.payroll.hourlyRates.regular);
+  if (Number.isFinite(employee?.hourlyRateOverride) && employee.hourlyRateOverride > 0) return employee.hourlyRateOverride;
+  const role = String(employee?.role ?? '').toLowerCase();
+  const rates = settings?.payroll?.hourlyRates;
+  if (role === 'extra') return Number(rates?.extra ?? defaultSettings.payroll.hourlyRates.extra);
+  if (role === 'manager' || role === 'supervisor') return Number(rates?.[role] ?? rates?.regular ?? defaultSettings.payroll.hourlyRates.regular);
+  return Number(rates?.regular ?? defaultSettings.payroll.hourlyRates.regular);
 }
 
 function parseAttendanceTime(date, time) {
@@ -826,6 +796,55 @@ function attendanceHoursForRecord(record, settings, calculationStart = null) {
   return Math.max(0, rawHours);
 }
 
+export function attendancePayForRecord(record, fallbackRate, calculationStart = null) {
+  const resetTime = calculationStart ? new Date(calculationStart).getTime() : 0;
+  return attendanceSessions(record).reduce((result, session) => {
+    const startedAt = new Date(session.checkInAt ?? record.createdAt ?? record.updatedAt ?? 0).getTime();
+    if (resetTime && (!Number.isFinite(startedAt) || startedAt <= resetTime)) return result;
+    const checkIn = parseAttendanceTime(record.date, session.checkIn);
+    const checkOut = parseAttendanceTime(record.date, session.checkOut);
+    if (!checkIn || !checkOut) return result;
+    if (checkOut <= checkIn) checkOut.setDate(checkOut.getDate() + 1);
+    const hours = Math.max(0, (checkOut.getTime() - checkIn.getTime()) / 3600000);
+    const rate = Number.isFinite(session.hourlyRate) && session.hourlyRate > 0 ? session.hourlyRate : fallbackRate;
+    result.hours += hours;
+    result.amount += hours * rate;
+    const line = result.rateLines.find(item => item.rate === rate);
+    if (line) line.hours += hours;
+    else result.rateLines.push({ rate, hours });
+    return result;
+  }, { hours: 0, amount: 0, rateLines: [] });
+}
+
+function attendancePaySummary(records, fallbackRate, calculationStart = null) {
+  const pay = records.map(record => attendancePayForRecord(record, fallbackRate, calculationStart));
+  const rates = new Map();
+  for (const record of pay) for (const line of record.rateLines) rates.set(line.rate, (rates.get(line.rate) || 0) + line.hours);
+  const rateBreakdown = [...rates].map(([rate, hours]) => ({ rate, hours: Math.round(hours * 100) / 100, amount: Math.round(hours * rate * 100) / 100 }));
+  return {
+    hoursWorked: Math.round(pay.reduce((sum, record) => sum + record.hours, 0) * 100) / 100,
+    grossAmount: Math.round(rateBreakdown.reduce((sum, line) => sum + line.amount, 0) * 100) / 100,
+    rateBreakdown,
+  };
+}
+
+export async function snapshotAttendanceRates(db, employees, settings) {
+  if (!employees.length) return;
+  const records = await db.collection('attendance').find({ employeeId: { $in: employees.map(item => item.id) } }).toArray();
+  const rates = new Map(employees.map(item => [item.id, configuredHourlyRate(item, settings)]));
+  for (const record of records) {
+    const sessions = attendanceSessions(record);
+    if (!sessions.some(session => session.checkIn && !Number.isFinite(session.hourlyRate))) continue;
+    const rate = rates.get(record.employeeId);
+    if (!Number.isFinite(rate) || rate <= 0) throw new Error('Unable to save the existing attendance rate.');
+    const result = await db.collection('attendance').updateOne(
+      { _id: record._id, updatedAt: record.updatedAt ?? { $exists: false }, sessions: record.sessions ?? { $exists: false } },
+      { $set: { sessions: sessions.map(session => Number.isFinite(session.hourlyRate) ? session : { ...session, hourlyRate: rate }) } },
+    );
+    if (result.modifiedCount !== 1) throw new Error('Attendance changed while saving rates. Retry the rate change.');
+  }
+}
+
 export async function getSettings(db) {
   const stored = await db.collection('settings').findOne({ key: 'company' });
   const storedShift = stored?.shift ?? {};
@@ -845,11 +864,12 @@ export async function getSettings(db) {
       workWeekdays: storedWorkWeekdays.length === workDays ? storedWorkWeekdays : fallbackWorkWeekdays,
       scheduleOverrides: Array.isArray(storedShift.scheduleOverrides) ? storedShift.scheduleOverrides.filter((entry) => /^\d{4}-\d{2}-\d{2}$/.test(entry?.date) && typeof entry?.working === 'boolean').slice(0, 366).map((entry) => ({ date: entry.date, working: entry.working, kind: ['holiday', 'rest-day', 'workday'].includes(entry.kind) ? entry.kind : entry.working ? 'workday' : 'rest-day' })) : [],
     },
-    leave: { monthlyCredits: Number(stored?.leave?.monthlyCredits ?? stored?.leave?.casualDays ?? defaultSettings.leave.monthlyCredits) },
     payroll: {
       hourlyRates: {
         regular: Number(stored?.payroll?.hourlyRates?.regular ?? defaultSettings.payroll.hourlyRates.regular),
         extra: Number(stored?.payroll?.hourlyRates?.extra ?? defaultSettings.payroll.hourlyRates.extra),
+        manager: Number(stored?.payroll?.hourlyRates?.manager ?? stored?.payroll?.hourlyRates?.regular ?? defaultSettings.payroll.hourlyRates.manager),
+        supervisor: Number(stored?.payroll?.hourlyRates?.supervisor ?? stored?.payroll?.hourlyRates?.regular ?? defaultSettings.payroll.hourlyRates.supervisor),
       },
     },
   };
@@ -885,8 +905,9 @@ export async function enforceAutomaticClockOut(db, settings) {
     // A configured time earlier than the session start belongs to the following day (night shift support).
     if (automaticOut <= checkIn) automaticOut.setDate(automaticOut.getDate() + 1);
     if (automaticOut > now) return;
+    if (!checkoutIsChronological(record.date, sessions[openSessionIndex], automaticOut)) return;
     const automaticOutTime = formatAttendanceTime(automaticOut);
-    sessions[openSessionIndex] = { ...sessions[openSessionIndex], checkOut: automaticOutTime, autoClockedOut: true };
+    sessions[openSessionIndex] = { ...sessions[openSessionIndex], checkOut: automaticOutTime, checkOutAt: automaticOut, autoClockedOut: true };
     await db.collection('attendance').updateOne({ _id: record._id }, { $set: { sessions, checkOut: automaticOutTime, autoClockedOut: true, sessionCount: sessions.length, updatedAt: now } });
   }));
 }
@@ -907,6 +928,8 @@ router.put('/settings', async (req, res) => {
         ...(verification.retryAfterSeconds ? { retryAfterSeconds: verification.retryAfterSeconds } : {}),
       });
     }
+    const numberError = settingsNumbersValidationError(incoming);
+    if (numberError) return res.status(400).json({ error: numberError });
     const numberInRange = (value, fallback, minimum, maximum) => {
       const number = Number(value);
       return Number.isFinite(number) ? Math.min(maximum, Math.max(minimum, number)) : fallback;
@@ -928,15 +951,19 @@ router.put('/settings', async (req, res) => {
         workWeekdays: Array.isArray(incoming.shift?.workWeekdays) ? [...new Set(incoming.shift.workWeekdays.map(Number).filter((day) => Number.isInteger(day) && day >= 0 && day <= 6))] : defaultSettings.shift.workWeekdays,
         scheduleOverrides,
       },
-      leave: { monthlyCredits: numberInRange(incoming.leave?.monthlyCredits, 10, 0, 31) },
       payroll: {
         hourlyRates: {
           regular: numberInRange(incoming.payroll?.hourlyRates?.regular, defaultSettings.payroll.hourlyRates.regular, 1, 10000),
           extra: numberInRange(incoming.payroll?.hourlyRates?.extra, defaultSettings.payroll.hourlyRates.extra, 1, 10000),
+          manager: numberInRange(incoming.payroll?.hourlyRates?.manager, defaultSettings.payroll.hourlyRates.manager, 1, 10000),
+          supervisor: numberInRange(incoming.payroll?.hourlyRates?.supervisor, defaultSettings.payroll.hourlyRates.supervisor, 1, 10000),
         },
       },
     };
     if (normalized.shift.workWeekdays.length !== normalized.shift.workDays) return res.status(400).json({ error: `Select exactly ${normalized.shift.workDays} regular workdays.` });
+    const rateEmployees = await db.collection('employees').find({ archived: { $ne: true } }).toArray();
+    const changingRates = rateEmployees.filter(employee => configuredHourlyRate(employee, currentSettings) !== configuredHourlyRate(employee, normalized));
+    await snapshotAttendanceRates(db, changingRates, currentSettings);
     await mongoose.connection.db.collection('settings').updateOne({ key: 'company' }, { $set: { ...normalized, updatedAt: new Date() }, $unset: { lateness: '' } }, { upsert: true });
     await enforceAutomaticClockOut(mongoose.connection.db, normalized);
     await reconcileLeaveWithSchedule(mongoose.connection.db, normalized);
@@ -981,7 +1008,7 @@ router.get('/employees', async (req, res) => {
         const records = attendance.filter((record) => record.employeeId === e.id && new Date(record.date) >= periodStart);
         const hoursWorked = records.reduce((total, record) => total + attendanceHoursForRecord(record, settings), 0);
         const hourlyRate = configuredHourlyRate(e, settings);
-        const calculatedGross = Math.round(hoursWorked * hourlyRate * 100) / 100;
+        const calculatedGross = attendancePaySummary(records, hourlyRate).grossAmount;
         return ({
         id: e.id,
         firstName: e.firstName,
@@ -994,8 +1021,6 @@ router.get('/employees', async (req, res) => {
         payrollPeriodDays: 15,
         status: e.status === 'inactive' ? 'inactive' : employeesOnLeaveToday.has(e.id) ? 'on-leave' : 'active',
         banned: Boolean(e.banned),
-        casualLeave: e.casualLeave ?? { total: 10, used: 0 },
-        sickLeave: e.sickLeave ?? { total: 10, used: 0 },
         biometricStatus: enrolledEmployeeIds.has(e.id) ? 'enrolled' : 'none',
         email: e.email,
         phone: e.phone,
@@ -1091,7 +1116,7 @@ router.post('/employees/email-verification', rateLimit({ windowMs: 10 * 60_000, 
     const db = mongoose.connection.db;
     if (!(await getSystemControls(db)).registrationOpen) return res.status(403).json({ error: 'New employee registration is currently restricted in Admin Controls' });
     const email = String(req.body?.email ?? '').trim().toLowerCase();
-    if (email.length > 254 || !/^[^\s@<>(),;:"\\]+@[^\s@<>(),;:"\\]+\.[^\s@<>(),;:"\\]+$/.test(email)) return res.status(400).json({ error: 'Enter a valid employee email address.' });
+    if (!validEmail(email)) return res.status(400).json({ error: 'Enter a valid employee email address.' });
     if (!process.env.SMTP_USER || !process.env.SMTP_APP_PASSWORD) return res.status(503).json({ error: 'Employee email delivery is not configured.' });
     const existing = await Promise.all(['employees', 'employee_accounts', 'admin_accounts'].map((name) => db.collection(name).findOne({ email }, { projection: { _id: 1 }, collation: { locale: 'en', strength: 2 } })));
     if (existing.some(Boolean)) return res.status(409).json({ error: 'This email address is already used by another WORKPULSE MVL account.' });
@@ -1125,10 +1150,14 @@ router.post('/employees/email-verification', rateLimit({ windowMs: 10 * 60_000, 
 router.post('/employees', async (req, res) => {
   try {
     if (!(await getSystemControls(mongoose.connection.db)).registrationOpen) return res.status(403).json({ error: 'New employee registration is currently restricted in Admin Controls' });
+    const identifierError = identifiersValidationError(req.body?.identifiers);
+    if (identifierError) return res.status(400).json({ error: identifierError });
     const employee = normalizedEmployee(req.body);
+    employee.identifiers = scheduleIdentifierFrequencies(null, employee.identifiers);
+    const validationError = employeeValidationError(employee);
+    if (validationError) return res.status(400).json({ error: validationError });
     if (!employee.firstName || !employee.lastName) return res.status(400).json({ error: 'First name and last name are required' });
     if (!employee.email || !employee.phone || !employee.address) return res.status(400).json({ error: 'Email, phone number, and address are required' });
-    if (!/^[^\s@<>(),;:"\\]+@[^\s@<>(),;:"\\]+\.[^\s@<>(),;:"\\]+$/.test(employee.email)) return res.status(400).json({ error: 'Enter a valid employee email address.' });
     if (!/^\+639\d{9}$/.test(employee.phone)) return res.status(400).json({ error: 'Phone number must use +639XXXXXXXXX with no spaces' });
     if (!process.env.SMTP_USER || !process.env.SMTP_APP_PASSWORD) return res.status(503).json({ error: 'Employee email delivery is not configured. Ask the system owner to configure SMTP before creating an account.' });
     const db = mongoose.connection.db;
@@ -1234,12 +1263,27 @@ router.put('/employees/:id', async (req, res) => {
       const error = verification.forbidden ? 'Administrator access required' : verification.retryAfterSeconds ? `Incorrect admin password. Try again in ${verification.retryAfterSeconds} seconds.` : 'Incorrect admin password';
       return res.status(status).json({ error, ...(verification.retryAfterSeconds ? { retryAfterSeconds: verification.retryAfterSeconds } : {}) });
     }
+    const identifierError = identifiersValidationError(req.body?.identifiers);
+    if (identifierError) return res.status(400).json({ error: identifierError });
     const employee = normalizedEmployee(req.body);
+    const validationError = employeeValidationError(employee);
+    if (validationError) return res.status(400).json({ error: validationError });
     employee.id = req.params.id;
     if (!employee.firstName || !employee.lastName) return res.status(400).json({ error: 'First name and last name are required' });
     if (employee.phone && !/^\+639\d{9}$/.test(employee.phone)) return res.status(400).json({ error: 'Phone number must use +639XXXXXXXXX with no spaces' });
     const existing = await mongoose.connection.db.collection('employees').findOne({ id: req.params.id });
     if (!existing) return res.status(404).json({ error: 'Employee not found' });
+    if (employee.status === 'inactive' && existing.status !== 'inactive') {
+      const openAttendance = await mongoose.connection.db.collection('attendance').findOne({
+        employeeId: employee.id,
+        $or: [
+          { sessions: { $elemMatch: { checkIn: { $exists: true, $nin: [null, ''] }, checkOut: { $in: [null, ''] } } } },
+          { sessions: { $exists: false }, checkIn: { $exists: true, $nin: [null, ''] }, checkOut: { $in: [null, ''] } },
+        ],
+      });
+      if (openAttendance) return res.status(409).json({ error: 'This employee is still clocked in. Clock them out before setting them to Inactive.' });
+    }
+    employee.identifiers = scheduleIdentifierFrequencies(existing, employee.identifiers);
     res.locals.auditMetadata = { targetName: employee.name || existing.name, employeeId: req.params.id, employeeAction: 'edited' };
     employee.biometricStatus = existing.biometricStatus ?? 'none';
     const db = mongoose.connection.db;
@@ -1249,6 +1293,10 @@ router.put('/employees/:id', async (req, res) => {
       db.collection('employees').findOne({ email: employee.email, id: { $ne: employee.id } }, { projection: { _id: 1 }, collation: { locale: 'en', strength: 2 } }),
     ]);
     if (adminEmail || employeeAccountEmail || employeeRecordEmail) return res.status(409).json({ error: 'This email address is already used by another WORKPULSE MVL account.' });
+    const previousSettings = await getSettings(db);
+    if (configuredHourlyRate(existing, previousSettings) !== configuredHourlyRate(employee, previousSettings)) {
+      await snapshotAttendanceRates(db, [existing], previousSettings);
+    }
     const result = await db.collection('employees').updateOne({ id: req.params.id }, { $set: { ...employee, updatedAt: new Date() } });
     if (!result.matchedCount) return res.status(404).json({ error: 'Employee not found' });
     await db.collection('employee_accounts').updateOne({ employeeId: employee.id }, { $set: { email: employee.email, role: employee.role, updatedAt: new Date() } });
@@ -1433,12 +1481,17 @@ router.get('/payroll-requests', async (req, res) => {
         carryOverAmount: p.carryOverAmount,
         periodStart: payrollPeriodKeyForRecord(p),
         grossAmount: p.grossAmount,
+        rateBreakdown: p.rateBreakdown ?? [],
         additions: p.additions,
+        quarterlyKeys: p.quarterlyKeys ?? [],
+        carriedQuarterlyAdditions: p.carriedQuarterlyAdditions ?? [],
         bonusAmount: Number(p.bonusAmount || 0),
         hoursWorked: p.hoursWorked,
         hourlyRate: p.hourlyRate,
         createdAt: p.createdAt,
         paidAt: p.paidAt,
+        paymentActionId: p.paymentActionId,
+        settledBy: p.settledBy,
         rejectedAt: p.rejectedAt,
         warnings: Array.isArray(p.warnings) ? p.warnings : [],
       }))
@@ -1476,12 +1529,7 @@ function payrollPeriodEnd(periodStart) {
     : `${year}-${String(month).padStart(2, '0')}-${String(new Date(year, month, 0).getDate()).padStart(2, '0')}`;
 }
 
-function payrollAdditions(employee) {
-  return (Array.isArray(employee.identifiers) ? employee.identifiers : [])
-    .map((item) => ({ label: String(item?.type ?? '').trim().slice(0, 80), value: Math.max(0, Number(item?.amount || 0)) }))
-    .filter((item) => item.label && item.value > 0)
-    .slice(0, 20);
-}
+
 
 // A payroll row is a single statement for an employee's 15-day period.  The
 // portal and the admin screen can both prepare it at about the same time, so
@@ -1513,6 +1561,10 @@ async function reconcileDuplicateUnpaidPayrollRecords(db, employeeId, periodStar
   return { ...primary, carryOverAmount: carriedBalance, amount: Number(primary.currentAmount || 0) + carriedBalance };
 }
 
+function carriedQuarterlyDetails(records) {
+  return records.flatMap(record => [...(record.carriedQuarterlyAdditions || []), ...(record.quarterlyAdditions || [])]);
+}
+
 async function carryPayrollCorrectionForward(db, payrollId, difference) {
   if (!difference) return;
   const nextPayroll = await db.collection('payroll_requests').findOne({ id: payrollId });
@@ -1525,6 +1577,25 @@ async function carryPayrollCorrectionForward(db, payrollId, difference) {
 }
 
 export async function preparePayrollRecord(db, employee, periodStart, settings) {
+  try {
+    return await payrollTransaction(db, async transactionDb => {
+      if (transactionDb.inPayrollTransaction) {
+        await transactionDb.collection('employees').updateOne({ id: employee.id }, { $inc: { payrollPolicyRevision: 1 } });
+        employee = await transactionDb.collection('employees').findOne({ id: employee.id }) ?? employee;
+      }
+      return calculatePayrollRecord(transactionDb, employee, periodStart, settings);
+    });
+  } catch (error) {
+    const periodConflict = error?.code === 11000 && ((error.keyPattern?.employeeId === 1 && error.keyPattern?.periodStart === 1) || String(error.message).includes('index: one_unpaid_payroll_per_period '));
+    if (!periodConflict) throw error;
+    // Duplicate-key errors abort a transaction. Read the winner only after rollback.
+    const winner = await db.collection('payroll_requests').findOne({ employeeId: employee.id, periodStart });
+    if (!winner) throw error;
+    return { record: { ...winner, periodStart: payrollPeriodKeyForRecord(winner) }, created: false };
+  }
+}
+
+async function calculatePayrollRecord(db, employee, periodStart, settings) {
   const existing = await reconcileDuplicateUnpaidPayrollRecords(db, employee.id, periodStart)
     ?? await db.collection('payroll_requests').findOne({ employeeId: employee.id, periodStart });
   if (existing) {
@@ -1535,18 +1606,20 @@ export async function preparePayrollRecord(db, employee, periodStart, settings) 
     if (!periodEnd) throw new Error('Invalid payroll period');
     const attendance = await db.collection('attendance').find({ employeeId: employee.id, date: { $gte: periodStart, $lte: periodEnd }, ...(existing.calculationResetAt ? { updatedAt: { $gt: existing.calculationResetAt } } : {}) }).toArray();
     const incompleteAttendance = attendance.some((record) => attendanceSessions(record).some((session) => !session.checkOut));
-    const hoursWorked = Math.round(attendance.reduce((total, record) => total + attendanceHoursForRecord(record, settings, existing.calculationResetAt), 0) * 100) / 100;
     const hourlyRate = configuredHourlyRate(employee, settings);
-    const grossAmount = Math.round(hoursWorked * hourlyRate * 100) / 100;
+    const { hoursWorked, grossAmount, rateBreakdown } = attendancePaySummary(attendance, hourlyRate, existing.calculationResetAt);
     const bonusAmount = Math.max(0, Number(existing.bonusAmount || 0));
-    const additions = [...payrollAdditions(employee), ...(bonusAmount > 0 ? [{ label: 'Bonus', value: bonusAmount }] : [])];
+    const newQuarterly = await automaticQuarterlyAdditions(db, employee, periodStart, existing);
+    const quarterlyAdditions = [...(existing.quarterlyAdditions || []), ...newQuarterly];
+    const additions = [...await recurringPayrollAdditions(db, employee, periodStart), ...quarterlyAdditions, ...(bonusAmount > 0 ? [{ label: 'Bonus', value: bonusAmount }] : [])];
     const currentAmount = grossAmount + additions.reduce((sum, item) => sum + item.value, 0);
     const newlyOutstanding = existing.calculationResetAt ? [] : await db.collection('payroll_requests').find({
       employeeId: employee.id,
-      status: { $in: ['processing', 'rejected'] },
+      status: { $in: ['processing', 'rejected'] }, amount: { $gt: 0 },
       rolledInto: { $exists: false },
       periodStart: { $lt: periodStart },
     }).toArray();
+    const carriedQuarterlyAdditions = [...(existing.carriedQuarterlyAdditions || []), ...carriedQuarterlyDetails(newlyOutstanding)];
     const addedCarry = newlyOutstanding.reduce((sum, payroll) => sum + Number(payroll.amount || 0), 0);
     const carryOverAmount = Number(existing.carryOverAmount || 0) + addedCarry;
     const amount = currentAmount + carryOverAmount;
@@ -1556,10 +1629,14 @@ export async function preparePayrollRecord(db, employee, periodStart, settings) 
     ];
     const previousAmount = Number(existing.amount || 0);
     const updated = await db.collection('payroll_requests').findOneAndUpdate(
-      { _id: existing._id },
-      { $set: { grossAmount, additions, bonusAmount, hoursWorked, hourlyRate, currentAmount, carryOverAmount, amount, warnings, updatedAt: new Date() } },
+      { _id: existing._id, status: existing.status, additions: existing.additions ?? { $exists: false }, updatedAt: existing.updatedAt ?? { $exists: false }, calculationResetAt: existing.calculationResetAt ?? { $exists: false } },
+      { $set: { grossAmount, rateBreakdown, additions, quarterlyAdditions, quarterlyKeys: [...new Set([...(existing.quarterlyKeys || []), ...quarterlyAdditions.map(item => item.quarter).filter(Boolean)])], carriedQuarterlyAdditions, bonusAmount, hoursWorked, hourlyRate, currentAmount, carryOverAmount, amount, warnings, updatedAt: new Date() } },
       { returnDocument: 'after' },
     );
+    if (!updated) {
+      const latest = await db.collection('payroll_requests').findOne({ _id: existing._id });
+      return { record: latest, created: false };
+    }
     await db.collection('payroll_requests').updateMany(
       { _id: { $in: newlyOutstanding.map((item) => item._id) } },
       { $set: { status: 'carried_over', rolledInto: existing.id, rolledAt: new Date() } },
@@ -1573,22 +1650,23 @@ export async function preparePayrollRecord(db, employee, periodStart, settings) 
   if (!periodEnd) throw new Error('Invalid payroll period');
   const attendance = await db.collection('attendance').find({ employeeId: employee.id, date: { $gte: periodStart, $lte: periodEnd } }).toArray();
   const incompleteAttendance = attendance.some((record) => attendanceSessions(record).some((session) => !session.checkOut));
-  const hoursWorked = Math.round(attendance.reduce((total, record) => total + attendanceHoursForRecord(record, settings), 0) * 100) / 100;
   const hourlyRate = configuredHourlyRate(employee, settings);
-  const grossAmount = Math.round(hoursWorked * hourlyRate * 100) / 100;
-  const additions = payrollAdditions(employee);
+  const { hoursWorked, grossAmount, rateBreakdown } = attendancePaySummary(attendance, hourlyRate);
+  const quarterlyAdditions = await automaticQuarterlyAdditions(db, employee, periodStart);
+  const additions = [...await recurringPayrollAdditions(db, employee, periodStart), ...quarterlyAdditions];
   const currentAmount = grossAmount + additions.reduce((sum, item) => sum + item.value, 0);
   const outstanding = await db.collection('payroll_requests').find({
-    employeeId: employee.id, status: { $in: ['processing', 'rejected'] }, rolledInto: { $exists: false },
+    employeeId: employee.id, status: { $in: ['processing', 'rejected'] }, amount: { $gt: 0 }, rolledInto: { $exists: false },
     $or: [{ periodStart: { $lt: periodStart } }, { periodStart: { $exists: false } }],
   }).toArray();
+  const carriedQuarterlyAdditions = carriedQuarterlyDetails(outstanding);
   const carryOverAmount = outstanding.reduce((sum, payroll) => sum + Number(payroll.amount || 0), 0);
   const warnings = [
     ...(hoursWorked <= 0 ? ['No completed attendance hours'] : []),
     ...(incompleteAttendance ? ['Incomplete attendance session'] : []),
   ];
   const id = `PR-${Date.now()}-${crypto.randomBytes(3).toString('hex')}-${employee.id}`;
-  const record = { id, employeeId: employee.id, employeeName: employee.name, employeeEmail: employee.email, grossAmount, additions, hoursWorked, hourlyRate, currentAmount, carryOverAmount, amount: currentAmount + carryOverAmount, periodStart, periodDays: 15, status: 'processing', warnings, createdAt: new Date() };
+  const record = { id, employeeId: employee.id, employeeName: employee.name, employeeEmail: employee.email, grossAmount, rateBreakdown, additions, quarterlyAdditions, quarterlyKeys: quarterlyAdditions.length ? [quarterForDate(periodStart)] : [], carriedQuarterlyAdditions, hoursWorked, hourlyRate, currentAmount, carryOverAmount, amount: currentAmount + carryOverAmount, periodStart, periodDays: 15, status: 'processing', warnings, createdAt: new Date() };
   try {
     await db.collection('payroll_requests').insertOne(record);
   } catch (error) {
@@ -1596,7 +1674,7 @@ export async function preparePayrollRecord(db, employee, periodStart, settings) 
       (error.keyPattern?.employeeId === 1 && error.keyPattern?.periodStart === 1)
       || String(error.message).includes('index: one_unpaid_payroll_per_period ')
     );
-    if (!periodConflict) throw error;
+    if (!periodConflict || db.inPayrollTransaction) throw error;
     // Another preparation won the insert race. Only that request should link
     // outstanding balances; the losing request must not apply them again.
     const concurrent = await db.collection('payroll_requests').findOne({ employeeId: employee.id, periodStart });
@@ -1663,6 +1741,44 @@ router.post('/payroll/audit-print', async (req, res) => {
   res.status(204).end();
 });
 
+router.post('/payroll-requests/quarterly-additions/preview', async (req, res) => {
+  try {
+    const { periodStart, quarter } = req.body ?? {};
+    const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Manila', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
+    const error = quarterlySelectionError(periodStart, quarter, today);
+    if (error) return res.status(400).json({ error });
+    const entries = await previewQuarterlyAdditions(mongoose.connection.db, periodStart, quarter);
+    res.json({ entries });
+  } catch { res.status(500).json({ error: 'Unable to preview quarterly additions.' }); }
+});
+
+router.post('/payroll-requests/quarterly-additions/include', async (req, res) => {
+  try {
+    const { periodStart, quarter, selections } = req.body ?? {};
+    const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Manila', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
+    const error = quarterlySelectionError(periodStart, quarter, today);
+    if (error) return res.status(400).json({ error });
+    if (!Array.isArray(selections) || !selections.length || selections.length > 500 || selections.some(item => typeof item?.requestId !== 'string' || typeof item?.token !== 'string') || new Set(selections.map(item => item.requestId)).size !== selections.length) return res.status(400).json({ error: 'Review and select up to 500 employees.' });
+    const results = await includeQuarterlyAdditions(mongoose.connection.db, periodStart, quarter, selections, req.auth.actor.email);
+    const included = results.filter(item => item.included).length;
+    res.locals.auditMetadata = { payrollAction: 'quarterly-additions-included', periodStart, quarter, recordCount: included };
+    res.json({ included, results });
+  } catch (error) {
+    console.error('Quarterly inclusion failed:', error.message);
+    res.status(500).json({ error: 'Unable to include quarterly additions. Refresh the preview before retrying.' });
+  }
+});
+
+router.post('/payroll-requests/quarterly-additions/remove', async (req, res) => {
+  try {
+    const { requestId, quarter } = req.body ?? {};
+    if (typeof requestId !== 'string' || !validQuarter(quarter)) return res.status(400).json({ error: 'Select an unpaid payroll and a valid quarter.' });
+    if (!await removeQuarterlyAdditions(mongoose.connection.db, requestId, quarter, req.auth.actor.email)) return res.status(409).json({ error: 'Only additions in an unpaid payroll without a hold or carry-forward can be removed.' });
+    res.locals.auditMetadata = { payrollAction: 'quarterly-additions-removed', requestId, quarter };
+    res.json({ removed: true });
+  } catch { res.status(500).json({ error: 'Unable to remove quarterly additions.' }); }
+});
+
 router.patch('/payroll-requests/bonus', async (req, res) => {
   try {
     const amount = Math.round(Number(req.body?.amount) * 100) / 100;
@@ -1679,10 +1795,11 @@ router.patch('/payroll-requests/bonus', async (req, res) => {
     const operations = records.map((record) => {
       const bonusAmount = Math.round((Number(record.bonusAmount || 0) + amount) * 100) / 100;
       const additions = [...(Array.isArray(record.additions) ? record.additions.filter((item) => item?.label !== 'Bonus') : []), { label: 'Bonus', value: bonusAmount }];
-      return { updateOne: { filter: { _id: record._id, status: { $in: ['processing', 'rejected'] } }, update: { $set: { bonusAmount, additions, currentAmount: Math.round((Number(record.currentAmount || 0) + amount) * 100) / 100, amount: Math.round((Number(record.amount || 0) + amount) * 100) / 100, bonusUpdatedAt: new Date(), bonusUpdatedBy: req.auth.actor.email } } } };
+      return { updateOne: { filter: { _id: record._id, status: { $in: ['processing', 'rejected'] }, additions: record.additions ?? { $exists: false }, updatedAt: record.updatedAt ?? { $exists: false } }, update: { $set: { bonusAmount, additions, currentAmount: Math.round((Number(record.currentAmount || 0) + amount) * 100) / 100, amount: Math.round((Number(record.amount || 0) + amount) * 100) / 100, bonusUpdatedAt: new Date(), bonusUpdatedBy: req.auth.actor.email } } } };
     });
     const result = await db.collection('payroll_requests').bulkWrite(operations);
     res.locals.auditMetadata = { payrollAction: 'bonus-added', scope, amount, recordCount: result.modifiedCount, targetName: scope === 'individual' ? records[0]?.employeeName : null, periodStart };
+    if (!result.modifiedCount) return res.status(409).json({ error: 'Payroll changed while adding the bonus. Refresh and try again.' });
     res.json({ updated: result.modifiedCount, amount, scope });
   } catch (error) {
     console.error('Payroll bonus update failed:', error instanceof Error ? error.message : error);
@@ -1702,11 +1819,13 @@ router.patch('/payroll-requests/pay-bulk', async (req, res) => {
     const ids = Array.isArray(req.body?.ids) ? [...new Set(req.body.ids.map(String))].slice(0, 500) : [];
     if (!ids.length) return res.status(400).json({ error: 'Select at least one ready payroll record' });
     const db = mongoose.connection.db;
-    const ready = await db.collection('payroll_requests').find({ id: { $in: ids }, periodStart, status: 'processing' }).toArray();
+    let ready = await db.collection('payroll_requests').find({ id: { $in: ids }, periodStart, status: 'processing', amount: { $gt: 0 }, rolledInto: { $exists: false } }).toArray();
     if (!ready.length) return res.status(409).json({ error: 'No selected payroll records are ready to pay' });
     const paidAt = new Date();
     const paymentActionId = `PAY-${Date.now()}-${crypto.randomBytes(4).toString('hex')}`;
-    await db.collection('payroll_requests').updateMany({ _id: { $in: ready.map((item) => item._id) } }, { $set: { status: 'paid', paidAt, approvedBy: req.auth.actor.email, paymentActionId }, $unset: { rejectedAt: '', rejectedBy: '' } });
+    await db.collection('payroll_requests').updateMany({ _id: { $in: ready.map((item) => item._id) }, status: 'processing', amount: { $gt: 0 }, rolledInto: { $exists: false } }, { $set: { status: 'paid', paidAt, approvedBy: req.auth.actor.email, paymentActionId }, $unset: { rejectedAt: '', rejectedBy: '' } });
+    ready = await db.collection('payroll_requests').find({ paymentActionId, status: 'paid', settledBy: { $exists: false } }).toArray();
+    if (!ready.length) return res.status(409).json({ error: 'Payroll changed before payment. Refresh and review the amounts.' });
     for (const record of ready) {
       await db.collection('payroll_requests').updateMany({
         employeeId: record.employeeId, rolledInto: { $exists: true }, status: { $in: ['processing', 'rejected', 'carried_over'] }, periodStart: { $lte: periodStart },
@@ -1723,6 +1842,9 @@ router.patch('/payroll-requests/pay-bulk', async (req, res) => {
 
 router.patch('/payroll-requests/undo-last-payment', async (req, res) => {
   try {
+    const undoError = undoPaymentValidationError(req.body);
+    if (undoError) return res.status(400).json({ error: undoError });
+    const undoReason = req.body.reason.trim();
     const verification = await verifyAdminPassword(req, req.body?.password);
     if (!verification.valid) {
       if (verification.retryAfterSeconds) res.setHeader('Retry-After', String(verification.retryAfterSeconds));
@@ -1731,27 +1853,37 @@ router.patch('/payroll-requests/undo-last-payment', async (req, res) => {
     const periodStart = String(req.body?.periodStart ?? '');
     if (!/^\d{4}-\d{2}-(01|16)$/.test(periodStart)) return res.status(400).json({ error: 'Select a valid payroll period' });
     const db = mongoose.connection.db;
-    const latest = await db.collection('payroll_requests').find({ periodStart, status: 'paid', settledBy: { $exists: false } }).sort({ paidAt: -1, _id: -1 }).limit(1).next();
-    if (!latest) return res.status(409).json({ error: 'There is no payment to undo for this period' });
+    const scope = req.body?.scope === 'individual' ? 'individual' : req.body?.scope === 'payment-action' ? 'payment-action' : 'last-action';
+    const requestId = req.body?.requestId;
+    if (scope === 'individual' && (typeof requestId !== 'string' || !requestId.trim())) return res.status(400).json({ error: 'Choose an employee payment to undo.' });
+    const paymentActionId = req.body?.paymentActionId;
+    if (scope === 'payment-action' && (typeof paymentActionId !== 'string' || !/^PAY-[\w-]{1,100}$/.test(paymentActionId))) return res.status(400).json({ error: 'Choose a payment group to undo.' });
+    const latest = scope === 'individual'
+      ? await db.collection('payroll_requests').findOne({ id: requestId, periodStart, status: 'paid', settledBy: { $exists: false } })
+      : scope === 'payment-action'
+        ? await db.collection('payroll_requests').findOne({ paymentActionId, periodStart, status: 'paid', settledBy: { $exists: false } })
+      : await db.collection('payroll_requests').find({ periodStart, status: 'paid', settledBy: { $exists: false } }).sort({ paidAt: -1, _id: -1 }).limit(1).next();
+    if (!latest) return res.status(409).json({ error: scope === 'individual' ? 'That employee payment is no longer marked as paid. Refresh payroll.' : 'There is no payment to undo for this period' });
     const paidAt = latest.paidAt instanceof Date ? latest.paidAt : new Date(latest.paidAt);
     const undoDeadline = new Date(paidAt.getTime() + 15 * 24 * 60 * 60_000);
     if (Number.isNaN(paidAt.getTime()) || new Date() >= undoDeadline) {
       return res.status(409).json({ error: 'This payment can no longer be undone because the 15-day undo period has expired.' });
     }
-    const directRecords = latest.paymentActionId
+    const directRecords = scope === 'individual' ? [latest] : latest.paymentActionId
       ? await db.collection('payroll_requests').find({ periodStart, status: 'paid', paymentActionId: latest.paymentActionId, settledBy: { $exists: false } }).toArray()
       : [latest];
+    if (!directRecords.length) return res.status(409).json({ error: 'This payment changed. Refresh payroll and try again.' });
     const directIds = directRecords.map((item) => item.id);
     const total = directRecords.reduce((sum, item) => sum + Number(item.amount || 0), 0);
     await db.collection('payroll_requests').updateMany(
-      { _id: { $in: directRecords.map((item) => item._id) } },
-      { $set: { status: 'processing', undoneAt: new Date(), undoneBy: req.auth.actor.email }, $unset: { paidAt: '', approvedBy: '', paymentActionId: '' } },
+      { _id: { $in: directRecords.map((item) => item._id) }, status: 'paid' },
+      { $set: { status: 'processing', undoneAt: new Date(), undoneBy: req.auth.actor.email, undoReason, paymentReversedConfirmed: true }, $unset: { paidAt: '', approvedBy: '', paymentActionId: '' } },
     );
     await db.collection('payroll_requests').updateMany(
       { settledBy: { $in: directIds }, status: 'paid' },
-      { $set: { status: 'carried_over', undoneAt: new Date(), undoneBy: req.auth.actor.email }, $unset: { paidAt: '', approvedBy: '', paymentActionId: '', settledBy: '' } },
+      { $set: { status: 'carried_over', undoneAt: new Date(), undoneBy: req.auth.actor.email, undoReason, paymentReversedConfirmed: true }, $unset: { paidAt: '', approvedBy: '', paymentActionId: '', settledBy: '' } },
     );
-    res.locals.auditMetadata = { payrollAction: 'payment-undone', recordCount: directRecords.length, targetName: directRecords.length === 1 ? directRecords[0].employeeName : null, total, periodStart };
+    res.locals.auditMetadata = { payrollAction: 'payment-undone', undoReason, recordCount: directRecords.length, targetName: directRecords.length === 1 ? directRecords[0].employeeName : null, total, periodStart };
     res.json({ undone: directRecords.length, ids: directIds, total });
   } catch (error) {
     console.error('Undo payroll payment failed:', error instanceof Error ? error.message : error);
@@ -1761,44 +1893,11 @@ router.patch('/payroll-requests/undo-last-payment', async (req, res) => {
 
 router.post('/payroll-requests', async (req, res) => {
   try {
-    const { employeeId } = req.body ?? {};
-    const currentAmount = Math.max(0, Number(req.body?.currentAmount || 0));
-    const grossAmount = Math.max(0, Number(req.body?.grossAmount || 0));
-    const hoursWorked = Math.max(0, Number(req.body?.hoursWorked || 0));
-    const hourlyRate = Math.max(0, Number(req.body?.hourlyRate || 0));
-    const additions = Array.isArray(req.body?.additions) ? req.body.additions.slice(0, 20).map((item) => ({
-      label: String(item?.label ?? '').trim().slice(0, 80),
-      value: Math.max(0, Number(item?.value || 0)),
-    })).filter((item) => item.label && item.value > 0) : [];
-    if (!employeeId) return res.status(400).json({ error: 'Employee ID is required' });
     const db = mongoose.connection.db;
-    const employee = await db.collection('employees').findOne({ id: employeeId, archived: { $ne: true } });
+    const employee = await db.collection('employees').findOne({ id: req.body?.employeeId, archived: { $ne: true } });
     if (!employee) return res.status(404).json({ error: 'Employee not found' });
-    const periodStart = payrollPeriodKey();
-    const legacyPeriodStart = currentPayrollPeriodStart().toISOString().slice(0, 10);
-    const existing = await db.collection('payroll_requests').findOne({ employeeId, periodStart: { $in: [...new Set([periodStart, legacyPeriodStart])] } });
-    if (existing) return res.json({ ...existing, periodStart: payrollPeriodKeyForRecord(existing) });
-
-    const outstanding = await db.collection('payroll_requests').find({
-      employeeId,
-      status: { $in: ['processing', 'rejected'] },
-      rolledInto: { $exists: false },
-      $or: [{ periodStart: { $lt: periodStart } }, { periodStart: { $exists: false } }],
-    }).toArray();
-    const carryOverAmount = outstanding.reduce((sum, payroll) => sum + Number(payroll.amount || 0), 0);
-    const id = `PR-${Date.now()}-${employeeId}`;
-    const payroll = {
-      id, employeeId, employeeName: employee.name, employeeEmail: employee.email,
-      grossAmount, additions, hoursWorked, hourlyRate,
-      currentAmount, carryOverAmount, amount: currentAmount + carryOverAmount,
-      periodStart, periodDays: 15, status: 'processing', createdAt: new Date(),
-    };
-    await db.collection('payroll_requests').insertOne(payroll);
-    if (outstanding.length) await db.collection('payroll_requests').updateMany(
-      { _id: { $in: outstanding.map((item) => item._id) } },
-      { $set: { status: 'carried_over', rolledInto: id, rolledAt: new Date() } },
-    );
-    res.status(201).json(payroll);
+    const result = await preparePayrollRecord(db, employee, payrollPeriodKey(), await getSettings(db));
+    res.status(result.created ? 201 : 200).json(result.record);
   } catch { res.status(500).json({ error: 'Failed to process payroll' }); }
 });
 
@@ -1813,11 +1912,11 @@ router.patch('/payroll-requests/:id/confirm-payment', async (req, res) => {
     const paidAt = new Date();
     const paymentActionId = `PAY-${Date.now()}-${crypto.randomBytes(4).toString('hex')}`;
     const result = await db.collection('payroll_requests').findOneAndUpdate(
-      { id: req.params.id, status: { $in: ['processing', 'rejected'] } },
+      { id: req.params.id, status: 'processing', amount: { $gt: 0 }, rolledInto: { $exists: false } },
       { $set: { status: 'paid', paidAt, approvedBy: req.auth.actor.email, paymentActionId }, $unset: { rejectedAt: '', rejectedBy: '' } },
       { returnDocument: 'after' },
     );
-    if (!result) return res.status(404).json({ error: 'Unpaid payroll record not found' });
+    if (!result) return res.status(409).json({ error: 'This payroll has no balance to pay, is already paid, or was carried forward.' });
     res.locals.auditMetadata = { payrollAction: 'individual-paid', targetName: result.employeeName, employeeId: result.employeeId, amount: result.amount, periodStart: result.periodStart };
     await db.collection('payroll_requests').updateMany(
       {
@@ -1889,6 +1988,7 @@ router.post('/payroll-requests/:id/email', async (req, res) => {
       `Hourly rate: ${money(payroll.hourlyRate)}`,
       `Attendance-based pay: ${money(payroll.grossAmount ?? payroll.currentAmount)}`,
       ...additions.map((item) => `${item.label}: +${money(item.value)}`),
+      ...(payroll.carriedQuarterlyAdditions || []).map((item) => `Included in carried balance - ${item.label}: ${money(item.value)}`),
       ...(Number(payroll.carryOverAmount || 0) > 0 ? [`Unpaid balance carried forward: +${money(payroll.carryOverAmount)}`] : []),
       '',
       `Total payroll: ${money(payroll.amount)}`,
@@ -1917,19 +2017,23 @@ router.post('/payroll/:employeeId/email-summary', async (req, res) => {
     periodStart.setHours(0, 0, 0, 0);
     const records = await mongoose.connection.db.collection('attendance').find({ employeeId: employee.id }).toArray();
     const periodRecords = records.filter((record) => new Date(record.date) >= periodStart);
-    const hoursWorked = periodRecords.reduce((total, record) => total + attendanceHoursForRecord(record, settings), 0);
     const hourlyRate = configuredHourlyRate(employee, settings);
-    const gross = periodRecords.length ? Math.round(hoursWorked * hourlyRate * 100) / 100 : Number(employee.grossSalary ?? 0);
+    const paySummary = attendancePaySummary(periodRecords, hourlyRate);
+    const hoursWorked = paySummary.hoursWorked;
+    const gross = periodRecords.length ? paySummary.grossAmount : Number(employee.grossSalary ?? 0);
     const identifiers = Array.isArray(employee.identifiers) ? employee.identifiers.filter((item) => item?.type && item?.value) : [];
-    const additionLines = identifiers.filter((item) => Number(item.amount) > 0).map((item) => [String(item.type), Number(item.amount)]);
-    const total = additionLines.reduce((sum, item) => sum + item[1], 0);
+
     const money = (value) => new Intl.NumberFormat('en-PH', { style: 'currency', currency: 'PHP' }).format(value);
     const identifierText = identifiers.length ? `\nProfile identifiers:\n${identifiers.map((item) => `${item.type}: ${item.value}`).join('\n')}` : '';
     const activePeriodStart = payrollPeriodKey();
     const legacyActivePeriodStart = currentPayrollPeriodStart().toISOString().slice(0, 10);
     const activePayroll = await mongoose.connection.db.collection('payroll_requests').findOne({ employeeId: employee.id, periodStart: { $in: [...new Set([activePeriodStart, legacyActivePeriodStart])] } });
+    const displayGross = Number(activePayroll?.grossAmount ?? gross);
+    const rateText = (activePayroll?.rateBreakdown?.length ? activePayroll.rateBreakdown : paySummary.rateBreakdown).map(line => `${money(line.rate)}/hour for ${line.hours.toFixed(2)} hours`).join('; ') || `${money(hourlyRate)}/hour`;
     const carryOver = Number(activePayroll?.carryOverAmount || 0);
-    const text = `Payroll Summary (15-day period)\nEmployee: ${employee.name}\nEmployee ID: ${employee.id}${identifierText}\nHours Worked: ${hoursWorked.toFixed(2)}\nHourly Rate: ${money(hourlyRate)}\n\nGross Salary: ${money(gross)}\n${additionLines.map(([label, value]) => `${label}: +${money(value)}`).join('\n')}\nTotal Additions: +${money(total)}\nUnpaid Balance Carried Forward: +${money(carryOver)}\nNet Salary: ${money(gross + total + carryOver)}`;
+    const additionLines = (activePayroll?.additions ?? await recurringPayrollAdditions(db, employee, activePeriodStart)).map((item) => [item.label, item.value]);
+    const total = additionLines.reduce((sum, item) => sum + item[1], 0);
+    const text = `Payroll Summary (15-day period)\nEmployee: ${employee.name}\nEmployee ID: ${employee.id}${identifierText}\nHours Worked: ${Number(activePayroll?.hoursWorked ?? hoursWorked).toFixed(2)}\nHourly Rate(s): ${rateText}\n\nGross Salary: ${money(displayGross)}\n${additionLines.map(([label, value]) => `${label}: +${money(value)}`).join('\n')}\nTotal Additions: +${money(total)}\nUnpaid Balance Carried Forward: +${money(carryOver)}\nNet Salary: ${money(displayGross + total + carryOver)}`;
     const transport = nodemailer.createTransport({ service: 'gmail', auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_APP_PASSWORD } });
     await transport.sendMail({ from: `WORKPULSE MVL <${process.env.SMTP_USER}>`, to: employee.email, subject: `Payroll Summary - ${employee.name}`, text });
     res.locals.auditMetadata = { payrollAction: 'summary-emailed', targetName: employee.name, employeeId: employee.id };
@@ -1982,19 +2086,24 @@ router.patch('/payroll-requests/:id/reset', async (req, res) => {
     const db = mongoose.connection.db;
     const existing = await db.collection('payroll_requests').findOne({ id: req.params.id });
     if (!existing) return res.status(404).json({ error: 'Payroll record not found' });
+    if (existing.status === 'carried_over' || existing.rolledInto) return res.status(409).json({ error: 'This payroll was carried forward. Review the destination payroll instead.' });
+    const quarterlySource = await db.collection('payroll_requests').findOne({ employeeId: existing.employeeId, $or: [{ id: existing.id }, { settledBy: existing.id }, { rolledInto: existing.id }], 'quarterlyKeys.0': { $exists: true } });
+    if (existing.carriedQuarterlyAdditions?.length || (quarterlySource && (['paid', 'approved'].includes(existing.status) || quarterlySource.id !== existing.id))) return res.status(409).json({ error: 'Quarterly additions are linked to this payment. Undo a paid payment first; carried quarterly balances must be settled through their destination payroll.' });
+    if (['paid', 'approved'].includes(existing.status)) return res.status(409).json({ error: 'Paid payroll cannot be reset. Use Undo Payment with a reason only if payment was not made or was returned.' });
     const resetAt = new Date();
     const result = await db.collection('payroll_requests').findOneAndUpdate(
-      { _id: existing._id },
+      { _id: existing._id, status: existing.status, updatedAt: existing.updatedAt ?? { $exists: false } },
       {
         $set: {
-          hoursWorked: 0, hourlyRate: 0, grossAmount: 0, bonusAmount: 0, additions: [], currentAmount: 0,
+          hoursWorked: 0, hourlyRate: 0, rateBreakdown: [], grossAmount: 0, bonusAmount: 0, additions: [], currentAmount: 0,
           carryOverAmount: 0, amount: 0, warnings: [], status: 'processing',
           calculationResetAt: resetAt, resetBy: req.auth.actor.email, updatedAt: resetAt,
         },
-        $unset: { paidAt: '', approvedBy: '', paymentActionId: '', rejectedAt: '', rejectedBy: '', settledBy: '', undoneAt: '', undoneBy: '' },
+        $unset: { quarterlyKeys: '', quarterlyAdditions: '', carriedQuarterlyAdditions: '', paidAt: '', approvedBy: '', paymentActionId: '', rejectedAt: '', rejectedBy: '', settledBy: '', undoneAt: '', undoneBy: '' },
       },
       { returnDocument: 'after' },
     );
+    if (!result) return res.status(409).json({ error: 'Payroll changed. Refresh before resetting.' });
     res.locals.auditMetadata = { payrollAction: 'reset', targetName: existing.employeeName, employeeId: existing.employeeId, periodStart: existing.periodStart, recordCount: 1 };
     res.json(result);
   } catch (error) {
@@ -2038,16 +2147,11 @@ router.patch('/leave-requests/bulk-status', async (req, res) => {
         const requestedDates = Array.isArray(pending.requestedDates) ? [...new Set(pending.requestedDates.map(String))].sort() : [];
         if (status === 'approved') {
           if (!requestedDates.length) throw new Error('No valid requested dates are available.');
-          const [settings, approvedRequests] = await Promise.all([getSettings(db), db.collection('leave_requests').find({ employeeId: pending.employeeId, status: 'approved' }).toArray()]);
+          const settings = await getSettings(db);
           const nonWorking = requestedDates.find((date) => scheduledWorkStatus(settings, date) === false);
           if (nonWorking) throw new Error(`${nonWorking} is a holiday or rest day.`);
           const attendanceConflict = await db.collection('attendance').findOne({ employeeId: pending.employeeId, date: { $in: requestedDates }, $or: [{ checkIn: { $nin: [null, ''] } }, { sessions: { $elemMatch: { checkIn: { $nin: [null, ''] } } } }] });
           if (attendanceConflict) throw new Error(`Attendance already exists on ${attendanceConflict.date}.`);
-          const approval = { ...pending, approvedDates: requestedDates };
-          for (const month of [...new Set(requestedDates.map((date) => date.slice(0, 7)))]) {
-            const current = monthlyLeaveSummary(approvedRequests, settings.leave.monthlyCredits, month);
-            if (current.used + leaveDaysInMonth(approval, month) > current.total) throw new Error(`Not enough leave credits for ${month}.`);
-          }
         }
         const approvedDates = status === 'approved' ? requestedDates : [];
         const updated = await db.collection('leave_requests').findOneAndUpdate({ _id: pending._id, status: 'pending' }, { $set: { status, approvedDates, totalDays: status === 'approved' ? approvedDates.length : pending.totalDays, reviewedAt: new Date(), reviewedBy: req.auth.actor.email } }, { returnDocument: 'after' });
@@ -2081,23 +2185,12 @@ router.patch('/leave-requests/:id/status', async (req, res) => {
     const approvedDates = status === 'approved' ? [...new Set((Array.isArray(req.body?.approvedDates) ? req.body.approvedDates : requestedDates).map(String))].sort() : [];
     if (status === 'approved' && (!approvedDates.length || approvedDates.some((date) => !requestedDates.includes(date)))) return res.status(400).json({ error: 'Select at least one date from the employee request.' });
     if (status === 'approved' && pendingRequest.employeeId) {
-      const [settings, approvedRequests] = await Promise.all([
-        getSettings(db),
-        db.collection('leave_requests').find({ employeeId: pendingRequest.employeeId, status: 'approved' }).toArray(),
-      ]);
+      const settings = await getSettings(db);
       const nonWorkingDates = approvedDates.filter((date) => scheduledWorkStatus(settings, date) === false);
-      if (nonWorkingDates.length) return res.status(409).json({ error: `${nonWorkingDates[0]} is now a holiday or rest day and cannot use leave credit.` });
+      if (nonWorkingDates.length) return res.status(409).json({ error: `${nonWorkingDates[0]} is now a holiday or rest day and cannot be approved for leave.` });
       const attendanceConflict = await db.collection('attendance').findOne({ employeeId: pendingRequest.employeeId, date: { $in: approvedDates }, $or: [{ checkIn: { $nin: [null, ''] } }, { sessions: { $elemMatch: { checkIn: { $nin: [null, ''] } } } }] });
       if (attendanceConflict) return res.status(409).json({ error: `Attendance already exists on ${attendanceConflict.date}. Remove that date from the approval or resolve its attendance first.` });
-      const approval = { ...pendingRequest, approvedDates };
-      for (const month of [...new Set(approvedDates.map((date) => date.slice(0, 7)))]) {
-        const current = monthlyLeaveSummary(approvedRequests, settings.leave.monthlyCredits, month);
-        const requested = leaveDaysInMonth(approval, month);
-        if (current.used + requested > current.total) {
-          const monthLabel = new Date(`${month}-01T00:00:00Z`).toLocaleDateString('en-US', { timeZone: 'UTC', month: 'long', year: 'numeric' });
-          return res.status(409).json({ error: `Not enough leave credits for ${monthLabel}. ${current.remaining} of ${current.total} credits remain.` });
-        }
-      }
+
     }
     const request = await db.collection('leave_requests').findOneAndUpdate({ id: req.params.id, status: 'pending' }, { $set: { status, approvedDates, totalDays: status === 'approved' ? approvedDates.length : pendingRequest.totalDays, reviewedAt: new Date(), reviewedBy: req.auth.actor.email } }, { returnDocument: 'after' });
     if (!request) return res.status(404).json({ error: 'Pending leave request not found' });
@@ -2231,9 +2324,9 @@ router.post('/attendance/kiosk', async (req, res) => {
     }
     if (!existing) {
       const record = {
-        employeeId, name: employee.name, role: employee.role === 'extra' ? 'Extra' : 'Regular',
+        employeeId, name: employee.name, role: employeeRoleLabel(employee.role),
         date: stamp.date, checkIn: stamp.time, checkOut: null,
-        sessions: [{ checkIn: stamp.time, checkOut: null, checkInAt: stamp.now, deviceUid: deviceUid || null, matchScore: matched.score }],
+        sessions: [{ checkIn: stamp.time, checkOut: null, checkInAt: stamp.now, hourlyRate: configuredHourlyRate(employee, settings), deviceUid: deviceUid || null, matchScore: matched.score }],
         sessionCount: 1, lastAction: 'time-in',
         status: clockMinutes(stamp.time) > clockMinutes(settings.shift.startTime) + Number(settings.shift.lateGraceMinutes || 0) ? 'Late' : 'Present',
         captureMethod: 'digitalpersona-fingerjet', deviceUid: deviceUid || null,
@@ -2266,6 +2359,7 @@ router.post('/attendance/kiosk', async (req, res) => {
     let action;
     let update;
     if (lastSession && !lastSession.checkOut) {
+      if (!checkoutIsChronological(existing.date, lastSession, stamp.now)) return rejectScan(409, 'invalid-checkout-time', 'Time-out must be later than time-in.');
       sessions[sessions.length - 1] = {
         ...lastSession, checkOut: stamp.time, checkOutAt: stamp.now,
         checkoutDeviceUid: deviceUid || null, checkoutMatchScore: matched.score,
@@ -2281,7 +2375,7 @@ router.post('/attendance/kiosk', async (req, res) => {
         if (verificationAttemptId) await db.collection('biometric_verification_attempts').updateOne({ _id: verificationAttemptId }, { $set: { action: 'daily-limit', eventTime: stamp.time, attendanceDate: stamp.date } });
         return rejectScan(409, 'daily-limit', 'Daily attendance limit reached: three time-in/time-out sessions are already complete.');
       }
-      sessions.push({ checkIn: stamp.time, checkOut: null, checkInAt: stamp.now, deviceUid: deviceUid || null, matchScore: matched.score });
+      sessions.push({ checkIn: stamp.time, checkOut: null, checkInAt: stamp.now, hourlyRate: configuredHourlyRate(employee, settings), deviceUid: deviceUid || null, matchScore: matched.score });
       action = 'time-in';
       update = {
         sessions, sessionCount: sessions.length, checkOut: null, lastAction: action, updatedAt: stamp.now,

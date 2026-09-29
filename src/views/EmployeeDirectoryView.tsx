@@ -1,3 +1,7 @@
+import { frequencyForQuarter, quarterForDate, quarterLabel, nextQuarter, manilaDate } from "../../shared/quarterly-additions.js";
+import { BoundedNumberInput } from "../components/ui/BoundedNumberInput";
+import { ADDITION_MAX, HOURLY_RATE_MAX, identifierInput, identifierLengths, identifiersValidationError, validBoundedNumber } from "../../shared/field-limits.js";
+import { nameInput, emailInput, validEmail } from '../../shared/input-format.js';
 import { AdminPageHeader } from "../components/AdminPageHeader";
 import { useEffect, useMemo, useState } from "react";
 import { Archive, BriefcaseBusiness, CalendarDays, Check, Clock, Contact, Fingerprint, Grid2X2, IdCard, KeyRound, List, Mail, MapPin, Pencil, Phone, Plus, ScanLine, Search, ShieldCheck, UserRound, X } from "lucide-react";
@@ -21,13 +25,12 @@ export interface Employee {
   lastName?: string;
   name: string;
   role: string;
-  casualLeave: { total: number; used: number };
-  sickLeave: { total: number; used: number };
   biometricStatus: "enrolled" | "pending" | "none";
   status: "active" | "on-leave" | "inactive";
   grossSalary?: number;
   hoursWorked?: number;
   hourlyRate?: number;
+  hourlyRateOverride?: number | null;
   email?: string;
   phone?: string;
   address?: string;
@@ -36,7 +39,7 @@ export interface Employee {
   philHealthNumber?: string;
   pagIbigNumber?: string;
   tinNumber?: string;
-  identifiers?: { type: string; value: string; amount: number }[];
+  identifiers?: { type: string; value: string; amount: number; frequency?: "quarterly" | "per-payroll"; eligibleFromQuarter?: string; frequencyHistory?: { fromQuarter: string; frequency: "quarterly" | "per-payroll" }[] }[];
 }
 
 interface EmployeeDirectoryViewProps { employees: Employee[] }
@@ -49,13 +52,12 @@ const emptyEmployee: Employee = {
   lastName: "",
   name: "",
   role: "regular",
-  casualLeave: { used: 0, total: 10 },
-  sickLeave: { used: 0, total: 10 },
   biometricStatus: "none",
   status: "active",
   grossSalary: 0,
   hoursWorked: 0,
   hourlyRate: 50,
+  hourlyRateOverride: null,
   email: "",
   phone: "",
   address: "",
@@ -89,11 +91,15 @@ export function EmployeeDirectoryView({ employees: initialEmployees }: Partial<E
   const [viewMode, setViewMode] = useState<ViewMode>("table");
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<"All" | Employee["status"]>("All");
+  const [roleFilter, setRoleFilter] = useState<"All" | Employee["role"]>("All");
   const [editorOpen, setEditorOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draft, setDraft] = useState<Employee>(emptyEmployee);
   const [savedDraft, setSavedDraft] = useState<Employee | null>(null);
   const [adminPassword, setAdminPassword] = useState("");
+  const [passwordOpen, setPasswordOpen] = useState(false);
+  const [passwordPurpose, setPasswordPurpose] = useState<"save" | "email">("save");
+  const [invalidField, setInvalidField] = useState("");
   const [passwordRetrySeconds, setPasswordRetrySeconds] = useState(0);
   const [identifierType, setIdentifierType] = useState("SSS");
   const [customIdentifierType, setCustomIdentifierType] = useState("");
@@ -160,9 +166,9 @@ export function EmployeeDirectoryView({ employees: initialEmployees }: Partial<E
     const query = search.toLowerCase();
     const matchesSearch = [employee.name, employee.id, employee.role, employee.sssNumber, employee.address, ...(employee.identifiers ?? []).flatMap((item) => [item.type, item.value])]
       .some((value) => value?.toLowerCase().includes(query));
-    return matchesSearch && (statusFilter === "All" || employee.status === statusFilter);
-  }), [employees, search, statusFilter]);
-  const employeePage = usePagination(filtered, `${search}|${statusFilter}`);
+    return matchesSearch && (statusFilter === "All" || employee.status === statusFilter) && (roleFilter === "All" || employee.role === roleFilter);
+  }), [employees, search, statusFilter, roleFilter]);
+  const employeePage = usePagination(filtered, `${search}|${statusFilter}|${roleFilter}`);
 
   async function openAdd() {
     setEmailVerificationId("");
@@ -188,6 +194,10 @@ export function EmployeeDirectoryView({ employees: initialEmployees }: Partial<E
 
   function openEdit(employee: Employee) {
     setEditingId(employee.id);
+    setPasswordOpen(false);
+    setAdminPassword("");
+    setInvalidField("");
+    setFormError("");
     setFingerprintRegistering(false);
     setFingerprintSamples([]);
     setFingerprintDeviceUid("");
@@ -196,9 +206,9 @@ export function EmployeeDirectoryView({ employees: initialEmployees }: Partial<E
       employee.philHealthNumber && { type: "PhilHealth", value: employee.philHealthNumber },
       employee.pagIbigNumber && { type: "Pag-IBIG", value: employee.pagIbigNumber },
       employee.tinNumber && { type: "TIN", value: employee.tinNumber },
-    ].filter(Boolean).map((identifier) => ({ ...identifier, amount: 0 })) as { type: string; value: string; amount: number }[];
-    const normalizedRole = employee.role === "extra" ? "extra" : "regular";
-    const hourlyRate = normalizedRole === "regular" ? 50 : 40;
+    ].filter(Boolean).map((identifier) => ({ ...identifier, amount: 0 })) as { type: string; value: string; amount: number; frequency?: "quarterly" | "per-payroll"; eligibleFromQuarter?: string; frequencyHistory?: { fromQuarter: string; frequency: "quarterly" | "per-payroll" }[] }[];
+    const normalizedRole = ["regular", "extra", "manager", "supervisor"].includes(employee.role) ? employee.role : "regular";
+    const hourlyRate = normalizedRole === "extra" ? 40 : 50;
     const nameParts = employee.name.trim().split(/\s+/);
     const editable = { ...emptyEmployee, ...employee, firstName: employee.firstName || nameParts[0] || "", lastName: employee.lastName || nameParts.slice(1).join(" "), role: normalizedRole, hourlyRate, hoursWorked: employee.hoursWorked ?? ((employee.grossSalary ?? 0) / hourlyRate), identifiers: employee.identifiers ?? legacyIdentifiers };
     setDraft(editable);
@@ -209,6 +219,7 @@ export function EmployeeDirectoryView({ employees: initialEmployees }: Partial<E
 
   function closeEditor() {
     if (saving || sendingVerification) return;
+    setPasswordOpen(false);
     setEditorOpen(false);
     setAdminPassword("");
     setFormError("");
@@ -221,6 +232,8 @@ export function EmployeeDirectoryView({ employees: initialEmployees }: Partial<E
     if (!savedDraft) return;
     setDraft(savedDraft);
     setAdminPassword("");
+    setPasswordOpen(false);
+    setInvalidField("");
     setFormError("");
     setFingerprintRegistering(false);
     setFingerprintSamples([]);
@@ -228,11 +241,14 @@ export function EmployeeDirectoryView({ employees: initialEmployees }: Partial<E
   }
 
   function update<K extends keyof Employee>(field: K, value: Employee[K]) {
+    setInvalidField("");
+    setFormError("");
     if (field === 'email') {
       setEmailVerificationId("");
       setEmailVerificationCode("");
     }
-    setDraft((current) => ({ ...current, [field]: value }));
+    const inputValue = typeof value === 'string' ? field === 'email' ? emailInput(value) : field === 'firstName' || field === 'lastName' ? nameInput(value) : value : value;
+    setDraft((current) => ({ ...current, [field]: inputValue }));
   }
 
   async function sendEmailVerification() {
@@ -254,17 +270,42 @@ export function EmployeeDirectoryView({ employees: initialEmployees }: Partial<E
     } finally { setSendingVerification(false); }
   }
 
-  function updateRole(role: "regular" | "extra") {
-    const hourlyRate = role === "regular" ? 50 : 40;
+  function updateRole(role: "regular" | "extra" | "manager" | "supervisor") {
+    const hourlyRate = role === "extra" ? 40 : 50;
     setDraft((current) => ({ ...current, role, hourlyRate }));
   }
 
-  async function saveEmployee(event: React.FormEvent) {
+  function showFieldError(field: string, message: string) {
+    setFormError(message);
+    setInvalidField(field);
+    requestAnimationFrame(() => {
+      const input = document.querySelector<HTMLElement>(`[data-employee-field="${field}"]`);
+      input?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      input?.focus({ preventScroll: true });
+    });
+  }
+
+  function saveEmployee(event: React.FormEvent) {
     event.preventDefault();
     if (saving) return;
+    const identifierError = identifiersValidationError(draft.identifiers);
+    if (identifierError) { const index = draft.identifiers?.findIndex(item => identifiersValidationError([item])) ?? -1; showFieldError(index >= 0 ? `identifier-${index}` : 'identifiers', identifierError); return; }
+    const names = [draft.firstName, draft.lastName].map(value => (value ?? '').normalize('NFC').trim().replace(/ +/g, ' '));
+    const badName = names.findIndex(value => value.length < 2 || value.length > 50 || !/^(?=.*\p{L})[\p{L}\p{M} '\u2019.-]+$/u.test(value));
+    if (badName >= 0) { showFieldError(badName === 0 ? 'firstName' : 'lastName', 'Enter a name using 2 to 50 characters.'); return; }
+    if (!validEmail(draft.email)) { showFieldError('email', 'Enter a valid email address.'); return; }
+    if (!/^\+639\d{9}$/.test(draft.phone ?? '')) { showFieldError('phone', 'Phone number must use +639XXXXXXXXX.'); return; }
+    if ((draft.address ?? '').trim().length < 5 || (draft.address ?? '').trim().length > 255) { showFieldError('address', 'Address must be 5 to 255 characters.'); return; }
+    if (draft.hourlyRateOverride != null && !validBoundedNumber(draft.hourlyRateOverride, 1, HOURLY_RATE_MAX)) { showFieldError('hourlyRateOverride', 'Employee hourly rate must be from 1 to 10,000 with at most 2 decimal places.'); return; }
     if (!editingId && (!emailVerificationId || !/^\d{6}$/.test(emailVerificationCode))) { setFormError('Request a verification code and enter the code received by the employee.'); return; }
-    if (!draft.firstName?.trim() || !draft.lastName?.trim()) return;
     if (!editingId && fingerprintSamples.length !== REQUIRED_FINGERPRINT_SCANS) { setFormError('Capture three fingerprint scans before creating the employee.'); return; }
+    setInvalidField('');
+    setFormError('');
+    if (editingId) { setPasswordPurpose('save'); setPasswordOpen(true); return; }
+    void persistEmployee();
+  }
+
+  async function persistEmployee() {
     setSaving(true); setFormError("");
     try {
       if (editingId) {
@@ -301,6 +342,7 @@ export function EmployeeDirectoryView({ employees: initialEmployees }: Partial<E
       }
       setEmployees((current) => editingId ? current.map((employee) => employee.id === editingId ? employeeData : employee) : [...current, employeeData]);
       setEditorOpen(false);
+      setPasswordOpen(false);
       setAdminPassword("");
       setFingerprintSamples([]);
       setFingerprintDeviceUid("");
@@ -312,7 +354,7 @@ export function EmployeeDirectoryView({ employees: initialEmployees }: Partial<E
   function addIdentifier() {
     const type = identifierType === "Custom" ? customIdentifierType.trim() : identifierType;
     if (!type || draft.identifiers?.some((identifier) => identifier.type.toLowerCase() === type.toLowerCase())) return;
-    update("identifiers", [...(draft.identifiers ?? []), { type, value: "", amount: 0 }]);
+    update("identifiers", [...(draft.identifiers ?? []), { type, value: "", amount: 0, frequency: "quarterly" }]);
     setCustomIdentifierType("");
   }
 
@@ -326,6 +368,8 @@ export function EmployeeDirectoryView({ employees: initialEmployees }: Partial<E
       });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(data.error || "Unable to send new login details");
+      setPasswordOpen(false);
+      setAdminPassword("");
       toast({ title: "Login email sent", description: data.message, variant: "success" });
     } catch (reason) {
       const message = reason instanceof Error ? reason.message : "Unable to send new login details";
@@ -355,11 +399,14 @@ export function EmployeeDirectoryView({ employees: initialEmployees }: Partial<E
     <div className="space-y-6">
       <AdminPageHeader title="Employee Directory" description="Find employees and manage their account details." icon={Contact} actions={<><Button variant="outline" onClick={() => window.open('/kiosk', '_blank', 'noopener,noreferrer')}><ScanLine className="h-4 w-4" /> Open Kiosk</Button><Button data-guide="employee-add" onClick={openAdd}><Plus className="h-4 w-4" /> Add Employee</Button></>} />
 
-      <div data-guide="employee-filters" className="grid grid-cols-1 gap-2 sm:grid-cols-[minmax(0,1fr)_auto_auto] sm:items-center lg:grid-cols-[minmax(18rem,28rem)_auto_auto_1fr]">
+      <div data-guide="employee-filters" className="grid grid-cols-1 gap-2 sm:grid-cols-[minmax(0,1fr)_auto_auto_auto] sm:items-center lg:grid-cols-[minmax(18rem,28rem)_auto_auto_auto_1fr]">
         <div className="relative min-w-0">
           <label htmlFor="employee-directory-search" className="sr-only">Search employees</label><Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" aria-hidden="true" />
           <Input id="employee-directory-search" type="search" placeholder="Search employees..." value={search} onChange={(e) => setSearch(e.target.value)} className="pl-10" />
         </div>
+        <label htmlFor="employee-role-filter" className="sr-only">Filter by employee role</label><select id="employee-role-filter" aria-label="Filter by employee role" value={roleFilter} onChange={(e) => setRoleFilter(e.target.value as typeof roleFilter)} className="h-10 w-full rounded-lg border border-slate-300 bg-white px-3 text-sm text-slate-700 focus:border-violet-500 focus:outline-none focus:ring-4 focus:ring-violet-200 sm:w-auto">
+          <option value="All">All roles</option><option value="regular">Regular</option><option value="extra">Extra</option><option value="manager">Manager</option><option value="supervisor">Supervisor</option>
+        </select>
         <label htmlFor="employee-status-filter" className="sr-only">Filter by employment status</label><select id="employee-status-filter" aria-label="Filter by employment status" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value as typeof statusFilter)} className="h-10 w-full rounded-lg border border-slate-300 bg-white px-3 text-sm text-slate-700 focus:border-violet-500 focus:outline-none focus:ring-4 focus:ring-violet-200 sm:w-auto">
           <option value="All">All statuses</option><option value="active">Active</option><option value="on-leave">On Leave</option><option value="inactive">Inactive</option>
         </select>
@@ -397,25 +444,24 @@ export function EmployeeDirectoryView({ employees: initialEmployees }: Partial<E
           <DialogHeader><div className="flex items-center gap-3"><div className="flex h-11 w-11 items-center justify-center rounded-xl bg-[#8642ED] text-white shadow-sm"><UserRound className="h-5 w-5" /></div><div><h3 className="text-lg font-bold text-slate-900">{editingId ? "Edit employee" : "Add new employee"}</h3><p className="mt-0.5 text-xs text-slate-500">{editingId ? `Update ${draft.name || "this employee"}'s profile and access.` : "Create a complete profile and attendance account."}</p></div></div><DialogClose onClose={closeEditor} /></DialogHeader>
           <div className="flex flex-wrap gap-3 px-4 pb-4 text-xs font-medium text-slate-400 sm:gap-5 sm:px-6"><span className="flex items-center gap-1.5 text-[#8642ED]"><span className="flex h-5 w-5 items-center justify-center rounded-full bg-[#8642ED] text-[10px] text-white">1</span> Employee details</span><span className="flex items-center gap-1.5"><span className="flex h-5 w-5 items-center justify-center rounded-full bg-slate-200 text-[10px] text-slate-500">2</span> Fingerprint access</span></div>
         </div>
-        <form onSubmit={saveEmployee} className="flex max-h-[calc(92vh-132px)] flex-col">
+        <form noValidate onSubmit={saveEmployee} className="flex max-h-[calc(92vh-132px)] flex-col">
           <div className="scrollbar-thin flex-1 space-y-5 overflow-y-auto px-4 py-4 sm:px-6 sm:py-5">
           <FormSection icon={<Contact className="h-4 w-4" />} title="Personal & contact information" description="Basic details used across the employee directory.">
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-              <Field label="First name" required><Input required placeholder="e.g. Juan" value={draft.firstName ?? ""} onChange={(e) => update("firstName", e.target.value)} /></Field>
-              <Field label="Last name" required><Input required placeholder="e.g. Dela Cruz" value={draft.lastName ?? ""} onChange={(e) => update("lastName", e.target.value)} /></Field>
+              <Field label="First name" error={invalidField==="firstName"?formError:undefined} required hint="2 to 50 characters"><Input data-employee-field="firstName" aria-invalid={invalidField==='firstName'} className={invalidField==='firstName'?'border-rose-500 ring-2 ring-rose-200':''} required minLength={2} maxLength={50} placeholder="e.g. Juan" value={draft.firstName ?? ""} onChange={(e) => update("firstName", e.target.value)} /></Field>
+              <Field label="Last name" error={invalidField==="lastName"?formError:undefined} required hint="2 to 50 characters"><Input data-employee-field="lastName" aria-invalid={invalidField==='lastName'} className={invalidField==='lastName'?'border-rose-500 ring-2 ring-rose-200':''} required minLength={2} maxLength={50} placeholder="e.g. Dela Cruz" value={draft.lastName ?? ""} onChange={(e) => update("lastName", e.target.value)} /></Field>
               <Field label="Employee ID" required hint="Assigned automatically"><Input required readOnly className="bg-slate-100 text-slate-500" value={draft.id} /></Field>
               <Field label="Account creation date" hint="Cannot be edited"><div className="relative"><CalendarDays className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" /><Input readOnly className="bg-slate-100 pl-9 text-slate-500" value={draft.createdAt ? new Date(draft.createdAt).toLocaleString("en-PH") : "Assigned when employee is created"} /></div></Field>
-              <Field label="Email address" required><div className="relative"><Mail className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" /><Input required disabled={sendingVerification || saving} className="pl-9" type="email" placeholder="name@company.com" value={draft.email ?? ""} onChange={(e) => update("email", e.target.value)} /></div></Field>
-              <Field label="Phone number" required hint="No spaces"><div className="relative"><Phone className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" /><Input required className="pl-9" type="tel" inputMode="numeric" pattern="\+639[0-9]{9}" maxLength={13} placeholder="+639123456789" value={draft.phone ?? ""} onChange={(e) => { const digits = e.target.value.replace(/\D/g, "").replace(/^63?/, "").slice(0, 10); update("phone", `+63${digits.startsWith("9") ? digits : `9${digits.replace(/^9/, "")}`}`.slice(0, 13)); }} /></div></Field>
-              <div className="sm:col-span-2"><Field label="Home address" required><div className="relative"><MapPin className="absolute left-3 top-3 h-4 w-4 text-slate-400" /><textarea required rows={2} placeholder="Street, barangay, city, province" value={draft.address ?? ""} onChange={(e) => update("address", e.target.value)} className="w-full resize-none rounded-lg border border-slate-200 bg-white py-2 pl-9 pr-3 text-sm text-slate-900 outline-none transition focus:border-[#8642ED] focus:ring-2 focus:ring-[#8642ED]/20" /></div></Field></div>
+              <Field label="Email address" error={invalidField==="email"?formError:undefined} required hint="Up to 254 characters; no spaces"><div className="relative"><Mail className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" /><Input data-employee-field="email" aria-invalid={invalidField==='email'} required disabled={sendingVerification || saving} className={`pl-9 ${invalidField==='email'?'border-rose-500 ring-2 ring-rose-200':''}`} type="email" maxLength={254} placeholder="name@company.com" value={draft.email ?? ""} onChange={(e) => update("email", e.target.value)} /></div></Field>
+              <Field label="Phone number" error={invalidField==="phone"?formError:undefined} required hint="No spaces"><div className="relative"><Phone className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" /><Input data-employee-field="phone" aria-invalid={invalidField==='phone'} required className={`pl-9 ${invalidField==='phone'?'border-rose-500 ring-2 ring-rose-200':''}`} type="tel" inputMode="numeric" pattern="\+639[0-9]{9}" maxLength={13} placeholder="+639123456789" value={draft.phone ?? ""} onChange={(e) => { const digits = e.target.value.replace(/\D/g, "").replace(/^63?/, "").slice(0, 10); update("phone", `+63${digits.startsWith("9") ? digits : `9${digits.replace(/^9/, "")}`}`.slice(0, 13)); }} /></div></Field>
+              <div className="sm:col-span-2"><Field label="Home address" error={invalidField==="address"?formError:undefined} required hint="5 to 255 characters"><div className="relative"><MapPin className="absolute left-3 top-3 h-4 w-4 text-slate-400" /><textarea data-employee-field="address" aria-invalid={invalidField==='address'} required minLength={5} maxLength={255} rows={2} placeholder="Street, barangay, city, province" value={draft.address ?? ""} onChange={(e) => update("address", e.target.value)} className={`w-full resize-none rounded-lg border bg-white py-2 pl-9 pr-3 text-sm text-slate-900 outline-none transition focus:ring-2 ${invalidField==='address'?'border-rose-500 ring-2 ring-rose-200':'border-slate-200 focus:border-[#8642ED] focus:ring-[#8642ED]/20'}`} /></div></Field></div>
             </div>
           </FormSection>
           <FormSection icon={<BriefcaseBusiness className="h-4 w-4" />} title="Employment details" description="Role, compensation, and current employment state.">
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-              <Field label="Employee role"><select value={draft.role === "extra" ? "extra" : "regular"} onChange={(e) => updateRole(e.target.value as "regular" | "extra")} className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-[#8642ED] focus:ring-2 focus:ring-[#8642ED]/20"><option value="regular">Regular</option><option value="extra">Extra</option></select></Field>
-              <Field label="Hourly rate"><div className="flex h-10 items-center rounded-lg border border-slate-200 bg-slate-50 px-3 text-sm text-slate-600">Managed in System Settings</div></Field>
-              <div className="rounded-xl border border-violet-100 bg-violet-50 p-3"><p className="text-xs font-semibold text-violet-800">Attendance-based payroll</p><p className="mt-1 text-[11px] leading-relaxed text-violet-600">Gross pay is calculated automatically from clocked hours during each 15-day period.</p></div>
-              <div className="rounded-xl border border-slate-200 bg-slate-50 p-3"><p className="text-xs font-semibold text-slate-600">Employment status</p><div className="mt-1 flex items-center justify-between"><span className="text-sm font-semibold capitalize text-slate-800">{draft.status.replace('-', ' ')}</span><StatusBadge status={draft.status} /></div><p className="mt-1 text-[11px] text-slate-400">Controlled by leave approval and archiving.</p></div>
+              <Field label="Employee role"><select value={draft.role} onChange={(e) => updateRole(e.target.value as "regular" | "extra" | "manager" | "supervisor")} className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-[#8642ED] focus:ring-2 focus:ring-[#8642ED]/20"><option value="regular">Regular</option><option value="extra">Extra</option><option value="manager">Manager</option><option value="supervisor">Supervisor</option></select></Field>
+              <Field label="Hourly rate" error={invalidField==="hourlyRateOverride"?formError:undefined} hint="Blank uses the role default"><BoundedNumberInput data-employee-field="hourlyRateOverride" aria-invalid={invalidField==='hourlyRateOverride'} className={invalidField==='hourlyRateOverride'?'border-rose-500 ring-2 ring-rose-200':''} min="1" max={HOURLY_RATE_MAX} value={draft.hourlyRateOverride ?? ""} onChange={(event) => update("hourlyRateOverride", event.target.value === "" ? null : Number(event.target.value))} placeholder="Use System Settings rate" aria-label="Employee hourly rate override" /></Field>
+              <div className="sm:col-span-2"><label htmlFor="employee-employment-status" className="mb-1 block text-sm font-medium text-slate-600">Employment status</label><select id="employee-employment-status" value={draft.status === "inactive" ? "inactive" : "active"} onChange={(e) => update("status", e.target.value as "active" | "inactive")} className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-[#8642ED] focus:ring-2 focus:ring-[#8642ED]/20"><option value="active">Active</option><option value="inactive">Inactive</option></select><p className="mt-1 text-xs text-slate-500">Inactive stops new clock-ins and absences. Past records stay.</p></div>
             </div>
           </FormSection>
           <FormSection icon={<IdCard className="h-4 w-4" />} title="Government IDs & salary additions" description="Store each government ID and any extra amount the owner wants to add to this employee's pay.">
@@ -424,17 +470,17 @@ export function EmployeeDirectoryView({ employees: initialEmployees }: Partial<E
               <select value={identifierType} onChange={(event) => setIdentifierType(event.target.value)} className="h-9 rounded-lg border border-slate-200 bg-white px-3 text-sm">
                 <option>SSS</option><option>PhilHealth</option><option>Pag-IBIG</option><option>TIN</option><option>Custom</option>
               </select>
-              {identifierType === "Custom" && <Input className="h-9 w-44" value={customIdentifierType} onChange={(event) => setCustomIdentifierType(event.target.value)} placeholder="ID type name" />}
+              {identifierType === "Custom" && <Input className="h-9 w-44" maxLength={50} value={customIdentifierType} onChange={(event) => setCustomIdentifierType(event.target.value)} placeholder="ID type name" />}
               <Button type="button" size="sm" variant="outline" onClick={addIdentifier}><Plus className="h-3.5 w-3.5" /> Add ID</Button>
             </div>
             {(draft.identifiers ?? []).length === 0 ? <p className="rounded-lg border border-dashed border-slate-200 bg-white p-3 text-center text-xs text-slate-400">No IDs added. This is allowed.</p> : null}
             <div className="space-y-3">{(draft.identifiers ?? []).map((identifier, index) => (
               <div key={`${identifier.type}-${index}`} className="rounded-xl border border-slate-200 bg-slate-50/50 p-4">
                 <div className="mb-3 flex items-center justify-between"><div className="flex items-center gap-2"><span className="rounded-md bg-violet-100 px-2 py-1 text-xs font-bold text-violet-700">{identifier.type}</span><span className="text-[11px] text-slate-400">Government record</span></div><button type="button" onClick={() => update("identifiers", draft.identifiers?.filter((_, itemIndex) => itemIndex !== index))} className="text-xs font-medium text-rose-600 hover:text-rose-700">Remove</button></div>
-                <div className="grid gap-3 sm:grid-cols-2"><Field label={`${identifier.type} identification number`}><Input value={identifier.value} onChange={(event) => update("identifiers", draft.identifiers?.map((item, itemIndex) => itemIndex === index ? { ...item, value: event.target.value } : item))} placeholder={`Enter ${identifier.type} number`} /></Field><Field label="Owner-funded salary addition" hint="Added to net pay"><div className="relative"><span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-slate-400">₱</span><Input className="no-number-arrows pl-8" type="number" min="0" step="0.01" value={identifier.amount || ""} onChange={(event) => update("identifiers", draft.identifiers?.map((item, itemIndex) => itemIndex === index ? { ...item, amount: event.target.value === "" ? 0 : Number(event.target.value) } : item))} aria-label={`${identifier.type} salary addition`} placeholder="Leave blank if none" /></div></Field></div>
+                <div className="grid gap-3 sm:grid-cols-2"><Field label={`${identifier.type} identification number`} hint={identifierLengths(identifier.type) ? `${identifierLengths(identifier.type)!.join(" or ")} digits` : "Up to 50 characters"}><Input data-employee-field={`identifier-${index}`} aria-invalid={invalidField===`identifier-${index}`} className={invalidField===`identifier-${index}`?"border-rose-500 ring-2 ring-rose-200":""} inputMode={identifierLengths(identifier.type) ? "numeric" : "text"} maxLength={identifierLengths(identifier.type) ? Math.max(...identifierLengths(identifier.type)!) + 4 : 50} value={identifier.value} onChange={(event) => update("identifiers", draft.identifiers?.map((item, itemIndex) => itemIndex === index ? { ...item, value: identifierInput(identifier.type, event.target.value) } : item))} placeholder={`Enter ${identifier.type} number`} /></Field><Field label="Owner-funded salary addition" hint="PHP 0-1,000,000; up to 2 decimals"><div className="relative"><span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-slate-400">₱</span><BoundedNumberInput className="pl-8" min="0" max={ADDITION_MAX} value={identifier.amount || ""} onChange={(event) => update("identifiers", draft.identifiers?.map((item, itemIndex) => itemIndex === index ? { ...item, amount: event.target.value === "" ? 0 : Number(event.target.value) } : item))} aria-label={`${identifier.type} salary addition`} placeholder="Leave blank if none" /></div></Field><Field label="Addition frequency"><select className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm" value={identifier.frequency ?? "quarterly"} onChange={(event) => update("identifiers", draft.identifiers?.map((item, itemIndex) => itemIndex === index ? { ...item, frequency: event.target.value as "quarterly" | "per-payroll" } : item))}><option value="quarterly">Quarterly (every 3 months)</option><option value="per-payroll">Every payroll (each pay period)</option></select></Field><p className="self-center text-xs leading-5 text-slate-500">{editingId && savedDraft?.identifiers?.some(old => old.type === identifier.type && frequencyForQuarter(old, quarterForDate(manilaDate())) !== (identifier.frequency ?? "quarterly")) ? `Frequency change takes effect ${quarterLabel(nextQuarter(quarterForDate(manilaDate())))}. This quarter keeps its original frequency.` : identifier.frequency === "per-payroll" ? "The full amount is included each pay period. It is not divided from a quarterly amount." : "Quarterly means once every 3 months. It is added to the last payroll of the quarter."}</p>{invalidField===`identifier-${index}` && <p className="sm:col-span-2 text-xs font-medium text-rose-700">{formError}</p>}</div>
               </div>
             ))}</div>
-            {(draft.identifiers ?? []).length > 0 && <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3"><div><p className="text-xs font-medium text-emerald-700">Estimated net salary</p><p className="text-[11px] text-emerald-600">Gross salary plus all ID amounts</p></div><div className="text-right"><p className="text-lg font-bold text-emerald-700">₱{((draft.grossSalary ?? 0) + (draft.identifiers ?? []).reduce((sum, identifier) => sum + (Number(identifier.amount) || 0), 0)).toLocaleString("en-PH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p><p className="text-[11px] text-emerald-600">+₱{(draft.identifiers ?? []).reduce((sum, identifier) => sum + (Number(identifier.amount) || 0), 0).toLocaleString("en-PH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} additions</p></div></div>}
+            {(draft.identifiers ?? []).length > 0 && <div className="rounded-xl border border-violet-200 bg-violet-50 px-4 py-3 text-sm text-violet-900"><p className="font-semibold">Quarterly additions: PHP {(draft.identifiers ?? []).filter(item => item.frequency !== "per-payroll").reduce((sum, item) => sum + item.amount, 0).toLocaleString("en-PH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} per quarter</p><p className="mt-1 text-xs">Quarterly amounts enter the last payroll of each quarter automatically. Paid payrolls keep their recorded amounts.</p></div>}
             </div>
           </FormSection>
           <FormSection icon={<ShieldCheck className="h-4 w-4" />} title="Attendance access" description="Register the fingerprint used to clock in and out.">
@@ -459,12 +505,12 @@ export function EmployeeDirectoryView({ employees: initialEmployees }: Partial<E
           {!editingId && <FormSection icon={<KeyRound className="h-4 w-4" />} title="Verify employee email" description="The employee must receive a code before their account can be created.">
             <EmployeeEmailVerification email={draft.email ?? ""} sent={!!emailVerificationId} code={emailVerificationCode} sending={sendingVerification} saving={saving} onSend={sendEmailVerification} onChange={setEmailVerificationCode} />
           </FormSection>}
-          {editingId && <FormSection icon={<KeyRound className="h-4 w-4" />} title="Confirm administrator changes" description="Your admin password is required before profile, role, or fingerprint changes can be saved."><Field label="Admin password" required><Input required type="password" autoComplete="current-password" disabled={passwordRetrySeconds > 0} placeholder={passwordRetrySeconds > 0 ? `Try again in ${passwordRetrySeconds}s` : "Enter your admin password"} value={adminPassword} onChange={(event) => { setAdminPassword(event.target.value); setFormError(""); }} /></Field>{passwordRetrySeconds > 0 && <p className="mt-2 text-xs font-medium text-amber-600">Password attempts locked for {passwordRetrySeconds} more seconds.</p>}</FormSection>}
-          {formError && <p className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-medium text-rose-700">{formError}</p>}
+          {formError && !invalidField && !passwordOpen && <p className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-medium text-rose-700">{formError}</p>}
           </div>
-          <div className="flex items-center justify-between border-t border-slate-200 bg-white px-6 py-4"><p className="hidden text-xs text-slate-400 sm:block"><span className="text-rose-500">*</span> Required fields</p><div className="ml-auto flex flex-wrap justify-end gap-2">{editingId && <Button type="button" variant="outline" disabled={!adminPassword || sendingLogin} onClick={sendNewLoginEmail}><Mail className="h-4 w-4" />{sendingLogin ? "Sending..." : "Send new login email"}</Button>}{editingId && <Button type="button" variant="outline" onClick={revertChanges}>Revert changes</Button>}<Button type="button" variant="outline" onClick={closeEditor}>Cancel</Button><Button type="submit" disabled={saving || sendingVerification || (!editingId && (!emailVerificationId || emailVerificationCode.length !== 6)) || fingerprintRegistering || passwordRetrySeconds > 0 || (editingId ? !adminPassword : fingerprintSamples.length !== REQUIRED_FINGERPRINT_SCANS)}><Fingerprint className="h-4 w-4" /> {saving ? (editingId ? 'Saving...' : 'Creating account and sending email...') : passwordRetrySeconds > 0 ? `Wait ${passwordRetrySeconds}s` : editingId ? "Save changes" : "Create employee"}</Button></div></div>
+          <div className="flex items-center justify-between border-t border-slate-200 bg-white px-6 py-4"><p className="hidden text-xs text-slate-400 sm:block"><span className="text-rose-500">*</span> Required fields</p><div className="ml-auto flex flex-wrap justify-end gap-2">{editingId && <Button type="button" variant="outline" disabled={sendingLogin} onClick={()=>{setPasswordPurpose('email');setFormError('');setPasswordOpen(true)}}><Mail className="h-4 w-4" />{sendingLogin ? "Sending..." : "Send new login email"}</Button>}{editingId && <Button type="button" variant="outline" onClick={revertChanges}>Revert changes</Button>}<Button type="button" variant="outline" onClick={closeEditor}>Cancel</Button><Button type="submit" disabled={saving || sendingVerification || (!editingId && (!emailVerificationId || emailVerificationCode.length !== 6)) || fingerprintRegistering || passwordRetrySeconds > 0 || (!editingId && fingerprintSamples.length !== REQUIRED_FINGERPRINT_SCANS)}><Fingerprint className="h-4 w-4" /> {saving ? (editingId ? 'Saving...' : 'Creating account and sending email...') : passwordRetrySeconds > 0 ? `Wait ${passwordRetrySeconds}s` : editingId ? "Save changes" : "Create employee"}</Button></div></div>
         </form>
       </Dialog>
+      <Dialog open={passwordOpen} onClose={()=>!saving&&!sendingLogin&&setPasswordOpen(false)} className="max-w-sm"><DialogHeader><h3 className="text-base font-bold text-slate-900">{passwordPurpose==='save'?'Confirm changes':'Send login email'}</h3><DialogClose onClose={()=>setPasswordOpen(false)} /></DialogHeader><form onSubmit={event=>{event.preventDefault();if(passwordPurpose==='save')void persistEmployee();else void sendNewLoginEmail()}} className="space-y-4 px-6 pb-6 pt-3"><Field label="Administrator password" required><Input type="password" autoFocus autoComplete="current-password" value={adminPassword} disabled={passwordRetrySeconds>0} onChange={event=>{setAdminPassword(event.target.value);setFormError('')}} placeholder="Enter your password" /></Field>{passwordRetrySeconds>0&&<p className="text-xs text-amber-700">Try again in {passwordRetrySeconds} seconds.</p>}{formError&&<p className="rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-700">{formError}</p>}<div className="flex justify-end gap-2"><Button type="button" variant="outline" onClick={()=>setPasswordOpen(false)}>Cancel</Button><Button type="submit" disabled={!adminPassword||saving||sendingLogin||passwordRetrySeconds>0}>{saving||sendingLogin?'Working...':passwordPurpose==='save'?'Save changes':'Send email'}</Button></div></form></Dialog>
       <Dialog open={!!archiveTarget} onClose={() => setArchiveTarget(null)} className="max-w-sm"><DialogHeader><div><h3 className="flex items-center gap-2 text-base font-bold text-slate-900"><KeyRound className="h-4 w-4 text-rose-600" /> Archive employee</h3><p className="mt-1 text-xs text-slate-500">{archiveTarget?.name} will become inactive and move to Admin Controls.</p></div><DialogClose onClose={() => setArchiveTarget(null)} /></DialogHeader><form onSubmit={archiveEmployee} className="space-y-3 px-6 pb-6 pt-3"><Field label="Confirm your admin password" required><Input type="password" autoFocus value={archivePassword} onChange={(event) => { setArchivePassword(event.target.value); setArchiveError(""); }} placeholder="Enter your password" /></Field>{archiveError && <p className="text-xs font-medium text-rose-600">{archiveError}</p>}<div className="flex justify-end gap-2"><Button type="button" variant="outline" onClick={() => setArchiveTarget(null)}>Cancel</Button><Button type="submit" variant="destructive" disabled={archiving || !archivePassword}><Archive className="h-4 w-4" />{archiving ? "Archiving..." : "Archive employee"}</Button></div></form></Dialog>
     </div>
   );
@@ -474,6 +520,6 @@ function FormSection({ icon, title, description, children }: { icon: React.React
   return <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5"><div className="mb-4 flex items-start gap-3"><div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-violet-100 text-[#8642ED]">{icon}</div><div><h4 className="text-sm font-bold text-slate-800">{title}</h4><p className="mt-0.5 text-xs text-slate-500">{description}</p></div></div>{children}</section>;
 }
 
-function Field({ label, hint, required, children }: { label: string; hint?: string; required?: boolean; children: React.ReactNode }) {
-  return <label className="block space-y-1.5"><span className="flex items-center justify-between gap-2 text-xs font-semibold text-slate-600"><span>{label}{required && <span className="ml-0.5 text-rose-500">*</span>}</span>{hint && <span className="font-normal text-slate-400">{hint}</span>}</span>{children}</label>;
+function Field({ label, hint, required, error, children }: { label: string; hint?: string; required?: boolean; error?: string; children: React.ReactNode }) {
+  return <label className="block space-y-1.5"><span className="flex items-center justify-between gap-2 text-xs font-semibold text-slate-600"><span>{label}{required && <span className="ml-0.5 text-rose-500">*</span>}</span>{hint && <span className="font-normal text-slate-400">{hint}</span>}</span>{children}{error&&<span className="block text-xs font-medium text-rose-700">{error}</span>}</label>;
 }

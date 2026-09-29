@@ -1,3 +1,4 @@
+import { checkoutIsChronological } from './attendance-validation.js';
 export function clockOutSessions(record) {
   return Array.isArray(record.sessions) && record.sessions.length
     ? record.sessions
@@ -8,6 +9,7 @@ export function forcedClockOutUpdate(record, stamp, actorEmail) {
   if (record.date !== stamp.date) return null;
   const original = clockOutSessions(record);
   if (!original.some((session) => session.checkIn && !session.checkOut)) return null;
+  if (original.some((session) => session.checkIn && !session.checkOut && !checkoutIsChronological(record.date, session, stamp.now))) return null;
   const sessions = original.map((session) => session.checkIn && !session.checkOut
     ? { ...session, checkOut: stamp.time, checkOutAt: stamp.now, forcedClockOut: true, forcedClockOutBy: actorEmail }
     : { ...session });

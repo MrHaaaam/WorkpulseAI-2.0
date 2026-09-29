@@ -1,6 +1,8 @@
+import { BoundedNumberInput } from "../components/ui/BoundedNumberInput";
+import { HOURLY_RATE_MAX, GRACE_MINUTES_MAX, settingsNumbersValidationError } from "../../shared/field-limits.js";
 import { AdminPageHeader } from "../components/AdminPageHeader";
 import { useEffect, useState } from "react";
-import { Settings, CalendarDays, ChevronLeft, ChevronRight, Clock, Eye, EyeOff, Info, KeyRound, Save, WalletCards } from "lucide-react";
+import { Settings, CalendarDays, ChevronLeft, ChevronRight, Clock, Eye, EyeOff, KeyRound, Save, WalletCards } from "lucide-react";
 
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../components/ui/Card";
 import { Input, Label } from "../components/ui/Input";
@@ -11,8 +13,7 @@ import { Dialog, DialogClose, DialogHeader } from "../components/ui/Dialog";
 
 type Settings = {
   shift: { enabled: boolean; startTime: string; autoClockOutTime: string; lateGraceMinutes: number | ""; workDays: number; workWeekdays: number[]; scheduleOverrides: { date: string; working: boolean; kind?: "holiday" | "rest-day" | "workday" }[] };
-  leave: { monthlyCredits: number | "" };
-  payroll: { hourlyRates: { regular: number | ""; extra: number | "" } };
+  payroll: { hourlyRates: { regular: number | ""; extra: number | ""; manager: number | ""; supervisor: number | "" } };
 };
 
 function isoDate(date: Date) {
@@ -40,8 +41,7 @@ function monthDates(month: Date) {
 
 const defaults: Settings = {
   shift: { enabled: true, startTime: "09:00", autoClockOutTime: "18:00", lateGraceMinutes: 0, workDays: 5, workWeekdays: [1, 2, 3, 4, 5], scheduleOverrides: [] },
-  leave: { monthlyCredits: 10 },
-  payroll: { hourlyRates: { regular: 50, extra: 40 } },
+  payroll: { hourlyRates: { regular: 50, extra: 40, manager: 50, supervisor: 50 } },
 };
 
 export function SettingsView() {
@@ -62,7 +62,6 @@ export function SettingsView() {
       .then((response) => response.ok ? response.json() : Promise.reject())
       .then((data) => setSettings({
         shift: { ...defaults.shift, ...(data.shift ?? {}) },
-        leave: { ...defaults.leave, ...(data.leave ?? {}) },
         payroll: { hourlyRates: { ...defaults.payroll.hourlyRates, ...(data.payroll?.hourlyRates ?? {}) } },
       }))
       .catch(() => undefined);
@@ -74,10 +73,12 @@ export function SettingsView() {
 
   const save = async () => {
     if (!adminPassword) return;
-    if (settings.shift.lateGraceMinutes === "" || settings.leave.monthlyCredits === "" || settings.payroll.hourlyRates.regular === "" || settings.payroll.hourlyRates.extra === "") {
-      toast({ title: "Complete the number fields", description: "Enter the attendance, leave-credit, and hourly-rate values before saving.", variant: "error" });
+    if (settings.shift.lateGraceMinutes === "" || Object.values(settings.payroll.hourlyRates).some(rate => rate === "")) {
+      toast({ title: "Complete the number fields", description: "Enter the attendance and hourly-rate values before saving.", variant: "error" });
       return;
     }
+    const numberError = settingsNumbersValidationError(settings);
+    if (numberError) { toast({ title: "Check the number fields", description: numberError, variant: "error" }); return; }
     setSaving(true);
     try {
       const response = await apiFetch("/api/settings", {
@@ -89,7 +90,6 @@ export function SettingsView() {
       if (!response.ok) throw new Error(saved.error || "The server could not save your settings.");
       setSettings({
         shift: { ...defaults.shift, ...(saved.shift ?? {}) },
-        leave: { ...defaults.leave, ...(saved.leave ?? {}) },
         payroll: { hourlyRates: { ...defaults.payroll.hourlyRates, ...(saved.payroll?.hourlyRates ?? {}) } },
       });
       setAdminPassword("");
@@ -104,10 +104,10 @@ export function SettingsView() {
 
   return (
     <div className="space-y-6">
-      <AdminPageHeader title="System Settings" description="Set attendance, leave, and pay rules. Save when finished." icon={Settings} />
+      <AdminPageHeader title="System Settings" description="Set attendance schedules and hourly pay rates. Save when finished." icon={Settings} />
 
-      <div className="grid grid-cols-1 items-start gap-6 lg:grid-cols-3">
-        <Card className="overflow-hidden self-start lg:col-span-2 lg:row-span-2">
+      <div className="grid grid-cols-1 items-start gap-6 xl:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)]">
+        <Card className="min-w-0 overflow-hidden">
           <CardHeader className="border-b border-slate-100 bg-slate-50/70">
             <div className="flex items-start justify-between gap-4">
               <div className="flex gap-3">
@@ -141,7 +141,7 @@ export function SettingsView() {
                 <div className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-amber-100 text-amber-700"><Clock className="h-4 w-4" /></div>
                 <div className="flex-1 space-y-3">
                   <div><p className="text-sm font-semibold text-amber-950">Late Arrival Rule</p><p className="mt-1 text-xs leading-5 text-amber-800">Add a grace period after the configured work start time.</p></div>
-                  <div className="max-w-xs space-y-2"><Label>Grace period after work starts</Label><div className="relative"><Input className="no-number-arrows pr-20" type="number" min="0" max="180" step="1" value={settings.shift.lateGraceMinutes} onChange={(event) => setShift({ lateGraceMinutes: event.target.value === "" ? "" : Number(event.target.value) })} /><span className="pointer-events-none absolute inset-y-0 right-3 flex items-center text-xs font-medium text-slate-500">minutes</span></div><p className="text-xs text-amber-800">Example: an 08:00 AM start with 15 minutes means 08:15 is on time and 08:16 is late.</p></div>
+                  <div className="max-w-xs space-y-2"><Label>Grace period after work starts</Label><div className="relative"><BoundedNumberInput className="pr-20" min="0" max={GRACE_MINUTES_MAX} decimals={0} title="0 to 180 whole minutes" value={settings.shift.lateGraceMinutes} onChange={(event) => setShift({ lateGraceMinutes: event.target.value === "" ? "" : Number(event.target.value) })} /><span className="pointer-events-none absolute inset-y-0 right-3 flex items-center text-xs font-medium text-slate-500">minutes</span></div><p className="text-xs text-amber-800">Allowed: 0-180 whole minutes. Example: an 08:00 AM start with 15 minutes means 08:15 is on time and 08:16 is late.</p></div>
                 </div>
               </div>
             </div>
@@ -162,50 +162,10 @@ export function SettingsView() {
               })}</div><p className={`text-xs ${settings.shift.workWeekdays.length === settings.shift.workDays ? "text-emerald-600" : "font-medium text-amber-600"}`}>{settings.shift.workWeekdays.length} of {settings.shift.workDays} days selected{settings.shift.workWeekdays.length === settings.shift.workDays ? "." : " — select the remaining days before saving."}</p></div>}
             </div>
 
-            <div className="space-y-4 rounded-2xl border border-violet-200 bg-violet-50/50 p-4 sm:p-5">
-              <div><p className="text-base font-bold text-violet-950">Holiday and Rest-Day Calendar</p><p className="mt-1 text-xs leading-5 text-violet-700">Choose a type, then select dates. Non-working dates block attendance, never create absences, and do not consume leave credits.</p></div>
-              <div className="inline-flex rounded-xl border border-violet-200 bg-white p-1">{([['holiday','Holiday'],['rest-day','Rest Day'],['workday','Workday']] as const).map(([value,label])=><button key={value} type="button" onClick={()=>setScheduleMode(value)} className={`rounded-lg px-3 py-2 text-xs font-bold transition ${scheduleMode===value?'bg-violet-600 text-white shadow-sm':'text-slate-500 hover:bg-violet-50'}`}>{label}</button>)}</div>
-              <div className="flex items-center justify-between rounded-xl bg-white px-3 py-2 shadow-sm"><button type="button" aria-label="Previous month" onClick={()=>setScheduleMonth(current=>new Date(current.getFullYear(),current.getMonth()-1,1))} className="rounded-lg p-2 text-slate-500 hover:bg-violet-50"><ChevronLeft size={18}/></button><p className="text-sm font-bold text-slate-800">{scheduleMonth.toLocaleDateString('en-PH',{month:'long',year:'numeric'})}</p><button type="button" aria-label="Next month" onClick={()=>setScheduleMonth(current=>new Date(current.getFullYear(),current.getMonth()+1,1))} className="rounded-lg p-2 text-slate-500 hover:bg-violet-50"><ChevronRight size={18}/></button></div>
-              <div className="grid grid-cols-7 gap-1.5 text-center">{['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].map(day=><span key={day} className="py-1 text-[10px] font-bold text-slate-500">{day}</span>)}{Array.from({length:visibleScheduleDates.leading},(_,index)=><span key={`blank-${index}`}/>)}{visibleScheduleDates.dates.map(item=>{const isPast=item.value<today;const override=settings.shift.scheduleOverrides.find(entry=>entry.date===item.value);const normalWorking=settings.shift.workWeekdays.includes(new Date(`${item.value}T12:00:00`).getDay());const kind=override?.kind??(override?.working===false?'rest-day':override?.working===true?'workday':normalWorking?'workday':'rest-day');const styles=kind==='holiday'?'border-rose-300 bg-rose-50 text-rose-700':kind==='rest-day'?'border-slate-300 bg-slate-100 text-slate-600':'border-emerald-200 bg-emerald-50 text-emerald-700';return <button key={item.value} type="button" disabled={isPast} aria-disabled={isPast} aria-label={`${item.value}: ${kind}${isPast?', past date locked':''}`} title={isPast?`${item.day}, ${item.value}: past dates cannot be changed`:`${item.day}, ${item.value}: ${kind.replace('-',' ')}`} onClick={()=>{const same=override?.kind===scheduleMode;const remaining=settings.shift.scheduleOverrides.filter(entry=>entry.date!==item.value);setShift({scheduleOverrides:(same?remaining:[...remaining,{date:item.value,working:scheduleMode==='workday',kind:scheduleMode}]).sort((a,b)=>a.date.localeCompare(b.date))})}} className={`min-h-16 rounded-xl border p-1 text-center transition ${isPast?'cursor-not-allowed grayscale opacity-45':'hover:-translate-y-0.5 hover:shadow-sm'} ${styles}`}><span className="block text-xs font-bold">{item.number}</span><span className="mt-1 block truncate text-[9px] font-semibold capitalize">{isPast?'Locked':kind.replace('-',' ')}</span></button>})}</div>
-              <div className="flex flex-wrap items-center justify-between gap-2"><div className="flex flex-wrap gap-3 text-[10px] font-semibold"><span className="text-emerald-700">● Workday</span><span className="text-rose-700">● Holiday</span><span className="text-slate-600">● Rest day</span><span className="text-slate-400">● Past date locked</span></div>{settings.shift.scheduleOverrides.some(entry=>entry.date>=today)&&<Button type="button" size="sm" variant="ghost" onClick={()=>setShift({scheduleOverrides:settings.shift.scheduleOverrides.filter(entry=>entry.date<today)})}>Clear Editable Dates</Button>}</div>
-            </div>
+
           </CardContent>
         </Card>
-
-        <Card className="overflow-hidden self-start">
-          <CardHeader className="border-b border-slate-100 bg-slate-50/70">
-            <div className="flex gap-3">
-              <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-emerald-50">
-                <CalendarDays className="h-5 w-5 text-emerald-600" />
-              </div>
-              <div>
-                <CardTitle>Monthly Leave Credits</CardTitle>
-                <CardDescription>The administrator decides how many leave credits are provided each month.</CardDescription>
-              </div>
-            </div>
-          </CardHeader>
-          <CardContent className="space-y-5 pt-5">
-            <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4">
-              <p className="text-sm font-semibold text-emerald-900">Monthly allowance</p>
-              <p className="mt-1 text-xs text-emerald-700">The initial company setting is 10 credits. You can change it below.</p>
-            </div>
-
-            <div className="space-y-2">
-              <Label>Leave credits per employee, per month</Label>
-              <div className="relative max-w-xs">
-                <Input className="no-number-arrows pr-20 text-lg font-semibold" type="number" min="0" max="31" step="1" value={settings.leave.monthlyCredits} onChange={(event) => setSettings((current) => ({ ...current, leave: { monthlyCredits: event.target.value === "" ? "" : Number(event.target.value) } }))} />
-                <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-xs font-semibold text-slate-400">credits</span>
-              </div>
-            </div>
-
-            <div className="flex gap-2 rounded-xl bg-sky-50 p-4 text-xs leading-5 text-sky-800">
-              <Info className="mt-0.5 h-4 w-4 shrink-0" />
-              <p>This is a monthly company allowance. Change the number whenever management updates the leave policy.</p>
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card className="overflow-hidden self-start lg:col-start-3">
+        <Card className="min-w-0 overflow-hidden">
           <CardHeader className="border-b border-slate-100 bg-slate-50/70">
             <div className="flex gap-3">
               <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-amber-50">
@@ -219,20 +179,44 @@ export function SettingsView() {
           </CardHeader>
           <CardContent className="space-y-5 pt-5">
             <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
-              New rates update future and unpaid payroll calculations. Paid payroll remains unchanged.
+              Allowed: PHP 1-10,000 per hour, up to 2 decimal places. New rates update future and unpaid payroll calculations. Paid payroll remains unchanged.
             </div>
             <div className="grid gap-4 sm:grid-cols-2">
-              <div className="space-y-2"><Label htmlFor="regular-hourly-rate">Regular employee rate</Label><div className="relative"><span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-slate-500">₱</span><Input id="regular-hourly-rate" className="no-number-arrows pl-8 pr-16" type="number" min="1" max="10000" step="0.01" value={settings.payroll.hourlyRates.regular} onChange={(event) => setSettings((current) => ({ ...current, payroll: { hourlyRates: { ...current.payroll.hourlyRates, regular: event.target.value === "" ? "" : Number(event.target.value) } } }))} /><span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-xs text-slate-400">/ hour</span></div></div>
-              <div className="space-y-2"><Label htmlFor="extra-hourly-rate">Extra employee rate</Label><div className="relative"><span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-slate-500">₱</span><Input id="extra-hourly-rate" className="no-number-arrows pl-8 pr-16" type="number" min="1" max="10000" step="0.01" value={settings.payroll.hourlyRates.extra} onChange={(event) => setSettings((current) => ({ ...current, payroll: { hourlyRates: { ...current.payroll.hourlyRates, extra: event.target.value === "" ? "" : Number(event.target.value) } } }))} /><span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-xs text-slate-400">/ hour</span></div></div>
+              <div className="space-y-2"><Label htmlFor="regular-hourly-rate">Regular employee rate</Label><div className="relative"><span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-slate-500">₱</span><BoundedNumberInput id="regular-hourly-rate" className="pl-8 pr-16" min="1" max={HOURLY_RATE_MAX} title="1 to 10,000; up to 2 decimal places" value={settings.payroll.hourlyRates.regular} onChange={(event) => setSettings((current) => ({ ...current, payroll: { hourlyRates: { ...current.payroll.hourlyRates, regular: event.target.value === "" ? "" : Number(event.target.value) } } }))} /><span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-xs text-slate-400">/ hour</span></div></div>
+              <div className="space-y-2"><Label htmlFor="extra-hourly-rate">Extra employee rate</Label><div className="relative"><span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-slate-500">₱</span><BoundedNumberInput id="extra-hourly-rate" className="pl-8 pr-16" min="1" max={HOURLY_RATE_MAX} title="1 to 10,000; up to 2 decimal places" value={settings.payroll.hourlyRates.extra} onChange={(event) => setSettings((current) => ({ ...current, payroll: { hourlyRates: { ...current.payroll.hourlyRates, extra: event.target.value === "" ? "" : Number(event.target.value) } } }))} /><span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-xs text-slate-400">/ hour</span></div></div>
+              <div className="space-y-2"><Label htmlFor="manager-hourly-rate">Manager employee rate</Label><div className="relative"><span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-slate-500">₱</span><BoundedNumberInput id="manager-hourly-rate" className="pl-8 pr-16" min="1" max={HOURLY_RATE_MAX} title="1 to 10,000; up to 2 decimal places" value={settings.payroll.hourlyRates.manager} onChange={(event) => setSettings((current) => ({ ...current, payroll: { hourlyRates: { ...current.payroll.hourlyRates, manager: event.target.value === "" ? "" : Number(event.target.value) } } }))} /><span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-xs text-slate-400">/ hour</span></div></div>
+              <div className="space-y-2"><Label htmlFor="supervisor-hourly-rate">Supervisor employee rate</Label><div className="relative"><span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-slate-500">₱</span><BoundedNumberInput id="supervisor-hourly-rate" className="pl-8 pr-16" min="1" max={HOURLY_RATE_MAX} title="1 to 10,000; up to 2 decimal places" value={settings.payroll.hourlyRates.supervisor} onChange={(event) => setSettings((current) => ({ ...current, payroll: { hourlyRates: { ...current.payroll.hourlyRates, supervisor: event.target.value === "" ? "" : Number(event.target.value) } } }))} /><span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-xs text-slate-400">/ hour</span></div></div>
             </div>
             <div className="grid gap-3 sm:grid-cols-2" role="status" aria-live="polite">
               <div className="rounded-xl border border-violet-100 bg-violet-50 p-3"><p className="text-xs font-semibold text-violet-700">Regular employee example</p><p className="mt-1 text-sm text-violet-950">8 completed hours × ₱{Number(settings.payroll.hourlyRates.regular || 0).toFixed(2)} = <strong>₱{(8 * Number(settings.payroll.hourlyRates.regular || 0)).toFixed(2)}</strong></p></div>
               <div className="rounded-xl border border-violet-100 bg-violet-50 p-3"><p className="text-xs font-semibold text-violet-700">Extra employee example</p><p className="mt-1 text-sm text-violet-950">8 completed hours × ₱{Number(settings.payroll.hourlyRates.extra || 0).toFixed(2)} = <strong>₱{(8 * Number(settings.payroll.hourlyRates.extra || 0)).toFixed(2)}</strong></p></div>
+              <div className="rounded-xl border border-violet-100 bg-violet-50 p-3"><p className="text-xs font-semibold text-violet-700">Manager employee example</p><p className="mt-1 text-sm text-violet-950">8 completed hours × ₱{Number(settings.payroll.hourlyRates.manager || 0).toFixed(2)} = <strong>₱{(8 * Number(settings.payroll.hourlyRates.manager || 0)).toFixed(2)}</strong></p></div>
+              <div className="rounded-xl border border-violet-100 bg-violet-50 p-3"><p className="text-xs font-semibold text-violet-700">Supervisor employee example</p><p className="mt-1 text-sm text-violet-950">8 completed hours × ₱{Number(settings.payroll.hourlyRates.supervisor || 0).toFixed(2)} = <strong>₱{(8 * Number(settings.payroll.hourlyRates.supervisor || 0)).toFixed(2)}</strong></p></div>
             </div>
             <p className="text-xs leading-5 text-slate-500">Payroll is calculated as completed attendance hours × the employee type’s hourly rate, plus approved additions and carried balances.</p>
           </CardContent>
         </Card>
       </div>
+
+      <Card className="w-full min-w-0 overflow-hidden">
+        <CardHeader className="border-b border-violet-100 bg-violet-50/50">
+          <div className="flex items-start gap-3">
+            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-violet-100">
+              <CalendarDays className="h-5 w-5 text-[#8642ED]" />
+            </div>
+            <div className="min-w-0 space-y-2">
+              <CardTitle className="leading-snug">Holiday and Rest-Day Calendar</CardTitle>
+              <CardDescription>Choose a type, then select dates. Holidays and rest days block new time-ins and do not create absences. If someone has already clocked in, they can still clock out; their worked hours remain recorded.</CardDescription>
+            </div>
+          </div>
+        </CardHeader>
+        <CardContent className="space-y-4 pt-4 sm:pt-6">
+              <div className="flex w-full flex-wrap rounded-xl sm:w-fit border border-violet-200 bg-white p-1">{([['holiday','Holiday'],['rest-day','Rest Day'],['workday','Workday']] as const).map(([value,label])=><button key={value} type="button" onClick={()=>setScheduleMode(value)} className={`min-w-0 flex-1 rounded-lg px-2 py-2 text-xs font-bold transition sm:flex-none sm:px-4 ${scheduleMode===value?'bg-violet-600 text-white shadow-sm':'text-slate-500 hover:bg-violet-50'}`}>{label}</button>)}</div>
+              <div className="flex items-center justify-between rounded-xl bg-white px-3 py-2 shadow-sm"><button type="button" aria-label="Previous month" onClick={()=>setScheduleMonth(current=>new Date(current.getFullYear(),current.getMonth()-1,1))} className="rounded-lg p-2 text-slate-500 hover:bg-violet-50"><ChevronLeft size={18}/></button><p className="text-sm font-bold text-slate-800">{scheduleMonth.toLocaleDateString('en-PH',{month:'long',year:'numeric'})}</p><button type="button" aria-label="Next month" onClick={()=>setScheduleMonth(current=>new Date(current.getFullYear(),current.getMonth()+1,1))} className="rounded-lg p-2 text-slate-500 hover:bg-violet-50"><ChevronRight size={18}/></button></div>
+              <div className="grid min-w-0 grid-cols-7 gap-1 text-center sm:gap-2 lg:gap-3">{['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].map(day=><span key={day} className="py-2 text-[10px] font-bold sm:text-xs text-slate-500">{day}</span>)}{Array.from({length:visibleScheduleDates.leading},(_,index)=><span key={`blank-${index}`}/>)}{visibleScheduleDates.dates.map(item=>{const isPast=item.value<today;const override=settings.shift.scheduleOverrides.find(entry=>entry.date===item.value);const normalWorking=settings.shift.workWeekdays.includes(new Date(`${item.value}T12:00:00`).getDay());const kind=override?.kind??(override?.working===false?'rest-day':override?.working===true?'workday':normalWorking?'workday':'rest-day');const styles=kind==='holiday'?'border-rose-300 bg-rose-50 text-rose-700':kind==='rest-day'?'border-slate-300 bg-slate-100 text-slate-600':'border-emerald-200 bg-emerald-50 text-emerald-700';return <button key={item.value} type="button" disabled={isPast} aria-disabled={isPast} aria-label={`${item.value}: ${kind}${isPast?', past date locked':''}`} title={isPast?`${item.day}, ${item.value}: past dates cannot be changed`:`${item.day}, ${item.value}: ${kind.replace('-',' ')}`} onClick={()=>{const same=override?.kind===scheduleMode;const remaining=settings.shift.scheduleOverrides.filter(entry=>entry.date!==item.value);setShift({scheduleOverrides:(same?remaining:[...remaining,{date:item.value,working:scheduleMode==='workday',kind:scheduleMode}]).sort((a,b)=>a.date.localeCompare(b.date))})}} className={`min-h-14 min-w-0 rounded-lg border p-1 text-center transition sm:min-h-20 sm:rounded-xl sm:p-2 lg:min-h-24 ${isPast?'cursor-not-allowed grayscale opacity-45':'hover:-translate-y-0.5 hover:shadow-sm'} ${styles}`}><span className="block text-xs font-bold sm:text-base">{item.number}</span><span className="mt-1 hidden text-xs font-semibold capitalize sm:block">{isPast?'Locked':kind.replace('-',' ')}</span></button>})}</div>
+              <div className="flex flex-wrap items-center justify-between gap-2"><div className="flex flex-wrap gap-3 text-[10px] font-semibold"><span className="text-emerald-700">● Workday</span><span className="text-rose-700">● Holiday</span><span className="text-slate-600">● Rest day</span><span className="text-slate-400">● Past date locked</span></div>{settings.shift.scheduleOverrides.some(entry=>entry.date>=today)&&<Button type="button" size="sm" variant="ghost" onClick={()=>setShift({scheduleOverrides:settings.shift.scheduleOverrides.filter(entry=>entry.date<today)})}>Clear Editable Dates</Button>}</div>
+        </CardContent>
+      </Card>
 
       <div className="flex flex-col-reverse gap-3 rounded-2xl border border-slate-200 bg-white p-4 sm:flex-row sm:items-center sm:justify-between">
         <p className="text-xs text-slate-500">Changes only take effect after you select Save Settings.</p>

@@ -1,3 +1,5 @@
+import { PASSWORD_RULES, passwordValidationError } from '../../shared/password-policy.js';
+import { emailInput } from '../../shared/input-format.js';
 import { ForceClockOutDialog } from "../components/ForceClockOutDialog";
 import { AdminPageHeader } from "../components/AdminPageHeader";
 import { useEffect, useMemo, useState } from "react";
@@ -101,6 +103,7 @@ export function AdminView() {
     event.preventDefault();
     setCredentialError("");
     if (!currentPassword) return setCredentialError("Enter your current administrator password.");
+    if (newPassword && passwordValidationError(newPassword)) return setCredentialError(passwordValidationError(newPassword)!);
     if (newPassword && newPassword !== confirmPassword) return setCredentialError("The new passwords do not match.");
     const credentialChanges = [adminEmail ? "administrator email" : "", newPassword ? "administrator password" : ""].filter(Boolean).join(" and ");
     if (!await askForConfirmation({ title: "Update administrator credentials?", description: `This will update the ${credentialChanges || "administrator credentials"}. All other administrator sessions will be signed out.`, confirmLabel: "Update Credentials" })) return;
@@ -359,8 +362,8 @@ export function AdminView() {
           <CardContent className="pt-5">
             <form onSubmit={updateAdminCredentials} className="space-y-5">
               <div className="grid gap-4 md:grid-cols-2">
-                <label className="space-y-1.5 md:col-span-2"><span className="flex items-center gap-2 text-sm font-medium text-slate-700"><Mail className="h-4 w-4 text-slate-400" />Administrator email</span><Input type="email" autoComplete="email" required value={adminEmail} disabled={credentialSaving} onChange={(event) => { setAdminEmail(event.target.value); setCredentialError(""); }} /></label>
-                <label className="space-y-1.5"><span className="text-sm font-medium text-slate-700">New password</span><Input type="password" autoComplete="new-password" minLength={8} maxLength={64} value={newPassword} disabled={credentialSaving} onChange={(event) => { setNewPassword(event.target.value); setCredentialError(""); }} placeholder="Leave blank to keep it" /></label>
+                <label className="space-y-1.5 md:col-span-2"><span className="flex items-center gap-2 text-sm font-medium text-slate-700"><Mail className="h-4 w-4 text-slate-400" />Administrator email</span><Input type="email" autoComplete="email" required value={adminEmail} disabled={credentialSaving} onChange={(event) => { setAdminEmail(emailInput(event.target.value)); setCredentialError(""); }} /></label>
+                <label className="space-y-1.5"><span className="text-sm font-medium text-slate-700">New password</span><Input type="password" autoComplete="new-password" minLength={8} maxLength={64} value={newPassword} disabled={credentialSaving} onChange={(event) => { setNewPassword(event.target.value); setCredentialError(""); }} placeholder="Leave blank to keep it" /><p className="text-xs text-slate-500">{PASSWORD_RULES}</p></label>
                 <label className="space-y-1.5"><span className="text-sm font-medium text-slate-700">Confirm new password</span><Input type="password" autoComplete="new-password" minLength={8} maxLength={64} value={confirmPassword} disabled={credentialSaving || !newPassword} onChange={(event) => { setConfirmPassword(event.target.value); setCredentialError(""); }} placeholder="Repeat new password" /></label>
               </div>
               <div className="rounded-xl border border-amber-200 bg-amber-50 p-4"><label className="block max-w-md space-y-1.5"><span className="text-sm font-semibold text-amber-950">Current administrator password</span><Input type="password" autoComplete="current-password" required value={currentPassword} disabled={credentialSaving} onChange={(event) => { setCurrentPassword(event.target.value); setCredentialError(""); }} placeholder="Required to save changes" /></label><p className="mt-2 text-xs leading-5 text-amber-800">Saving signs out all other administrator sessions. This device stays signed in.</p></div>

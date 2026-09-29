@@ -1,3 +1,5 @@
+import { LOGIN_PASSWORD_MAX, PASSWORD_MIN, PASSWORD_MAX, PASSWORD_RULES, countSpecialCharacters, passwordValidationError } from '../../shared/password-policy.js'
+import { emailInput, validEmail } from '../../shared/input-format.js'
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
 import { ArrowLeft, ArrowRight, Check, Eye, EyeOff, Fingerprint, KeyRound, LoaderCircle, Mail, RefreshCw, ShieldCheck, Sparkles, Users } from 'lucide-react'
 import { useToast } from './ui/Toast.tsx'
@@ -21,6 +23,12 @@ function solveCaptcha(challenge: string) {
 export default function LoginSplitPage() {
   const { toast } = useToast()
   const [loading, setLoading] = useState(false)
+  const [retryUntil, setRetryUntil] = useState(() => Number(sessionStorage.getItem('loginRetryUntil') || 0))
+  const [retrySeconds, setRetrySeconds] = useState(() => Math.max(0, Math.ceil((Number(sessionStorage.getItem('loginRetryUntil') || 0) - Date.now()) / 1000)))
+  useEffect(() => {
+    const timer = window.setInterval(() => setRetrySeconds(Math.max(0, Math.ceil((retryUntil - Date.now()) / 1000))), 250)
+    return () => window.clearInterval(timer)
+  }, [retryUntil])
   const [showPassword, setShowPassword] = useState(false)
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
@@ -64,15 +72,29 @@ export default function LoginSplitPage() {
   useEffect(() => { if (verificationId) otpRef.current?.focus() }, [verificationId])
 
   async function submitLogin() {
+    if (loading || retryUntil > Date.now()) return
     if (!email.trim() || !password || !captchaAnswer.trim()) {
       toast({ title: 'Complete the required fields', description: 'Enter your email, password, and CAPTCHA answer.', variant: 'error' })
+      return
+    }
+    if (!validEmail(email) || /\s/.test(password)) {
+      toast({ title: 'Check your login details', description: 'Enter a valid email address and a password without spaces.', variant: 'error' })
       return
     }
     setLoading(true)
     try {
       const response = await apiFetch(`${API_URL}/login`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email, password, captchaId, captchaAnswer }) })
       const data = await response.json()
+      if (data.retryAfterSeconds > 0) {
+        const until = Date.now() + data.retryAfterSeconds * 1000
+        setRetryUntil(until)
+        setRetrySeconds(data.retryAfterSeconds)
+        sessionStorage.setItem('loginRetryUntil', String(until))
+      }
       if (!response.ok) throw new Error(data.error || 'Login failed')
+      sessionStorage.removeItem('loginRetryUntil')
+      setRetryUntil(0)
+      setRetrySeconds(0)
       setVerificationId(data.verificationId)
       toast({ title: 'Verification code sent', description: 'Check your registered email for the 6-digit code.', variant: 'success', duration: 6000 })
     } catch (reason) {
@@ -102,7 +124,7 @@ export default function LoginSplitPage() {
   }
 
   async function requestPasswordReset() {
-    if (!recoveryEmail.trim()) {
+    if (!validEmail(recoveryEmail)) {
       toast({ title: 'Enter your employee email', description: 'Use the email connected to your employee account.', variant: 'error' })
       return
     }
@@ -137,8 +159,9 @@ export default function LoginSplitPage() {
   }
 
   async function resetEmployeePassword() {
-    if (newPassword.length < 8 || newPassword.length > 32) {
-      toast({ title: 'Check your new password', description: 'Use between 8 and 32 characters.', variant: 'error' })
+    const passwordError = passwordValidationError(newPassword)
+    if (passwordError) {
+      toast({ title: 'Check your new password', description: passwordError, variant: 'error' })
       return
     }
     if (newPassword !== confirmPassword) {
@@ -174,7 +197,7 @@ export default function LoginSplitPage() {
   const recoveryDescription = recoveryStep === 'email'
     ? 'Enter the email connected to your employee account.'
     : recoveryStep === 'code' ? `Enter the 6-digit code sent to ${recoveryEmail}.` : 'Use the same password format as your employee portal.'
-  const validNewPassword = newPassword.length >= 8 && newPassword.length <= 32
+  const validNewPassword = !passwordValidationError(newPassword)
   const newPasswordsMatch = newPassword.length > 0 && newPassword === confirmPassword
 
   return (
@@ -208,36 +231,35 @@ export default function LoginSplitPage() {
 
             <form id="sign-in-form" onSubmit={handleSubmit} className="space-y-5" aria-busy={loading}>
               {recoveryStep === 'email' ? (
-                <div><label htmlFor="recovery-email" className="mb-2 block text-sm font-semibold text-slate-800">Employee email</label><div className="relative"><Mail className="absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" aria-hidden="true" /><input id="recovery-email" autoComplete="email" type="email" required autoFocus className="h-12 w-full rounded-xl border border-slate-400 bg-white pl-11 pr-4 text-sm outline-none transition focus:border-indigo-600 focus:ring-4 focus:ring-indigo-500/20" placeholder="you@company.com" value={recoveryEmail} onChange={(event) => setRecoveryEmail(event.target.value)} /></div></div>
+                <div><label htmlFor="recovery-email" className="mb-2 block text-sm font-semibold text-slate-800">Employee email</label><div className="relative"><Mail className="absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" aria-hidden="true" /><input id="recovery-email" autoComplete="email" type="email" maxLength={254} required autoFocus className="h-12 w-full rounded-xl border border-slate-400 bg-white pl-11 pr-4 text-sm outline-none transition focus:border-indigo-600 focus:ring-4 focus:ring-indigo-500/20" placeholder="you@company.com" value={recoveryEmail} onChange={(event) => setRecoveryEmail(emailInput(event.target.value))} /></div></div>
               ) : recoveryStep === 'code' ? (
                 <div><label htmlFor="recovery-code" className="mb-2 block text-sm font-semibold text-slate-800">6-digit reset code</label><input id="recovery-code" autoComplete="one-time-code" inputMode="numeric" maxLength={6} required autoFocus className="h-14 w-full rounded-xl border border-slate-400 bg-white px-4 text-center text-xl font-semibold tracking-[.45em] outline-none transition focus:border-indigo-600 focus:ring-4 focus:ring-indigo-500/20" placeholder="000000" value={recoveryCode} onChange={(event) => setRecoveryCode(event.target.value.replace(/\D/g, ''))} /></div>
               ) : recoveryStep === 'password' ? (
                 <>
-                  <div><label htmlFor="recovery-new-password" className="mb-2 block text-sm font-semibold text-slate-800">New password</label><div className="relative"><KeyRound className="absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" aria-hidden="true" /><input id="recovery-new-password" autoComplete="new-password" type={showPassword ? 'text' : 'password'} minLength={8} maxLength={32} required autoFocus className="h-12 w-full rounded-xl border border-slate-400 bg-white pl-11 pr-12 text-sm outline-none transition focus:border-indigo-600 focus:ring-4 focus:ring-indigo-500/20" placeholder="Enter 8 to 32 characters" value={newPassword} onChange={(event) => setNewPassword(event.target.value)} /><button type="button" onClick={() => setShowPassword((shown) => !shown)} className="absolute right-2 top-1/2 grid h-10 w-10 -translate-y-1/2 place-items-center rounded-lg text-slate-600 hover:bg-slate-100" aria-label={showPassword ? 'Hide password' : 'Show password'}>{showPassword ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}</button></div><p className={`mt-2 flex items-center gap-1.5 text-xs font-medium ${validNewPassword ? 'text-emerald-600' : 'text-slate-500'}`}><Check className="h-3.5 w-3.5" />8 characters minimum, 32 maximum</p></div>
-                  <div><label htmlFor="recovery-confirm-password" className="mb-2 block text-sm font-semibold text-slate-800">Confirm new password</label><input id="recovery-confirm-password" autoComplete="new-password" type={showPassword ? 'text' : 'password'} minLength={8} maxLength={32} required className="h-12 w-full rounded-xl border border-slate-400 bg-white px-4 text-sm outline-none transition focus:border-indigo-600 focus:ring-4 focus:ring-indigo-500/20" placeholder="Enter the same password again" value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value)} />{confirmPassword && !newPasswordsMatch && <p className="mt-2 text-xs font-medium text-red-600">The passwords do not match.</p>}</div>
+                  <div><label htmlFor="recovery-new-password" className="mb-2 block text-sm font-semibold text-slate-800">New password</label><div className="relative"><KeyRound className="absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" aria-hidden="true" /><input id="recovery-new-password" autoComplete="new-password" type={showPassword ? 'text' : 'password'} minLength={PASSWORD_MIN} maxLength={PASSWORD_MAX} required autoFocus className="h-12 w-full rounded-xl border border-slate-400 bg-white pl-11 pr-12 text-sm outline-none transition focus:border-indigo-600 focus:ring-4 focus:ring-indigo-500/20" placeholder="Enter 8 to 64 characters" value={newPassword} onChange={(event) => setNewPassword(event.target.value.replace(/\s/g, ''))} /><button type="button" onClick={() => setShowPassword((shown) => !shown)} className="absolute right-2 top-1/2 grid h-10 w-10 -translate-y-1/2 place-items-center rounded-lg text-slate-600 hover:bg-slate-100" aria-label={showPassword ? 'Hide password' : 'Show password'}>{showPassword ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}</button></div><p className={`mt-2 flex items-center gap-1.5 text-xs font-medium ${validNewPassword ? 'text-emerald-600' : 'text-slate-500'}`}><Check className="h-3.5 w-3.5" />{PASSWORD_RULES} ({newPassword.length}/64 characters; {countSpecialCharacters(newPassword)}/5 special characters)</p></div>
+                  <div><label htmlFor="recovery-confirm-password" className="mb-2 block text-sm font-semibold text-slate-800">Confirm new password</label><input id="recovery-confirm-password" autoComplete="new-password" type={showPassword ? 'text' : 'password'} minLength={PASSWORD_MIN} maxLength={PASSWORD_MAX} required className="h-12 w-full rounded-xl border border-slate-400 bg-white px-4 text-sm outline-none transition focus:border-indigo-600 focus:ring-4 focus:ring-indigo-500/20" placeholder="Enter the same password again" value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value.replace(/\s/g, ''))} />{confirmPassword && !newPasswordsMatch && <p className="mt-2 text-xs font-medium text-red-600">The passwords do not match.</p>}</div>
                 </>
               ) : verificationId ? (
                 <div><label htmlFor="otp" className="mb-2 block text-sm font-semibold text-slate-700">Verification code</label><input ref={otpRef} id="otp" autoComplete="one-time-code" inputMode="numeric" maxLength={6} className="h-14 w-full rounded-xl border border-slate-300 bg-slate-100 px-4 text-center text-xl font-semibold tracking-[.45em] outline-none transition hover:border-slate-400 focus:border-indigo-500 focus:bg-white focus:ring-4 focus:ring-indigo-500/10" placeholder="000000" value={otp} onChange={(event) => setOtp(event.target.value.replace(/\D/g, ''))} /></div>
               ) : (
                 <>
-                  <div><label htmlFor="email" className="mb-2 block text-sm font-semibold text-slate-800">Organization email <span className="text-red-600" aria-hidden="true">*</span></label><input id="email" autoComplete="username" type="email" required autoFocus aria-required="true" className="h-12 w-full rounded-xl border border-slate-400 bg-white px-4 text-sm outline-none transition placeholder:text-slate-500 hover:border-slate-500 focus:border-indigo-600 focus:ring-4 focus:ring-indigo-500/20" placeholder="you@company.com" value={email} onChange={(event) => setEmail(event.target.value)} /></div>
-                  <div><div className="mb-2 flex items-center justify-between"><label htmlFor="password" className="text-sm font-semibold text-slate-800">Password <span className="text-red-600" aria-hidden="true">*</span></label><span className="text-xs text-slate-500">Required</span></div><div className="relative"><input id="password" autoComplete="current-password" required aria-required="true" type={showPassword ? 'text' : 'password'} className="h-12 w-full rounded-xl border border-slate-400 bg-white px-4 pr-12 text-sm outline-none transition placeholder:text-slate-500 hover:border-slate-500 focus:border-indigo-600 focus:ring-4 focus:ring-indigo-500/20" placeholder="Enter your password" value={password} onChange={(event) => setPassword(event.target.value)} /><button type="button" onClick={() => setShowPassword((current) => !current)} className="absolute right-2 top-1/2 grid h-10 w-10 -translate-y-1/2 place-items-center rounded-lg text-slate-600 hover:bg-slate-100 hover:text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-600" aria-label={showPassword ? 'Hide password' : 'Show password'} aria-pressed={showPassword}>{showPassword ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}</button></div><button type="button" onClick={() => { setRecoveryEmail(email); setRecoveryStep('email') }} className="mt-2 text-sm font-semibold text-indigo-700 hover:text-indigo-900 focus:outline-none focus:underline">Forgot your employee password?</button></div>
+                  <div><label htmlFor="email" className="mb-2 block text-sm font-semibold text-slate-800">Organization email <span className="text-red-600" aria-hidden="true">*</span></label><input id="email" autoComplete="username" type="email" maxLength={254} required autoFocus aria-required="true" className="h-12 w-full rounded-xl border border-slate-400 bg-white px-4 text-sm outline-none transition placeholder:text-slate-500 hover:border-slate-500 focus:border-indigo-600 focus:ring-4 focus:ring-indigo-500/20" placeholder="you@company.com" value={email} onChange={(event) => setEmail(emailInput(event.target.value))} /><p className="mt-1 text-xs text-slate-500">Use a valid email address. No spaces. {email.length}/254 characters</p></div>
+                  <div><div className="mb-2 flex items-center justify-between"><label htmlFor="password" className="text-sm font-semibold text-slate-800">Password <span className="text-red-600" aria-hidden="true">*</span></label><span className="text-xs text-slate-500">{password.length}/{LOGIN_PASSWORD_MAX}</span></div><div className="relative"><input id="password" maxLength={LOGIN_PASSWORD_MAX} autoComplete="current-password" required aria-required="true" type={showPassword ? 'text' : 'password'} className="h-12 w-full rounded-xl border border-slate-400 bg-white px-4 pr-12 text-sm outline-none transition placeholder:text-slate-500 hover:border-slate-500 focus:border-indigo-600 focus:ring-4 focus:ring-indigo-500/20" placeholder="Enter your password (no spaces)" value={password} onChange={(event) => setPassword(event.target.value.replace(/\s/g, ''))} /><button type="button" onClick={() => setShowPassword((current) => !current)} className="absolute right-2 top-1/2 grid h-10 w-10 -translate-y-1/2 place-items-center rounded-lg text-slate-600 hover:bg-slate-100 hover:text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-600" aria-label={showPassword ? 'Hide password' : 'Show password'} aria-pressed={showPassword}>{showPassword ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}</button></div><button type="button" onClick={() => { setRecoveryEmail(email); setRecoveryStep('email') }} className="mt-2 text-sm font-semibold text-indigo-700 hover:text-indigo-900 focus:outline-none focus:underline">Forgot your employee password?</button></div>
                   <div>
                     <label htmlFor="captcha" className="mb-2 block text-sm font-semibold text-slate-800">Security check <span className="font-normal text-slate-600">— solve the math question</span></label>
                     <div className="grid grid-cols-[7rem_1fr_2.75rem] gap-2">
                       <div className="grid h-12 place-items-center rounded-xl bg-slate-950 font-mono text-base font-bold tracking-wider text-white" aria-label={`Solve ${captchaChallenge}`}>{captchaChallenge || '•••'}</div>
-                      <input id="captcha" required inputMode="numeric" aria-invalid={captchaStatus === 'incorrect'} aria-describedby="captcha-feedback" className={`h-12 min-w-0 rounded-xl border px-4 text-sm font-semibold outline-none transition focus:ring-4 ${captchaInputClass}`} placeholder="Answer" value={captchaAnswer} onChange={(event) => setCaptchaAnswer(event.target.value.replace(/\D/g, ''))} />
+                      <input id="captcha" maxLength={20} required inputMode="numeric" aria-invalid={captchaStatus === 'incorrect'} aria-describedby="captcha-feedback" className={`h-12 min-w-0 rounded-xl border px-4 text-sm font-semibold outline-none transition focus:ring-4 ${captchaInputClass}`} placeholder="Answer" value={captchaAnswer} onChange={(event) => setCaptchaAnswer(event.target.value.replace(/\D/g, ''))} />
                       <button type="button" onClick={() => void loadCaptcha()} className="grid h-12 place-items-center rounded-xl border border-slate-300 bg-slate-100 text-slate-500 transition hover:border-indigo-200 hover:bg-indigo-50 hover:text-indigo-600" aria-label="Get a new CAPTCHA"><RefreshCw className="h-4 w-4" /></button>
                     </div>
                     <p id="captcha-feedback" aria-live="polite" className={`mt-1.5 min-h-5 text-xs font-semibold ${captchaStatus === 'correct' ? 'text-emerald-600' : captchaStatus === 'incorrect' ? 'text-red-600' : 'text-transparent'}`}>
                       {captchaStatus === 'correct' ? '✓ Correct answer' : captchaStatus === 'incorrect' ? '✕ Incorrect answer' : 'Enter your answer'}
                     </p>
                   </div>
-                  <label className="flex cursor-pointer items-center gap-2.5 text-sm text-slate-600"><input type="checkbox" className="h-4 w-4 rounded border-slate-300 accent-indigo-600" /> Keep me signed in on this device</label>
                 </>
               )}
 
-              <button type="submit" disabled={loading || (recoveryStep === 'login' && !verificationId && !captchaId) || (recoveryStep === 'password' && (!validNewPassword || !newPasswordsMatch))} className="flex h-12 w-full items-center justify-center gap-2 rounded-xl bg-indigo-600 px-5 text-sm font-semibold text-white shadow-lg shadow-indigo-600/20 transition hover:bg-indigo-700 focus:outline-none focus:ring-4 focus:ring-indigo-500/20 disabled:cursor-not-allowed disabled:opacity-60">{loading ? <><LoaderCircle className="h-4 w-4 animate-spin" /> Please wait…</> : <>{recoveryStep === 'email' ? 'Send reset code' : recoveryStep === 'code' ? 'Verify reset code' : recoveryStep === 'password' ? 'Save new password' : verificationId ? 'Verify and continue' : 'Sign in securely'} <ArrowRight className="h-4 w-4" /></>}</button>
+              <button type="submit" disabled={loading || (recoveryStep === 'login' && !verificationId && retrySeconds > 0) || (recoveryStep === 'login' && !verificationId && !captchaId) || (recoveryStep === 'password' && (!validNewPassword || !newPasswordsMatch))} className="flex h-12 w-full items-center justify-center gap-2 rounded-xl bg-indigo-600 px-5 text-sm font-semibold text-white shadow-lg shadow-indigo-600/20 transition hover:bg-indigo-700 focus:outline-none focus:ring-4 focus:ring-indigo-500/20 disabled:cursor-not-allowed disabled:opacity-60">{recoveryStep === 'login' && !verificationId && retrySeconds > 0 ? `Try again in ${retrySeconds}s` : loading ? <><LoaderCircle className="h-4 w-4 animate-spin" /> Please wait…</> : <>{recoveryStep === 'email' ? 'Send reset code' : recoveryStep === 'code' ? 'Verify reset code' : recoveryStep === 'password' ? 'Save new password' : verificationId ? 'Verify and continue' : 'Sign in securely'} <ArrowRight className="h-4 w-4" /></>}</button>
               {recoveryStep !== 'login' ? <button type="button" onClick={leavePasswordRecovery} className="flex w-full items-center justify-center gap-2 text-sm font-semibold text-slate-500 hover:text-indigo-700"><ArrowLeft className="h-4 w-4" />Back to sign in</button> : verificationId && <button type="button" onClick={() => { setVerificationId(''); setOtp(''); void loadCaptcha(false) }} className="w-full text-center text-sm font-semibold text-slate-500 hover:text-indigo-600">Back to sign in</button>}
             </form>
             <p className="mt-8 text-center text-xs leading-5 text-slate-400">By continuing, you agree to your organization’s security and acceptable-use policies.</p>

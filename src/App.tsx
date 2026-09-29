@@ -21,8 +21,8 @@ function ProtectedDashboard() {
 
   if (authorized === null) return <div className="flex min-h-screen items-center justify-center bg-slate-50 text-sm text-slate-500">Verifying secure session...</div>;
   if (!authorized) return <Login />;
-  if ((role === 'regular' || role === 'extra') && mustChangePassword) return <InitialPasswordChangeView onComplete={() => setMustChangePassword(false)} />;
-  if (role === 'regular' || role === 'extra') return <EmployeePortal />;
+  if (['regular', 'extra', 'manager', 'supervisor'].includes(role) && mustChangePassword) return <InitialPasswordChangeView onComplete={() => setMustChangePassword(false)} />;
+  if (['regular', 'extra', 'manager', 'supervisor'].includes(role)) return <EmployeePortal />;
   return <AdminOverviewRedirect />;
 }
 
