@@ -17,7 +17,7 @@ import { usePagination } from "../hooks/usePagination";
 type Readiness = "ready" | "limited";
 type InsightKey = "forecast" | "risk" | "anomaly" | "verification";
 type ForecastDay = { date: string; expectedPresent: number; attendanceRate: number; weekdayAverage: number; weekdaySamples: number; trendDirection: "stable" | "increasing" | "decreasing"; explanation: string };
-type RiskEmployee = { employeeId: string; name: string; tier: "green" | "orange" | "red"; absenceDays: number; absenceDates: string[]; lateDays: number };
+type RiskEmployee = { employeeId: string; name: string; tier: "green" | "orange" | "red"; absenceDays: number; absenceDates: string[] };
 type Anomaly = { employeeId: string; name: string; date: string; time: string; score: number; deviationMinutes: number };
 type Scanner = { deviceUid: string; scans: number; averageScore: number; health: number; status: "healthy" | "attention" | "critical" };
 type RecentMatch = { employeeId: string | null; name: string; action: "time-in" | "time-out" | "daily-limit" | "recognized" | "no-match"; eventTime: string | null; scannedAt: string | null; deviceUid: string; score: number | null; matchStrength: number | null; accepted: boolean; responseTimeMs: number | null };
@@ -112,8 +112,8 @@ function AttendanceFlagIcon({ tier, size = 25 }: { tier: RiskEmployee["tier"]; s
 }
 function RiskPanel({ data }: { data: Insights["risk"] }) {
   const [search, setSearch] = useState("");
-  const [filter, setFilter] = useState<"all" | RiskEmployee["tier"] | "late">("all");
-  const visibleEmployees = useMemo(() => data.employees.filter(employee => employee.name.toLowerCase().includes(search.trim().toLowerCase()) && (filter === "all" || filter === "late" ? filter === "all" || employee.lateDays > 0 : employee.tier === filter)), [data.employees, filter, search]);
+  const [filter, setFilter] = useState<"all" | RiskEmployee["tier"]>("all");
+  const visibleEmployees = useMemo(() => data.employees.filter(employee => employee.name.toLowerCase().includes(search.trim().toLowerCase()) && (filter === "all" || employee.tier === filter)), [data.employees, filter, search]);
   const riskPage = usePagination(visibleEmployees, `${data.periodStart}-${data.periodEnd}-${search}-${filter}`, 10);
   return <div className="space-y-4">
     <div className="grid gap-3 sm:grid-cols-3">
@@ -122,7 +122,7 @@ function RiskPanel({ data }: { data: Insights["risk"] }) {
       <FlagLegend color="red" title="Red flag" range="26–30 absences" note="Needs prompt human review" />
     </div>
     <div className="flex gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm leading-6 text-amber-950"><AlertTriangle className="mt-0.5 shrink-0 text-amber-600" size={17} aria-hidden="true" /><p><strong>Simple 30-day rule:</strong> The flag counts absences without approved leave from {shortDate(data.periodStart)} to {shortDate(data.periodEnd)}. Review the employee's schedule and circumstances before making a decision.</p></div>
-    <div className="flex flex-col gap-3 rounded-xl border border-slate-200 bg-white p-4 sm:flex-row sm:items-center"><input type="search" aria-label="Search employees in attendance flags" placeholder="Search employee name..." value={search} onChange={event=>setSearch(event.target.value)} className="min-w-0 flex-1 rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-violet-500"/><div className="flex flex-wrap gap-1">{([['all','All'],['green','Green'],['orange','Orange'],['red','Red'],['late','With late arrivals']] as const).map(([value,label])=><button key={value} type="button" onClick={()=>setFilter(value)} className={`rounded-lg px-3 py-2 text-xs font-semibold ${filter===value?'bg-violet-600 text-white':'bg-slate-100 text-slate-600'}`}>{label}</button>)}</div></div>
+    <div className="flex flex-col gap-3 rounded-xl border border-slate-200 bg-white p-4 sm:flex-row sm:items-center"><input type="search" aria-label="Search employees in attendance flags" placeholder="Search employee name..." value={search} onChange={event=>setSearch(event.target.value)} className="min-w-0 flex-1 rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-violet-500"/><div className="flex flex-wrap gap-1">{([['all','All'],['green','Green'],['orange','Orange'],['red','Red']] as const).map(([value,label])=><button key={value} type="button" onClick={()=>setFilter(value)} className={`rounded-lg px-3 py-2 text-xs font-semibold ${filter===value?'bg-violet-600 text-white':'bg-slate-100 text-slate-600'}`}>{label}</button>)}</div></div>
     <div className="overflow-hidden rounded-2xl border border-slate-200">
       <div className="grid grid-cols-[1fr_auto] gap-3 border-b border-slate-200 bg-slate-50 px-4 py-3 text-xs font-semibold uppercase tracking-wider text-slate-500 sm:grid-cols-[1fr_120px_180px]">
         <span>Employee</span><span>Flag</span><span className="hidden sm:block">Last 30 days</span>
@@ -130,7 +130,7 @@ function RiskPanel({ data }: { data: Insights["risk"] }) {
       {visibleEmployees.length ? riskPage.pageItems.map((employee) => <div key={employee.employeeId} className="grid grid-cols-[1fr_auto] items-center gap-3 border-b border-slate-100 px-4 py-3 last:border-0 sm:grid-cols-[1fr_120px_180px]">
         <div className="min-w-0"><p className="truncate text-sm font-semibold text-slate-800">{employee.name}</p><p className="mt-0.5 text-xs text-slate-500">{employee.absenceDays} {employee.absenceDays === 1 ? "absence" : "absences"} without approved leave</p></div>
         <div className="flex justify-center"><AttendanceFlagIcon tier={employee.tier} /></div>
-        <span className="hidden text-xs text-slate-500 sm:block">{employee.absenceDays} absent · {employee.lateDays} late</span>
+        <span className="hidden text-xs text-slate-500 sm:block">{employee.absenceDays} absent</span>
       </div>) : <Empty text="No employee data is available yet." />}
       <PaginationControls {...riskPage} onPageChange={riskPage.setPage} />
     </div>

@@ -1,6 +1,6 @@
 import { AdminPageHeader } from "../components/AdminPageHeader";
 import { useEffect, useMemo, useState } from "react";
-import { Check, Clock, Download, Search, X } from "lucide-react";
+import { CalendarOff, Check, Clock, Download, Search, ShieldCheck, X } from "lucide-react";
 
 import { Card, CardContent } from "../components/ui/Card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../components/ui/Table";
@@ -11,6 +11,8 @@ import { PaginationControls } from "../components/ui/Pagination";
 import { usePagination } from "../hooks/usePagination";
 import { downloadCsv } from "../lib/exportCsv";
 import { Input } from "../components/ui/Input";
+import { ManualAttendanceDialog } from "../components/ManualAttendanceDialog";
+import { IdleDayDialog } from "../components/IdleDayDialog";
 
 export interface AttendanceRecord {
   employeeId: string;
@@ -21,7 +23,8 @@ export interface AttendanceRecord {
   checkOut: string;
   sessions?: { checkIn: string; checkOut?: string | null }[];
   sessionCount?: number;
-  status: "Present" | "Late" | "Absent" | "On Leave";
+  manualRecorded?: boolean;
+  status: "Present" | "Absent" | "On Leave" | "Idle";
 }
 
 function attendanceSessions(record: AttendanceRecord) {
@@ -63,6 +66,9 @@ export function AttendanceView(props: {
   const [customTo, setCustomTo] = useState(selectedDate);
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<"all" | AttendanceRecord["status"]>("all");
+  const [manualOpen, setManualOpen] = useState(false);
+  const [idleOpen, setIdleOpen] = useState(false);
+  const [refreshKey, setRefreshKey] = useState(0);
   const range = useMemo(() => {
     if (rangeMode === "day") return { from: selectedDate, to: selectedDate };
     if (rangeMode === "custom") return { from: customFrom, to: customTo };
@@ -105,8 +111,8 @@ export function AttendanceView(props: {
     return () => {
       mounted = false;
     };
-  }, [range.from, range.to, records.length]);
-  const totals = { present: filteredRecords.filter(r=>r.status==="Present").length, late: filteredRecords.filter(r=>r.status==="Late").length, absent: filteredRecords.filter(r=>r.status==="Absent").length, leave: filteredRecords.filter(r=>r.status==="On Leave").length };
+  }, [range.from, range.to, records.length, refreshKey]);
+  const totals = { present: filteredRecords.filter(r=>r.status==="Present").length, absent: filteredRecords.filter(r=>r.status==="Absent").length, leave: filteredRecords.filter(r=>r.status==="On Leave").length, idle: filteredRecords.filter(r=>r.status==="Idle").length };
 
   const exportAttendance = async () => {
     const headers = ["Employee ID", "Employee Name", "Role", "Date", "Status", "Session Count", "Session 1 In", "Session 1 Out", "Session 2 In", "Session 2 Out", "Session 3 In", "Session 3 Out"];
@@ -126,12 +132,6 @@ export function AttendanceView(props: {
             <Check className="h-3 w-3" /> On time
           </Badge>
         );
-      case "Late":
-        return (
-          <Badge variant="warning">
-            <Clock className="h-3 w-3" /> Late
-          </Badge>
-        );
       case "Absent":
         return (
           <Badge variant="neutral">
@@ -144,6 +144,8 @@ export function AttendanceView(props: {
             <Clock className="h-3 w-3" /> On Leave
           </Badge>
         );
+      case "Idle":
+        return <Badge variant="info"><CalendarOff className="h-3 w-3" /> Idle day</Badge>;
       default:
         return <Badge variant="neutral">Unknown</Badge>;
     }
@@ -151,9 +153,11 @@ export function AttendanceView(props: {
 
   return (
     <div className="space-y-6">
-      <AdminPageHeader title="Attendance" description="Review daily attendance and up to three sessions per employee." icon={Clock} actions={<>{rangeMode === "day" && <DateNavigator label="Workforce date" value={selectedDate} onChange={setSelectedDate} />}<button type="button" disabled={loading || filteredRecords.length === 0} onClick={() => void exportAttendance()} className="inline-flex h-10 items-center gap-2 rounded-lg border border-violet-200 bg-white px-4 text-sm font-semibold text-violet-700 shadow-sm hover:bg-violet-50 disabled:cursor-not-allowed disabled:opacity-50"><Download className="h-4 w-4" />Export CSV</button></>} />
+      <AdminPageHeader title="Attendance" description="Review daily attendance and up to three sessions per employee." icon={Clock} actions={<>{rangeMode === "day" && <DateNavigator label="Workforce date" value={selectedDate} onChange={setSelectedDate} />}{props.role === "admin" && <button type="button" onClick={() => setManualOpen(true)} className="inline-flex h-10 items-center gap-2 rounded-lg bg-violet-600 px-4 text-sm font-semibold text-white shadow-sm hover:bg-violet-700"><ShieldCheck className="h-4 w-4" />Record attendance</button>}{props.role === "admin" && rangeMode === "day" && <button type="button" onClick={() => setIdleOpen(true)} className="inline-flex h-10 items-center gap-2 rounded-lg border border-violet-200 bg-white px-4 text-sm font-semibold text-violet-700 shadow-sm hover:bg-violet-50"><CalendarOff className="h-4 w-4" />Idle day</button>}<button type="button" disabled={loading || filteredRecords.length === 0} onClick={() => void exportAttendance()} className="inline-flex h-10 items-center gap-2 rounded-lg border border-violet-200 bg-white px-4 text-sm font-semibold text-violet-700 shadow-sm hover:bg-violet-50 disabled:cursor-not-allowed disabled:opacity-50"><Download className="h-4 w-4" />Export CSV</button></>} />
+      {manualOpen && <ManualAttendanceDialog onClose={() => setManualOpen(false)} onSaved={() => setRefreshKey(key => key + 1)} />}
+      {idleOpen && <IdleDayDialog date={selectedDate} onClose={() => setIdleOpen(false)} onSaved={() => setRefreshKey(key => key + 1)} />}
       <div className="rounded-2xl border border-slate-200 bg-white p-4"><div className="flex flex-wrap gap-2">{([['day','One Day'],['current','Current 15 Days'],['previous','Previous 15 Days'],['custom','Custom Range']] as const).map(([value,label])=><button key={value} type="button" onClick={()=>setRangeMode(value)} className={`rounded-lg px-3 py-2 text-xs font-semibold ${rangeMode===value?'bg-violet-600 text-white':'border border-slate-200 text-slate-600'}`}>{label}</button>)}</div>{rangeMode==='custom'&&<div className="mt-4 flex flex-wrap gap-3"><label className="text-xs font-semibold text-slate-600">From<input type="date" value={customFrom} onChange={e=>setCustomFrom(e.target.value)} className="ml-2 rounded-lg border border-slate-300 px-3 py-2"/></label><label className="text-xs font-semibold text-slate-600">To<input type="date" value={customTo} onChange={e=>setCustomTo(e.target.value)} className="ml-2 rounded-lg border border-slate-300 px-3 py-2"/></label></div>}<p className="mt-3 text-xs text-slate-500">Showing {displayWorkforceDate(range.from)}{range.from!==range.to?` to ${displayWorkforceDate(range.to)}`:''}</p></div>
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">{Object.entries(totals).map(([label,value])=><div key={label} className="rounded-xl border border-slate-200 bg-white p-3"><p className="text-xs capitalize text-slate-500">{label==='leave'?'On leave':label}</p><p className="mt-1 text-2xl font-bold text-slate-900">{value}</p></div>)}</div>
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">{Object.entries(totals).map(([label,value])=><div key={label} className="rounded-xl border border-slate-200 bg-white p-3"><p className="text-xs capitalize text-slate-500">{label==='leave'?'On leave':label==='idle'?'Idle day':label}</p><p className="mt-1 text-2xl font-bold text-slate-900">{value}</p></div>)}</div>
 
       {error ? (
         <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800">
@@ -162,7 +166,7 @@ export function AttendanceView(props: {
       ) : null}
 
       <Card data-guide="attendance-table">
-        <div className="flex flex-wrap items-center gap-3 border-b border-slate-100 p-4"><div className="relative w-full max-w-sm"><Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" /><Input aria-label="Search attendance" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search employee, ID, or role" className="pl-9" /></div><label className="flex items-center gap-2 text-sm font-medium text-slate-600"><span className="sr-only">Attendance status</span><select aria-label="Filter attendance by status" value={statusFilter} onChange={(event) => setStatusFilter(event.target.value as "all" | AttendanceRecord["status"])} className="h-10 rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-violet-400 focus:ring-2 focus:ring-violet-100"><option value="all">All statuses</option><option value="Present">Present</option><option value="Late">Late</option><option value="Absent">Absent</option><option value="On Leave">On Leave</option></select></label></div>
+        <div className="flex flex-wrap items-center gap-3 border-b border-slate-100 p-4"><div className="relative w-full max-w-sm"><Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" /><Input aria-label="Search attendance" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search employee, ID, or role" className="pl-9" /></div><label className="flex items-center gap-2 text-sm font-medium text-slate-600"><span className="sr-only">Attendance status</span><select aria-label="Filter attendance by status" value={statusFilter} onChange={(event) => setStatusFilter(event.target.value as "all" | AttendanceRecord["status"])} className="h-10 rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-violet-400 focus:ring-2 focus:ring-violet-100"><option value="all">All statuses</option><option value="Present">Present</option><option value="Absent">Absent</option><option value="On Leave">On Leave</option><option value="Idle">Idle day</option></select></label></div>
         <CardContent className="p-0">
           <Table>
             <TableHeader>
@@ -195,10 +199,11 @@ export function AttendanceView(props: {
                       <TableCell>
                         <div className="font-medium text-slate-900">{record.name}</div>
                         <div className="text-xs text-slate-400">{record.role}</div>
+                        {record.manualRecorded && <span className="mt-1 inline-flex items-center gap-1 rounded-full bg-violet-100 px-2 py-0.5 text-[11px] font-semibold text-violet-700"><ShieldCheck className="h-3 w-3" />Recorded by admin</span>}
                       </TableCell>
                       <TableCell className="whitespace-nowrap text-slate-600">{displayWorkforceDate(record.date)}</TableCell>
                       <TableCell>
-                        {record.status === "On Leave" ? <div className="min-w-[28rem] text-sm font-medium text-indigo-600">Approved leave — no time-in required</div> : sessions.length === 0 ? <div className="min-w-[28rem] text-sm font-medium text-slate-400">No attendance session recorded</div> : <div className="flex min-w-[28rem] flex-wrap gap-2">
+                        {record.status === "On Leave" ? <div className="min-w-[28rem] text-sm font-medium text-indigo-600">Approved leave — no time-in required</div> : sessions.length === 0 ? <div className="min-w-[28rem] text-sm font-medium text-slate-400">{record.status === "Idle" ? "Optional workday — no time-in required" : "No attendance session recorded"}</div> : <div className="flex min-w-[28rem] flex-wrap gap-2">
                           {sessions.map((session, index) => (
                             <div key={`${record.employeeId}-${record.date}-${index}`} className="min-w-36 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
                               <div className="mb-1 text-[10px] font-bold uppercase tracking-wide text-violet-600">Session {index + 1}</div>

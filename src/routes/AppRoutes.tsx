@@ -16,7 +16,7 @@ import { apiFetch, clearSession } from '../lib/api';
 
 type OverviewEmployee = { status: string; biometricStatus: string; createdAt?: string };
 type OverviewPayroll = { status: string; periodStart?: string };
-type OverviewAttendance = { employeeId?: string; name?: string; role?: string; date?: string; checkIn?: string; checkOut?: string; status: string };
+type OverviewAttendance = { employeeId?: string; name?: string; role?: string; date?: string; checkIn?: string; checkOut?: string; worked?: boolean; status: string };
 type OverviewLeave = { id: string; employeeId?: string; startDate: string; endDate: string; approvedDates?: string[]; totalDays: number; status: string };
 type OverviewAuditEvent = { id: string; executedAction?: string; detail?: string; occurredAt?: string; actorEmail?: string | null; actorRole?: string; screenName?: string; action?: string; targetType?: string; targetId?: string | null; outcome?: string; metadata?: Record<string, unknown> };
 
@@ -154,7 +154,8 @@ function attendanceTrend(records: OverviewAttendance[], mode: 'daily' | 'weekly'
   const anchor = new Date(`${anchorDate}T00:00:00Z`);
   if (Number.isNaN(anchor.getTime())) return [];
 
-  const buckets = new Map<string, { label: string; present: number; late: number; absent: number }>();
+  const buckets = new Map<string, { label: string; present: number; late: number; absent: number; uniquePresent: number }>();
+  const presentEmployees = new Map<string, Set<string>>();
   const dateKey = (date: Date) => date.toISOString().slice(0, 10);
   const mondayFor = (date: Date) => {
     const monday = new Date(date);
@@ -184,7 +185,7 @@ function attendanceTrend(records: OverviewAttendance[], mode: 'daily' | 'weekly'
     const label = mode === 'daily'
       ? date.toLocaleDateString('en-US', { timeZone: 'UTC', weekday: 'short', month: 'numeric', day: 'numeric' })
       : date.toLocaleDateString('en-US', { timeZone: 'UTC', month: 'short', ...(mode === 'weekly' ? { day: 'numeric' } : {}) });
-    buckets.set(bucketKey(date), { label, present: 0, late: 0, absent: 0 });
+    buckets.set(bucketKey(date), { label, present: 0, late: 0, absent: 0, uniquePresent: 0 });
   });
 
   records.forEach((record) => {
@@ -192,14 +193,18 @@ function attendanceTrend(records: OverviewAttendance[], mode: 'daily' | 'weekly'
     const date = new Date(`${record.date}T00:00:00Z`);
     if (Number.isNaN(date.getTime())) return;
     if (date.getTime() > anchor.getTime()) return;
-    const bucket = buckets.get(bucketKey(date));
+    const key = bucketKey(date);
+    const bucket = buckets.get(key);
     if (!bucket) return;
-    if (record.status === 'Present') bucket.present += 1;
-    if (record.status === 'Late') bucket.late += 1;
+    if (record.status === 'Present' || (record.status === 'Idle' && record.worked)) {
+      bucket.present += 1;
+      if (!presentEmployees.has(key)) presentEmployees.set(key, new Set());
+      presentEmployees.get(key)?.add(record.employeeId || `${record.date}:${bucket.present}`);
+    }
     if (record.status === 'Absent') bucket.absent += 1;
   });
 
-  return [...buckets.values()];
+  return [...buckets].map(([key, bucket]) => ({ ...bucket, uniquePresent: presentEmployees.get(key)?.size || 0 }));
 }
 
 function currentPayrollPeriodKey() {
@@ -406,9 +411,9 @@ export function AppRoutes() {
     record.date && record.date > latest ? record.date : latest, ''), [overviewAttendance]);
 
   const attendanceAnalytics = useMemo(() => {
-    const total = overviewAttendance.length;
-    const attended = overviewAttendance.filter((record) => record.status === 'Present' || record.status === 'Late').length;
-    const onTime = overviewAttendance.filter((record) => record.status === 'Present').length;
+    const total = overviewAttendance.filter(record => record.status !== 'Idle' || record.worked).length;
+    const attended = overviewAttendance.filter((record) => record.status === 'Present' || (record.status === 'Idle' && record.worked)).length;
+    const onTime = attended;
     return {
       attendanceRate: total ? attended / total * 100 : 0,
       punctualityRate: attended ? onTime / attended * 100 : 0,

@@ -1,5 +1,6 @@
 import { BoundedNumberInput } from "../components/ui/BoundedNumberInput";
-import { HOURLY_RATE_MAX, GRACE_MINUTES_MAX, settingsNumbersValidationError } from "../../shared/field-limits.js";
+import { HOURLY_RATE_MAX, settingsNumbersValidationError } from "../../shared/field-limits.js";
+import { workHourOrderError } from "../../shared/work-hours.js";
 import { AdminPageHeader } from "../components/AdminPageHeader";
 import { useEffect, useState } from "react";
 import { Settings, CalendarDays, ChevronLeft, ChevronRight, Clock, Eye, EyeOff, KeyRound, Save, WalletCards } from "lucide-react";
@@ -12,7 +13,7 @@ import { apiFetch } from "../lib/api";
 import { Dialog, DialogClose, DialogHeader } from "../components/ui/Dialog";
 
 type Settings = {
-  shift: { enabled: boolean; startTime: string; autoClockOutTime: string; lateGraceMinutes: number | ""; workDays: number; workWeekdays: number[]; scheduleOverrides: { date: string; working: boolean; kind?: "holiday" | "rest-day" | "workday" }[] };
+  shift: { enabled: boolean; startTime: string; workStopTime: string; autoClockOutTime: string; workDays: number; workWeekdays: number[]; scheduleOverrides: { date: string; working: boolean; kind?: "holiday" | "rest-day" | "workday" }[] };
   payroll: { hourlyRates: { regular: number | ""; extra: number | ""; manager: number | ""; supervisor: number | "" } };
 };
 
@@ -40,7 +41,7 @@ function monthDates(month: Date) {
 }
 
 const defaults: Settings = {
-  shift: { enabled: true, startTime: "09:00", autoClockOutTime: "18:00", lateGraceMinutes: 0, workDays: 5, workWeekdays: [1, 2, 3, 4, 5], scheduleOverrides: [] },
+  shift: { enabled: true, startTime: "06:00", workStopTime: "18:00", autoClockOutTime: "21:00", workDays: 5, workWeekdays: [1, 2, 3, 4, 5], scheduleOverrides: [] },
   payroll: { hourlyRates: { regular: 50, extra: 40, manager: 50, supervisor: 50 } },
 };
 
@@ -73,12 +74,14 @@ export function SettingsView() {
 
   const save = async () => {
     if (!adminPassword) return;
-    if (settings.shift.lateGraceMinutes === "" || Object.values(settings.payroll.hourlyRates).some(rate => rate === "")) {
-      toast({ title: "Complete the number fields", description: "Enter the attendance and hourly-rate values before saving.", variant: "error" });
+    if (Object.values(settings.payroll.hourlyRates).some(rate => rate === "")) {
+      toast({ title: "Complete the number fields", description: "Enter the hourly-rate values before saving.", variant: "error" });
       return;
     }
     const numberError = settingsNumbersValidationError(settings);
     if (numberError) { toast({ title: "Check the number fields", description: numberError, variant: "error" }); return; }
+    const timeError = workHourOrderError(settings.shift.startTime, settings.shift.workStopTime, settings.shift.autoClockOutTime);
+    if (timeError) { toast({ title: "Check the work times", description: timeError, variant: "error" }); return; }
     setSaving(true);
     try {
       const response = await apiFetch("/api/settings", {
@@ -116,35 +119,31 @@ export function SettingsView() {
                 </div>
                 <div>
                   <CardTitle>Work Hour Control</CardTitle>
-                  <CardDescription>Set the normal work start and automatic clock-out times.</CardDescription>
+                  <CardDescription>Set regular work hours and the latest overtime clock-out time.</CardDescription>
                 </div>
               </div>
             </div>
           </CardHeader>
           <CardContent className="space-y-5 pt-5">
             <p className="text-sm text-slate-500">Work-hour rules apply automatically.</p>
-            <div className="grid gap-4 sm:grid-cols-2">
+            <div className="grid gap-4 sm:grid-cols-3">
               <div className="space-y-2">
                 <Label>Work starts at</Label>
                 <Input type="time" value={settings.shift.startTime} onChange={(event) => setShift({ startTime: event.target.value })} />
-                <p className="text-xs text-slate-500">The company’s usual starting time.</p>
+                <p className="text-xs text-slate-500">The usual start of work.</p>
               </div>
               <div className="space-y-2">
-                <Label>Automatic clock-out at</Label>
+                <Label>Work stops at</Label>
+                <Input type="time" value={settings.shift.workStopTime} onChange={(event) => setShift({ workStopTime: event.target.value })} />
+                <p className="text-xs text-slate-500">Hours after this are overtime.</p>
+              </div>
+              <div className="space-y-2">
+                <Label>Overtime stops at</Label>
                 <Input type="time" value={settings.shift.autoClockOutTime} onChange={(event) => setShift({ autoClockOutTime: event.target.value })} />
-                <p className="text-xs text-slate-500">Open attendance sessions close automatically at this company time.</p>
+                <p className="text-xs text-slate-500">Open shifts clock out automatically here.</p>
               </div>
             </div>
-
-            <div className="rounded-xl border border-amber-200 bg-amber-50/70 p-4">
-              <div className="flex items-start gap-3">
-                <div className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-amber-100 text-amber-700"><Clock className="h-4 w-4" /></div>
-                <div className="flex-1 space-y-3">
-                  <div><p className="text-sm font-semibold text-amber-950">Late Arrival Rule</p><p className="mt-1 text-xs leading-5 text-amber-800">Add a grace period after the configured work start time.</p></div>
-                  <div className="max-w-xs space-y-2"><Label>Grace period after work starts</Label><div className="relative"><BoundedNumberInput className="pr-20" min="0" max={GRACE_MINUTES_MAX} decimals={0} title="0 to 180 whole minutes" value={settings.shift.lateGraceMinutes} onChange={(event) => setShift({ lateGraceMinutes: event.target.value === "" ? "" : Number(event.target.value) })} /><span className="pointer-events-none absolute inset-y-0 right-3 flex items-center text-xs font-medium text-slate-500">minutes</span></div><p className="text-xs text-amber-800">Allowed: 0-180 whole minutes. Example: an 08:00 AM start with 15 minutes means 08:15 is on time and 08:16 is late.</p></div>
-                </div>
-              </div>
-            </div>
+            <p className="text-xs text-violet-700">Overtime uses the same hourly rate. The overtime stop is the latest paid time for an open shift.</p>
 
             <div className="hidden">
               <Label>Normal work days each week</Label>

@@ -27,10 +27,9 @@ test('number editing supports decimals and deletion, blocks huge values, exponen
   for (const value of ['181', '5.5', '1e2', '-1', '5777777777777777']) assert.equal(validNumberInput(value, 180, 0), false);
 });
 
-test('settings server validation rejects rather than clamps invalid payroll and grace values', () => {
-  const settings = { shift: { lateGraceMinutes: 180 }, payroll: { hourlyRates: { regular: 10000, extra: 1.25, manager: 80, supervisor: 70 } } };
+test('settings server validation rejects invalid payroll values', () => {
+  const settings = { payroll: { hourlyRates: { regular: 10000, extra: 1.25, manager: 80, supervisor: 70 } } };
   assert.equal(settingsNumbersValidationError(settings), null);
-  for (const lateGraceMinutes of [181, -1, 1.5, '', null, Infinity]) assert.ok(settingsNumbersValidationError({ ...settings, shift: { lateGraceMinutes } }));
   for (const regular of [0, -1, 10000.01, 10.001, '', null, 1e60]) assert.ok(settingsNumbersValidationError({ ...settings, payroll: { hourlyRates: { ...settings.payroll.hourlyRates, regular } } }));
   for (const role of ['manager', 'supervisor']) assert.ok(settingsNumbersValidationError({ ...settings, payroll: { hourlyRates: { ...settings.payroll.hourlyRates, [role]: 0 } } }));
 });

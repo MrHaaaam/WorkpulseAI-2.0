@@ -25,7 +25,7 @@ export function buildNotifications({ leaveRequests = [], attendance = [], insigh
     const name = record.name || record.employeeId;
     const sessions = record.sessions?.length ? record.sessions : record.checkIn ? [{ checkIn: record.checkIn, checkOut: record.checkOut }] : [];
     sessions.forEach((session, index) => {
-      if (session.checkIn) add(`attendance:${key}:${index}:in`, 'attendance', `${name} clocked in${index === 0 && record.status === 'Late' ? ' late' : ''}`, `${record.date} at ${session.checkIn}`, session.checkInAt || eventTime(record.date, session.checkIn), record.employeeId);
+      if (session.checkIn) add(`attendance:${key}:${index}:in`, 'attendance', `${name} clocked in`, `${record.date} at ${session.checkIn}`, session.checkInAt || eventTime(record.date, session.checkIn), record.employeeId);
       if (session.checkOut) add(`attendance:${key}:${index}:out`, 'attendance', `${name} clocked out`, `${record.date} at ${session.checkOut}`, session.checkOutAt || eventTime(record.date, session.checkOut), record.employeeId);
     });
     if (record.status === 'Absent' && !sessions.length) {

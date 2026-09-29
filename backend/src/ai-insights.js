@@ -177,11 +177,7 @@ export function attendanceRiskForEmployee(attendance, employeeId, leaveRequests,
     .map((item) => ({ status: item.status, day: String(item.date).slice(0, 10) }))
     .filter((item) => item.status === 'Absent' && item.day >= periodStart && item.day <= periodEnd && !coveredLeave.get(employeeId)?.has(item.day))
     .map((item) => item.day);
-  const lateDays = records.filter((item) => {
-    const day = String(item.date).slice(0, 10);
-    return item.status === 'Late' && day >= periodStart && day <= periodEnd;
-  }).length;
-  return { tier: attendanceFlagFor(absenceDates.length), absenceDays: absenceDates.length, absenceDates, lateDays, periodStart, periodEnd };
+  return { tier: attendanceFlagFor(absenceDates.length), absenceDays: absenceDates.length, absenceDates, periodStart, periodEnd };
 }
 
 function riskInsight(attendance, employees, leaveRequests, today) {
@@ -191,7 +187,7 @@ function riskInsight(attendance, employees, leaveRequests, today) {
   const rows = employees.map((employee) => {
     const result = attendanceRiskForEmployee(attendance, employee.id, leaveRequests, today);
     return { employeeId: employee.id, name: employee.name || employee.fullName || employee.id, ...result };
-  }).sort((a, b) => b.absenceDays - a.absenceDays || b.lateDays - a.lateDays || a.name.localeCompare(b.name));
+  }).sort((a, b) => b.absenceDays - a.absenceDays || a.name.localeCompare(b.name));
   const flagged = rows.filter((row) => row.tier !== 'green').length;
   return {
     version: '30-day unapproved absence count', status: rows.length ? 'ready' : 'limited', periodStart, periodEnd,

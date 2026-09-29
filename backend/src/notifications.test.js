@@ -15,7 +15,7 @@ test('expires at exactly 72 hours and excludes future or invalid events', () => 
 test('sorts all categories newest first and preserves resolved leave events', () => {
   const result = buildNotifications({ now, leaveRequests: [leave('approved', '2026-09-18T10:00:00Z', 'approved')], attendance: [{ employeeId: 'E1', name: 'Alex', date: '2026-09-18', status: 'Late', sessions: [{ checkIn: '09:00', checkInAt: '2026-09-18T01:00:00Z', checkOut: '19:00', checkOutAt: '2026-09-18T11:00:00Z' }] }] });
   assert.deepEqual(result.map((item) => item.category), ['attendance', 'leave', 'attendance']);
-  assert.match(result[2].title, /late/);
+  assert.equal(result[2].title, 'Alex clocked in');
 });
 
 test('each attendance session has independent IDs, and later scans do not renew earlier events', () => {

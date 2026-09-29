@@ -14,7 +14,6 @@ import {
   AlertCircle, 
   CheckCircle2,
   Gauge,
-  Timer,
   WalletCards,
   Settings as SettingsIcon,
 } from "lucide-react";
@@ -51,6 +50,7 @@ export interface TrendMetrics {
   present: number;
   late: number;
   absent: number;
+  uniquePresent: number;
 }
 
 export interface BreakdownItem {
@@ -103,7 +103,7 @@ interface AdminOverviewProps {
   onPerformanceDateChange: (value: string) => void;
   employees: { createdAt?: string }[];
   leaveRequests: { id: string; employeeId?: string; startDate: string; endDate: string; approvedDates?: string[]; totalDays: number; status: string }[];
-  attendanceRecords: { date?: string; status: string }[];
+  attendanceRecords: { date?: string; status: string; worked?: boolean }[];
   onNavigate?: (view: "attendance" | "employees" | "leave" | "payroll" | "settings" | "admin" | "insights") => void;
   auditLoading?: boolean;
   auditError?: string;
@@ -132,27 +132,26 @@ export function AdminOverviewView({
 }: AdminOverviewProps) {
   const auditPage = usePagination(auditTrail, auditDate);
   const chartData = attendanceTrends?.[viewMode] || [];
-  const chartHasData = chartData.some((item) => item.present > 0 || item.late > 0 || item.absent > 0);
-  const chartSummary = chartData.map((item) => `${item.label}: ${item.present} on time, ${item.late} late, ${item.absent} recorded absent`).join("; ");
-  const attendanceCountTrend = chartData.map((item) => ({ label: item.label, attended: item.present + item.late, onTime: item.present }));
+  const chartHasData = chartData.some((item) => item.present > 0 || item.absent > 0);
+  const chartSummary = chartData.map((item) => `${item.label}: ${item.present} present, ${item.absent} recorded absent`).join("; ");
+  const attendanceCountTrend = chartData.map((item) => ({ label: item.label, attended: item.uniquePresent }));
   const attendanceCountTrendHasData = attendanceCountTrend.some((item) => item.attended > 0);
-  const attendanceCountTrendSummary = attendanceCountTrend.map((item) => `${item.label}: ${item.attended} attended and ${item.onTime} arrived on time`).join("; ");
+  const attendanceCountTrendSummary = attendanceCountTrend.map((item) => `${item.label}: ${item.attended} attended`).join("; ");
   const weekdayPatternData = (() => {
     const end = new Date(`${performanceDate}T00:00:00Z`);
     const start = new Date(end);
     start.setUTCDate(start.getUTCDate() - 89);
-    const rows = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((label) => ({ label, onTime: 0, late: 0 }));
+    const rows = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((label) => ({ label, onTime: 0 }));
     attendanceRecords.forEach((record) => {
-      if (!record.date || (record.status !== "Present" && record.status !== "Late")) return;
+      if (!record.date || (record.status !== "Present" && !(record.status === "Idle" && record.worked))) return;
       const date = new Date(`${record.date}T00:00:00Z`);
       if (Number.isNaN(date.getTime()) || date < start || date > end) return;
-      if (record.status === "Present") rows[date.getUTCDay()].onTime += 1;
-      else rows[date.getUTCDay()].late += 1;
+      rows[date.getUTCDay()].onTime += 1;
     });
     return [...rows.slice(1), rows[0]];
   })();
-  const weekdayPatternHasData = weekdayPatternData.some((item) => item.onTime > 0 || item.late > 0);
-  const weekdayPatternSummary = weekdayPatternData.map((item) => `${item.label}: ${item.onTime} on time and ${item.late} late`).join("; ");
+  const weekdayPatternHasData = weekdayPatternData.some((item) => item.onTime > 0);
+  const weekdayPatternSummary = weekdayPatternData.map((item) => `${item.label}: ${item.onTime} attended`).join("; ");
   const performanceDateLabel = new Date(`${performanceDate}T00:00:00Z`).toLocaleDateString("en-US", {
     timeZone: "UTC", month: "short", day: "numeric", year: "numeric",
   });
@@ -162,12 +161,12 @@ export function AdminOverviewView({
   });
   const employeesOnLeave = new Set(approvedLeavesForDate.map((leave) => leave.employeeId || leave.id)).size;
   const performanceRecords = attendanceRecords.filter((record) => record.date === performanceDate);
-  const attendedForDate = performanceRecords.filter((record) => record.status === "Present" || record.status === "Late").length;
-  const onTimeForDate = performanceRecords.filter((record) => record.status === "Present").length;
+  const attendedForDate = performanceRecords.filter((record) => record.status === "Present" || (record.status === "Idle" && record.worked)).length;
+  const onTimeForDate = attendedForDate;
   const performanceLeave = new Set(leaveRequests.filter((leave) => leave.status === "approved" && (leave.approvedDates?.length ? leave.approvedDates.includes(performanceDate) : leave.startDate <= performanceDate && leave.endDate >= performanceDate)).map((leave) => leave.employeeId || leave.id)).size;
-  const expectedWorkforceForDate = Math.max(0, metrics.workforceEligible - performanceLeave);
+  const idleWithoutWork = performanceRecords.filter(record => record.status === "Idle" && !record.worked).length;
+  const expectedWorkforceForDate = Math.max(0, metrics.workforceEligible - performanceLeave - idleWithoutWork);
   const attendanceRateForDate = expectedWorkforceForDate ? attendedForDate / expectedWorkforceForDate * 100 : 0;
-  const punctualityRateForDate = attendedForDate ? onTimeForDate / attendedForDate * 100 : 0;
   const registeredOnSelectedDate = employees.filter((employee) => {
     if (!employee.createdAt) return false;
     const createdAt = new Date(employee.createdAt);
@@ -182,23 +181,21 @@ export function AdminOverviewView({
     return `${value("year")}-${value("month")}-${value("day")}` === performanceDate;
   }).length;
   const selectedBreakdown = [
-    { name: "On time", value: onTimeForDate, color: "#10b981" },
-    { name: "Late", value: performanceRecords.filter((record) => record.status === "Late").length, color: "#f59e0b" },
+    { name: "Present", value: onTimeForDate, color: "#10b981" },
     { name: "No attendance recorded", value: Math.max(0, expectedWorkforceForDate - attendedForDate), color: "#ef4444" },
+    { name: "Idle day", value: idleWithoutWork, color: "#8642ed" },
     { name: "On Leave", value: performanceLeave, color: "#6366f1" },
   ].filter((item) => item.value > 0);
   const failedAuditEvents = auditTrail.filter((event) => event.status === "Failed").length;
   const performanceMetrics = [
     { label: "Attendance rate", value: attendanceRateForDate, icon: Gauge, color: "text-emerald-600", bar: "bg-emerald-500", hint: attendedForDate ? `${attendedForDate} of ${expectedWorkforceForDate} expected employees recorded attendance` : "No attendance has been recorded for this date", format: "percent" as const, unavailable: expectedWorkforceForDate === 0 },
-    { label: "On-time arrival", value: punctualityRateForDate, icon: Timer, color: "text-sky-600", bar: "bg-sky-500", hint: attendedForDate ? `${onTimeForDate} of ${attendedForDate} attendees arrived on time` : "No arrivals are available to evaluate", format: "percent" as const, unavailable: attendedForDate === 0 },
     { label: "New employees registered", value: registeredOnSelectedDate, icon: UserPlus, color: "text-violet-600", bar: "bg-violet-500", hint: "Created on the selected date", format: "count" as const },
     { label: "Payroll completion", value: analytics.payrollCompletion, icon: WalletCards, color: "text-amber-600", bar: "bg-amber-500", hint: "Requests marked as paid", format: "percent" as const },
   ];
 
   const adminMetrics = [
     { label: "Expected workforce", value: expectedWorkforceForDate, progress: metrics.workforceEligible ? expectedWorkforceForDate / metrics.workforceEligible * 100 : 0, hint: "Scheduled workforce excluding approved leave", icon: Users, color: "text-violet-600", bar: "bg-violet-500" },
-    { label: "On time", value: onTimeForDate, progress: expectedWorkforceForDate ? onTimeForDate / expectedWorkforceForDate * 100 : 0, hint: "Arrived within the configured start and grace period", icon: UserCheck, color: "text-emerald-600", bar: "bg-emerald-500" },
-    { label: "Late", value: performanceRecords.filter((record) => record.status === "Late").length, progress: expectedWorkforceForDate ? performanceRecords.filter((record) => record.status === "Late").length / expectedWorkforceForDate * 100 : 0, hint: "Arrived after the configured grace period", icon: Clock, color: "text-amber-600", bar: "bg-amber-500" },
+    { label: "Present", value: onTimeForDate, progress: expectedWorkforceForDate ? onTimeForDate / expectedWorkforceForDate * 100 : 0, hint: "Recorded attendance on the selected date", icon: UserCheck, color: "text-emerald-600", bar: "bg-emerald-500" },
     { label: "No attendance recorded", value: Math.max(0, expectedWorkforceForDate - attendedForDate), progress: expectedWorkforceForDate ? Math.max(0, expectedWorkforceForDate - attendedForDate) / expectedWorkforceForDate * 100 : 0, hint: "Review before treating these records as absences", icon: AlertCircle, color: "text-red-600", bar: "bg-red-500" },
     { label: "On approved leave", value: employeesOnLeave, progress: metrics.workforceEligible ? employeesOnLeave / metrics.workforceEligible * 100 : 0, hint: "No time-in required for the selected date", icon: Calendar, color: "text-sky-600", bar: "bg-sky-500" },
   ];
@@ -218,7 +215,7 @@ export function AdminOverviewView({
           </div>
         </CardHeader>
         <CardContent>
-          <div aria-live="polite" className="grid grid-cols-1 gap-5 sm:grid-cols-2 xl:grid-cols-5">
+          <div aria-live="polite" className="grid grid-cols-1 gap-5 sm:grid-cols-2 xl:grid-cols-4">
         {adminMetrics.map((m) => {
           const Icon = m.icon;
           const safeProgress = Math.max(0, Math.min(100, m.progress));
@@ -254,7 +251,7 @@ export function AdminOverviewView({
           </div>
         </CardHeader>
         <CardContent>
-          <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 xl:grid-cols-4">
+          <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 xl:grid-cols-3">
             {performanceMetrics.map((metric) => {
               const Icon = metric.icon;
               const safeValue = Math.max(0, metric.value);
@@ -286,7 +283,7 @@ export function AdminOverviewView({
         <Card data-guide="attendance-trends" className="lg:col-span-2">
           <CardHeader>
             <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
-              <div><CardTitle>Workforce Attendance Trends</CardTitle><CardDescription>Present vs Late vs Absent — {viewMode} view ending {performanceDateLabel}</CardDescription></div>
+              <div><CardTitle>Workforce Attendance Trends</CardTitle><CardDescription>Present vs Absent — {viewMode} view ending {performanceDateLabel}</CardDescription></div>
               <div className="flex flex-wrap items-center gap-2">
                 <div className="flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2"><Calendar className="h-4 w-4 text-slate-400" /><span className="whitespace-nowrap text-sm font-medium text-slate-700">{latestAttendanceDate ? `Through ${new Date(`${latestAttendanceDate}T00:00:00`).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}` : 'No attendance period'}</span></div>
                 <Tabs ariaLabel="Attendance trend period" value={viewMode} onValueChange={(value) => onViewModeChange(value as ViewMode)} items={[{ value: "daily", label: "Daily" }, { value: "weekly", label: "Weekly" }, { value: "monthly", label: "Monthly" }]} />
@@ -301,10 +298,6 @@ export function AdminOverviewView({
                   <linearGradient id="colorPresentAdmin" x1="0" y1="0" x2="0" y2="1">
                     <stop offset="5%" stopColor="#10b981" stopOpacity={0.3} />
                     <stop offset="95%" stopColor="#10b981" stopOpacity={0} />
-                  </linearGradient>
-                  <linearGradient id="colorLateAdmin" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#f59e0b" stopOpacity={0.3} />
-                    <stop offset="95%" stopColor="#f59e0b" stopOpacity={0} />
                   </linearGradient>
                   <linearGradient id="colorAbsentAdmin" x1="0" y1="0" x2="0" y2="1">
                     <stop offset="5%" stopColor="#ef4444" stopOpacity={0.3} />
@@ -323,8 +316,7 @@ export function AdminOverviewView({
                   }}
                 />
                 <Legend wrapperStyle={{ fontSize: "13px" }} />
-                <Area type="linear" dataKey="present" name="On time" stroke="#10b981" strokeWidth={2} fill="url(#colorPresentAdmin)" />
-                <Area type="linear" dataKey="late" name="Late" stroke="#b45309" strokeWidth={2} strokeDasharray="6 3" fill="url(#colorLateAdmin)" />
+                <Area type="linear" dataKey="present" name="Present" stroke="#10b981" strokeWidth={2} fill="url(#colorPresentAdmin)" />
                 <Area type="linear" dataKey="absent" name="Recorded absent" stroke="#dc2626" strokeWidth={2} strokeDasharray="2 3" fill="url(#colorAbsentAdmin)" />
               </AreaChart>
             </ResponsiveContainer></div> : <div className="grid h-[300px] place-items-center rounded-xl border border-dashed border-slate-200 bg-slate-50 px-6 text-center text-sm text-slate-500">No attendance trend is available for this period. Add or verify attendance records to generate the chart.</div>}
@@ -370,7 +362,7 @@ export function AdminOverviewView({
       <section aria-label="Attendance analytics">
         <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
           <Card>
-            <CardHeader><CardTitle>Employees Present at Work</CardTitle><CardDescription>Compare employees with a recorded time-in against those who arrived on time</CardDescription></CardHeader>
+            <CardHeader><CardTitle>Employees Present at Work</CardTitle><CardDescription>Different employees who clocked in during each {viewMode === "daily" ? "day" : viewMode === "weekly" ? "week" : "month"}</CardDescription></CardHeader>
             <CardContent>
               <p className="sr-only">Employees present at work over time. {attendanceCountTrendSummary || "No attendance data is available."}</p>
               {attendanceCountTrendHasData ? <div role="img" aria-label={`Employees present at work over time. ${attendanceCountTrendSummary}`}><ResponsiveContainer width="100%" height={280}>
@@ -380,16 +372,14 @@ export function AdminOverviewView({
                   <YAxis allowDecimals={false} tick={{ fontSize: 12, fill: "#64748b" }} axisLine={false} tickLine={false} />
                   <Tooltip contentStyle={{ borderRadius: "10px", border: "1px solid #e2e8f0", fontSize: "13px" }} />
                   <Legend wrapperStyle={{ fontSize: "13px" }} />
-                  <Line type="linear" dataKey="attended" name="Present at work" stroke="#7c3aed" strokeWidth={3} dot={{ r: 3 }} />
-                  <Line type="linear" dataKey="onTime" name="Arrived on time" stroke="#0284c7" strokeWidth={3} strokeDasharray="6 3" dot={{ r: 3 }} />
+                  <Line type="monotone" dataKey="attended" name="Employees present" stroke="#7c3aed" strokeWidth={3} dot={{ r: 4, fill: "#7c3aed" }} activeDot={{ r: 6 }} />
                 </LineChart>
               </ResponsiveContainer></div> : <div className="grid h-[280px] place-items-center rounded-xl border border-dashed border-slate-200 bg-slate-50 px-6 text-center text-sm text-slate-500">No employee arrivals are available for this period.</div>}
-              <div className="mt-3 rounded-lg bg-sky-50 px-3 py-2 text-xs leading-5 text-sky-900"><strong>How to read it:</strong> Purple shows employees present at work, meaning they recorded a time-in. Blue shows how many arrived on time. The space between the lines represents employees who were late.</div>
             </CardContent>
           </Card>
 
           <Card>
-            <CardHeader><CardTitle>Weekday Arrival Pattern</CardTitle><CardDescription>On-time and late arrivals during the 90 days ending {performanceDateLabel}</CardDescription></CardHeader>
+            <CardHeader><CardTitle>Weekday Attendance Pattern</CardTitle><CardDescription>Employee workdays recorded in the 90 days ending {performanceDateLabel}</CardDescription></CardHeader>
             <CardContent>
               <p className="sr-only">Weekday arrival pattern. {weekdayPatternSummary}</p>
               {weekdayPatternHasData ? <div role="img" aria-label={`Weekday arrival pattern. ${weekdayPatternSummary}`}><ResponsiveContainer width="100%" height={280}>
@@ -399,11 +389,9 @@ export function AdminOverviewView({
                   <YAxis allowDecimals={false} tick={{ fontSize: 12, fill: "#64748b" }} axisLine={false} tickLine={false} />
                   <Tooltip contentStyle={{ borderRadius: "10px", border: "1px solid #e2e8f0", fontSize: "13px" }} />
                   <Legend wrapperStyle={{ fontSize: "13px" }} />
-                  <Bar dataKey="onTime" name="On time" fill="#059669" radius={[5, 5, 0, 0]} />
-                  <Bar dataKey="late" name="Late" fill="#b45309" radius={[5, 5, 0, 0]} />
+                  <Bar dataKey="onTime" name="Employee workdays" fill="#059669" radius={[5, 5, 0, 0]} />
                 </BarChart>
-              </ResponsiveContainer></div> : <div className="grid h-[280px] place-items-center rounded-xl border border-dashed border-slate-200 bg-slate-50 px-6 text-center text-sm text-slate-500">No on-time or late arrivals were recorded in this 90-day period.</div>}
-              <p className="mt-3 text-xs leading-5 text-slate-600">Use this pattern to review scheduling or operational issues. A high late count does not explain why employees arrived late.</p>
+              </ResponsiveContainer></div> : <div className="grid h-[280px] place-items-center rounded-xl border border-dashed border-slate-200 bg-slate-50 px-6 text-center text-sm text-slate-500">No attendance was recorded in this 90-day period.</div>}
             </CardContent>
           </Card>
         </div>
@@ -564,7 +552,6 @@ export function OverviewView({
   const managerMetrics = [
     { label: "Total Active Staff", value: metrics.totalActiveStaff.toString(), change: "+2", trend: "up", icon: Users, ...cardColorStyles.purple },
     { label: "Present Today", value: metrics.presentToday.toString(), change: "+1", trend: "up", icon: UserCheck, ...cardColorStyles.emerald },
-    { label: "Late Clock-ins", value: metrics.lateClockIns.toString(), change: "+2", trend: "down", icon: Clock, ...cardColorStyles.amber },
     { label: "Registered Biometric Keys", value: metrics.registeredBiometricKeys.toString(), change: "+3", trend: "up", icon: Fingerprint, ...cardColorStyles.violet },
   ];
 
@@ -626,7 +613,7 @@ export function OverviewView({
         <Card className="lg:col-span-2">
           <CardHeader>
             <CardTitle>Attendance Trends</CardTitle>
-            <CardDescription>Present vs Late vs Absent — {viewMode} view</CardDescription>
+            <CardDescription>Present vs Absent — {viewMode} view</CardDescription>
           </CardHeader>
           <CardContent>
             <ResponsiveContainer width="100%" height={300}>
@@ -635,10 +622,6 @@ export function OverviewView({
                   <linearGradient id="colorPresentMgr" x1="0" y1="0" x2="0" y2="1">
                     <stop offset="5%" stopColor="#10b981" stopOpacity={0.3} />
                     <stop offset="95%" stopColor="#10b981" stopOpacity={0} />
-                  </linearGradient>
-                  <linearGradient id="colorLateMgr" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#f59e0b" stopOpacity={0.3} />
-                    <stop offset="95%" stopColor="#f59e0b" stopOpacity={0} />
                   </linearGradient>
                   <linearGradient id="colorAbsentMgr" x1="0" y1="0" x2="0" y2="1">
                     <stop offset="5%" stopColor="#ef4444" stopOpacity={0.3} />
@@ -658,7 +641,6 @@ export function OverviewView({
                 />
                 <Legend wrapperStyle={{ fontSize: "13px" }} />
                 <Area type="monotone" dataKey="present" name="Present" stroke="#10b981" strokeWidth={2} fill="url(#colorPresentMgr)" />
-                <Area type="monotone" dataKey="late" name="Late" stroke="#f59e0b" strokeWidth={2} fill="url(#colorLateMgr)" />
                 <Area type="monotone" dataKey="absent" name="Absent" stroke="#ef4444" strokeWidth={2} fill="url(#colorAbsentMgr)" />
               </AreaChart>
             </ResponsiveContainer>
@@ -723,7 +705,6 @@ export function OverviewView({
                 />
                 <Legend wrapperStyle={{ fontSize: "13px" }} />
                 <Bar dataKey="present" name="Present" fill="#10b981" radius={[6, 6, 0, 0]} />
-                <Bar dataKey="late" name="Late" fill="#f59e0b" radius={[6, 6, 0, 0]} />
                 <Bar dataKey="absent" name="Absent" fill="#ef4444" radius={[6, 6, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>

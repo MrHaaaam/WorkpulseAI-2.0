@@ -67,6 +67,29 @@ test('completed sessions keep their recorded hourly rates after the default chan
   }
 });
 
+test('payroll separates overtime at the same rate and stops paying at the overtime limit', async () => {
+  const attendance = [{ employeeId: employee.id, date: '2026-09-16', sessions: [{
+    checkIn: '05:00 PM', checkOut: '10:00 PM', hourlyRate: 60,
+    workStartTime: '06:00', workStopTime: '18:00', overtimeStopTime: '21:00',
+  }] }];
+  const result = await preparePayrollRecord(database({ attendance }), employee, periodStart, { payroll: { hourlyRates: { regular: 90 } } });
+  assert.equal(result.record.regularHours, 1);
+  assert.equal(result.record.overtimeHours, 3);
+  assert.equal(result.record.hoursWorked, 4);
+  assert.equal(result.record.grossAmount, 240);
+});
+
+test('an overnight shift splits hours after midnight correctly', () => {
+  const record = { date: '2026-09-17', sessions: [{
+    checkIn: '01:00 AM', checkOut: '05:00 AM', hourlyRate: 60,
+    workStartTime: '22:00', workStopTime: '02:00', overtimeStopTime: '06:00',
+  }] };
+  const pay = attendancePayForRecord(record, 90);
+  assert.equal(pay.regularHours, 1);
+  assert.equal(pay.overtimeHours, 3);
+  assert.equal(pay.amount, 240);
+});
+
 test('a rate change snapshots older attendance before it can be recalculated', async () => {
   const record = { _id: 'A1', employeeId: employee.id, date: '2026-09-16', checkIn: '09:00 AM', checkOut: '11:00 AM', sessions: [{ checkIn: '09:00 AM', checkOut: '11:00 AM' }] };
   const db = { collection: () => ({ find: () => ({ toArray: async () => [record] }), updateOne: async (_filter, update) => { record.sessions = update.$set.sessions; return { modifiedCount: 1 }; } }) };

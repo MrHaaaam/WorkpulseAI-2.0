@@ -19,7 +19,7 @@ type AttendanceSession = { checkIn: string; checkOut?: string | null; autoClocke
 type Attendance = { date: string; checkIn?: string; checkOut?: string; sessions?: AttendanceSession[]; status: string; autoClockedOut?: boolean }
 type Leave = { id: string; leaveType: string; startDate: string; endDate: string; requestedDates?: string[]; approvedDates?: string[]; totalDays: number; reason: string; status: string }
 type Payroll = { id: string; amount?: number; grossAmount?: number; currentAmount?: number; carryOverAmount?: number; additions?: { label: string; value: number }[]; carriedQuarterlyAdditions?: { label: string; value: number }[]; hoursWorked?: number; hourlyRate?: number; rateBreakdown?: { rate: number; hours: number; amount: number }[]; status: string; periodStart?: string; paidAt?: string; warnings?: string[] }
-type AttendanceFlag = { tier: 'green' | 'orange' | 'red'; absenceDays: number; lateDays: number; periodStart: string; periodEnd: string }
+type AttendanceFlag = { tier: 'green' | 'orange' | 'red'; absenceDays: number; periodStart: string; periodEnd: string }
 type WorkSchedule = { workWeekdays: number[]; scheduleOverrides: { date: string; working: boolean; kind?: string }[]; startTime?: string; autoClockOutTime?: string }
 type Workspace = { profile: EmployeeProfile; attendance: Attendance[]; leaveRequests: Leave[]; payroll: Payroll[]; attendanceFlag: AttendanceFlag; workSchedule: WorkSchedule }
 type Section = 'overview' | 'attendance' | 'leave' | 'payroll' | 'profile'
@@ -92,8 +92,7 @@ export function EmployeePortal() {
   const attendanceSummary = useMemo(() => {
     const records = workspace?.attendance ?? []
     return {
-      present: records.filter((item) => item.status === 'Present').length,
-      late: records.filter((item) => item.status === 'Late').length,
+      present: records.filter((item) => item.status === 'Present' || (item.status === 'Idle' && attendanceSessions(item).length > 0)).length,
       total: records.length,
       sessions: records.reduce((total, record) => total + attendanceSessions(record).length, 0),
     }
@@ -251,7 +250,7 @@ function AttendanceFlagCard({ flag }: { flag: AttendanceFlag }) {
       <div className="flex gap-3"><span className={`grid h-11 w-11 shrink-0 place-items-center rounded-xl ${styles.icon}`}><AlertTriangle className="h-5 w-5" /></span><div><p className={`font-bold ${styles.text}`}>Your attendance status: {styles.label}</p><p className="mt-1 text-sm leading-6 text-slate-600">Automatically calculated from {formatDate(flag.periodStart)} to {formatDate(flag.periodEnd)}. Approved leave is not counted as an absence.</p></div></div>
       <span className={`w-fit rounded-full px-3 py-1 text-xs font-bold uppercase tracking-wide ${styles.icon}`}>{flag.tier}</span>
     </div>
-    <div className="mt-4 grid gap-3 sm:grid-cols-2"><div className="rounded-xl border border-white/80 bg-white/70 p-3"><p className="text-xs font-medium text-slate-500">Unapproved absences</p><p className="mt-1 text-2xl font-bold text-slate-950">{flag.absenceDays}</p></div><div className="rounded-xl border border-white/80 bg-white/70 p-3"><p className="text-xs font-medium text-slate-500">Late arrivals</p><p className="mt-1 text-2xl font-bold text-slate-950">{flag.lateDays}</p></div></div>
+    <div className="mt-4 rounded-xl border border-white/80 bg-white/70 p-3"><p className="text-xs font-medium text-slate-500">Unapproved absences</p><p className="mt-1 text-2xl font-bold text-slate-950">{flag.absenceDays}</p></div>
     <p className="mt-3 text-xs leading-5 text-slate-500">This status supports awareness and human review. Contact your administrator if a record appears incorrect.</p>
   </section>
 }
@@ -309,7 +308,7 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 }
 
 function Status({ value }: { value: string }) {
-  const good = ['approved', 'paid', 'Present', 'active'].includes(value)
+  const good = ['approved', 'paid', 'Present', 'Idle', 'active'].includes(value)
   const bad = ['rejected', 'Absent'].includes(value)
   const label = value === 'processing' ? 'Ready to pay' : value === 'rejected' ? 'Payment on hold' : value === 'carried_over' ? 'Carried to next period' : value
   return <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold capitalize ${good ? 'bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200' : bad ? 'bg-rose-50 text-rose-700 ring-1 ring-rose-200' : 'bg-amber-50 text-amber-700 ring-1 ring-amber-200'}`}>{label}</span>

@@ -1,6 +1,5 @@
 export const ADDITION_MAX = 1000000;
 export const HOURLY_RATE_MAX = 10000;
-export const GRACE_MINUTES_MAX = 180;
 const idLengths = { SSS: [10], PhilHealth: [12], 'Pag-IBIG': [12], TIN: [9, 12, 14] };
 export const identifierLengths = (type) => Object.hasOwn(idLengths, type) ? idLengths[type] : null;
 export function identifierInput(type, value) {
@@ -29,7 +28,6 @@ export function identifiersValidationError(identifiers) {
   return null;
 }
 export function settingsNumbersValidationError(settings) {
-  if (!validBoundedNumber(settings?.shift?.lateGraceMinutes, 0, GRACE_MINUTES_MAX, 0)) return 'Grace period must be a whole number from 0 to 180 minutes.';
   for (const type of ['regular', 'extra', 'manager', 'supervisor']) {
     if (!validBoundedNumber(settings?.payroll?.hourlyRates?.[type], 1, HOURLY_RATE_MAX)) return 'Hourly rates must be from 1 to 10,000 with at most 2 decimal places.';
   }
