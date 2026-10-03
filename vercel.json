@@ -3,6 +3,14 @@
     {
       "source": "/api/:path*",
       "destination": "https://workpulse-backend-c8f1.onrender.com/api/:path*"
+    },
+    {
+      "source": "/overview",
+      "destination": "/index.html"
+    },
+    {
+      "source": "/kiosk",
+      "destination": "/index.html"
     }
   ]
 }
