@@ -104,7 +104,8 @@ async function startServer() {
         db.collection('cash_advances').createIndex({ employeeId: 1, date: -1 }),
         db.collection('cash_advances').createIndex({ id: 1 }, { unique: true }),
         db.collection('cash_advances').createIndex({ requestId: 1 }, { unique: true, sparse: true }),
-        db.collection('cash_advances').createIndex({ employeeId: 1, issuePeriod: 1 }, { unique: true, partialFilterExpression: { issuePeriod: { $exists: true }, reversedAt: { $exists: false } } }),
+        // Null equality includes missing fields and is supported in partial indexes.
+        db.collection('cash_advances').createIndex({ employeeId: 1, issuePeriod: 1 }, { unique: true, partialFilterExpression: { issuePeriod: { $exists: true }, reversedAt: null } }),
         db.collection('cash_advance_requests').createIndex({ id: 1 }, { unique: true }),
         db.collection('cash_advance_requests').createIndex({ employeeId: 1 }, { unique: true, partialFilterExpression: { open: true } }),
         db.collection('cash_advance_requests').createIndex({ employeeId: 1, requestPeriod: 1 }, { unique: true, partialFilterExpression: { periodClaim: true } }),
