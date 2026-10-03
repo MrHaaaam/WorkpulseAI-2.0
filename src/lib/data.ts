@@ -13,6 +13,7 @@ export interface Employee {
   phone?: string;
   address?: string;
   identifiers?: { type: string; value: string; amount: number; frequency?: "quarterly" | "per-payroll"; eligibleFromQuarter?: string; frequencyHistory?: { fromQuarter: string; frequency: "quarterly" | "per-payroll" }[] }[];
+  salaryAddition?: { amount: number; frequency: "quarterly" | "per-payroll"; eligibleFromQuarter?: string; frequencyHistory?: { fromQuarter: string; frequency: "quarterly" | "per-payroll" }[] };
 }
 
 export const employees: Employee[] = [

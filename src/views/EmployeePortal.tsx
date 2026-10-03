@@ -9,6 +9,8 @@ import { DateNavigator } from '../components/DateNavigator'
 import { LeaveDatePicker } from '../components/LeaveDatePicker'
 import { Dialog, DialogClose, DialogHeader } from '../components/ui/Dialog'
 import { Button } from '../components/ui/Button'
+import { EmployeeCashAdvancePanel, type CashAdvanceRequest, type CashAdvanceSummary } from './EmployeeCashAdvancePanel'
+import { EmployeeCalendar } from './EmployeeCalendar'
 
 type EmployeeProfile = {
   id: string; name: string; email?: string; phone?: string; address?: string; createdAt?: string;
@@ -18,11 +20,11 @@ type EmployeeProfile = {
 type AttendanceSession = { checkIn: string; checkOut?: string | null; autoClockedOut?: boolean }
 type Attendance = { date: string; checkIn?: string; checkOut?: string; sessions?: AttendanceSession[]; status: string; autoClockedOut?: boolean }
 type Leave = { id: string; leaveType: string; startDate: string; endDate: string; requestedDates?: string[]; approvedDates?: string[]; totalDays: number; reason: string; status: string }
-type Payroll = { id: string; amount?: number; grossAmount?: number; currentAmount?: number; carryOverAmount?: number; additions?: { label: string; value: number }[]; carriedQuarterlyAdditions?: { label: string; value: number }[]; hoursWorked?: number; hourlyRate?: number; rateBreakdown?: { rate: number; hours: number; amount: number }[]; status: string; periodStart?: string; paidAt?: string; warnings?: string[] }
+type Payroll = { id: string; amount?: number; advanceDeduction?: number; grossAmount?: number; currentAmount?: number; carryOverAmount?: number; rolledInto?: string; additions?: { label: string; value: number }[]; carriedQuarterlyAdditions?: { label: string; value: number }[]; hoursWorked?: number; hourlyRate?: number; rateBreakdown?: { rate: number; hours: number; amount: number }[]; status: string; periodStart?: string; paidAt?: string; warnings?: string[] }
 type AttendanceFlag = { tier: 'green' | 'orange' | 'red'; absenceDays: number; periodStart: string; periodEnd: string }
 type WorkSchedule = { workWeekdays: number[]; scheduleOverrides: { date: string; working: boolean; kind?: string }[]; startTime?: string; autoClockOutTime?: string }
-type Workspace = { profile: EmployeeProfile; attendance: Attendance[]; leaveRequests: Leave[]; payroll: Payroll[]; attendanceFlag: AttendanceFlag; workSchedule: WorkSchedule }
-type Section = 'overview' | 'attendance' | 'leave' | 'payroll' | 'profile'
+type Workspace = { cashAdvance?: CashAdvanceSummary; cashAdvanceMax?: number; cashAdvanceRequests?: CashAdvanceRequest[]; profile: EmployeeProfile; attendance: Attendance[]; leaveRequests: Leave[]; payroll: Payroll[]; attendanceFlag: AttendanceFlag; workSchedule: WorkSchedule }
+type Section = 'overview' | 'calendar' | 'attendance' | 'leave' | 'payroll' | 'profile'
 
 const money = (value: number | undefined) => new Intl.NumberFormat('en-PH', { style: 'currency', currency: 'PHP' }).format(Number(value || 0))
 const formatDate = (value?: string) => value ? new Date(`${value.slice(0, 10)}T00:00:00`).toLocaleDateString('en-PH', { month: 'short', day: 'numeric', year: 'numeric' }) : '—'
@@ -42,6 +44,7 @@ function attendanceSessions(record: Attendance) {
 
 const sectionCopy: Record<Section, { eyebrow: string; title: string; description: string }> = {
   overview: { eyebrow: 'Employee workspace', title: 'Overview', description: 'A simple summary of your attendance, leave, payroll, and account.' },
+  calendar: { eyebrow: 'Your schedule', title: 'My Calendar', description: 'Review workdays, rest days, holidays, idle days, leave, and attendance in one place.' },
   attendance: { eyebrow: 'Time records', title: 'My Attendance', description: 'Review all three possible time-in and time-out sessions for each workday.' },
   leave: { eyebrow: 'Time away', title: 'Leave Requests', description: 'Send a leave request to your administrator.' },
   payroll: { eyebrow: 'Pay records', title: 'My Payroll', description: 'See your prepared payouts, carried balances, and payment status.' },
@@ -87,7 +90,8 @@ export function EmployeePortal() {
     const timer = window.setInterval(refresh, 60_000)
     const visibility = () => { if (document.visibilityState === 'visible') void loadWorkspace() }
     document.addEventListener('visibilitychange', visibility)
-    return () => { window.clearInterval(timer); document.removeEventListener('visibilitychange', visibility) }
+    window.addEventListener('focus', visibility)
+    return () => { window.clearInterval(timer); document.removeEventListener('visibilitychange', visibility); window.removeEventListener('focus', visibility) }
   }, [loadWorkspace])
   const attendanceSummary = useMemo(() => {
     const records = workspace?.attendance ?? []
@@ -162,6 +166,7 @@ export function EmployeePortal() {
   const initials = profile.name.split(/\s+/).filter(Boolean).map((part) => part[0]).join('').slice(0, 2).toUpperCase()
   const nav = [
     { key: 'overview' as const, label: 'Overview', icon: LayoutDashboard },
+    { key: 'calendar' as const, label: 'My Calendar', icon: CalendarDays },
     { key: 'attendance' as const, label: 'My Attendance', icon: Clock3 },
     { key: 'leave' as const, label: 'Leave Requests', icon: CalendarDays },
     { key: 'payroll' as const, label: 'My Payroll', icon: WalletCards },
@@ -220,7 +225,9 @@ export function EmployeePortal() {
           <Panel title={formatDate(attendanceDate)} subtitle="Up to three complete time-in and time-out sessions per day"><AttendanceRows records={selectedAttendance} showDate={false} /></Panel>
         </div>}
 
-        {section === 'payroll' && <Panel title="Payroll history" subtitle="Open any pay period to view or print your personal payslip"><DataTable headers={['Pay period', 'Current pay', 'Carried balance', 'Total payout', 'Status', 'Summary']} rows={workspace.payroll.map((item) => [formatDate(item.periodStart), money(item.currentAmount), money(item.carryOverAmount), <strong key={`${item.id}-amount`} className="text-slate-900">{money(item.amount)}</strong>, <Status key={`${item.id}-status`} value={item.status} />, <button key={`${item.id}-view`} type="button" onClick={() => setSelectedPayrollId(item.id)} className="inline-flex h-9 items-center gap-2 whitespace-nowrap rounded-lg border border-violet-200 bg-violet-50 px-3 text-xs font-semibold text-violet-700 hover:bg-violet-100 focus:outline-none focus:ring-4 focus:ring-violet-200"><Eye className="h-4 w-4" />View summary</button>])} empty="No payroll records yet." /></Panel>}
+        {section === 'calendar' && <EmployeeCalendar refreshKey={lastUpdated?.getTime() ?? 0} />}
+
+        {section === 'payroll' && <div className="space-y-5"><Panel title="Payroll history" subtitle="Open any pay period to view or print your personal payslip"><DataTable headers={['Pay period', 'Current pay', 'Carried balance', 'Total payout', 'Status', 'Summary']} rows={workspace.payroll.map((item) => [formatDate(item.periodStart), money(item.currentAmount), money(item.carryOverAmount), <strong key={`${item.id}-amount`} className="text-slate-900">{money(item.amount)}</strong>, <Status key={`${item.id}-status`} value={item.status} />, <button key={`${item.id}-view`} type="button" onClick={() => setSelectedPayrollId(item.id)} className="inline-flex h-9 items-center gap-2 whitespace-nowrap rounded-lg border border-violet-200 bg-violet-50 px-3 text-xs font-semibold text-violet-700 hover:bg-violet-100 focus:outline-none focus:ring-4 focus:ring-violet-200"><Eye className="h-4 w-4" />View summary</button>])} empty="No payroll records yet." /></Panel><EmployeeCashAdvancePanel maxAmount={workspace.cashAdvanceMax} payroll={workspace.payroll} summary={workspace.cashAdvance} requests={workspace.cashAdvanceRequests || []} onChanged={loadWorkspace}/></div>}
 
         {section === 'leave' && <div className="grid gap-5 xl:grid-cols-[.82fr_1.18fr]">
           <Panel title="Request leave" subtitle="Your administrator will review the dates you select"><form onSubmit={submitLeave} className="mt-5 space-y-4"><Field label="Leave type"><select value={leaveDraft.leaveType} onChange={(event) => setLeaveDraft((current) => ({ ...current, leaveType: event.target.value }))} className="input"><option>Annual Leave</option><option>Sick Leave</option><option>Personal Leave</option><option>Maternity Leave</option></select></Field><LeaveDatePicker selected={leaveDraft.requestedDates} workSchedule={workspace.workSchedule} onChange={(requestedDates)=>setLeaveDraft(current=>({...current,requestedDates}))}/><Field label="Reason"><textarea required minLength={5} maxLength={500} rows={4} value={leaveDraft.reason} onChange={(event) => setLeaveDraft((current) => ({ ...current, reason: event.target.value }))} className="input h-auto py-3" placeholder="Briefly explain your request" /></Field><button disabled={submitting||leaveDraft.requestedDates.length===0} className="flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-[#8642ED] text-sm font-semibold text-white shadow-lg shadow-violet-600/15 hover:bg-violet-700 disabled:opacity-60"><Send className="h-4 w-4" />{submitting ? 'Submitting...' : `Submit ${leaveDraft.requestedDates.length} ${leaveDraft.requestedDates.length===1?'date':'dates'}`}</button></form></Panel>
@@ -267,9 +274,9 @@ function EmployeePayslip({ profile, payroll, onClose }: { profile: EmployeeProfi
         <div className="space-y-5 px-6 py-6 sm:px-8">
           <div className="flex flex-wrap items-center justify-between gap-4 rounded-2xl border border-violet-200 bg-violet-50 p-4"><div><p className="font-bold text-slate-950">{profile.name}</p><p className="mt-0.5 text-sm text-slate-600">Employee ID: {profile.id}</p></div><Status value={payroll.status} /></div>
           {payroll.warnings?.length ? <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4"><p className="font-semibold text-amber-900">Attendance reminder</p>{payroll.warnings.map((warning) => <p key={warning} className="mt-1 text-sm text-amber-800">• {warning}</p>)}</div> : null}
-          <div className="grid gap-3 sm:grid-cols-3"><PayslipStat label="Hours worked" value={`${Number(payroll.hoursWorked || 0).toFixed(2)} hours`} /><PayslipStat label="Hourly rate" value={payroll.rateBreakdown&&payroll.rateBreakdown.length>1?'Multiple rates':money(payroll.rateBreakdown?.[0]?.rate??payroll.hourlyRate)} /><PayslipStat label="Current earnings" value={money(payroll.currentAmount)} /></div>
+          <div className="grid gap-3 sm:grid-cols-3"><PayslipStat label="Hours worked" value={`${Number(payroll.hoursWorked || 0).toFixed(2)} hours`} /><PayslipStat label="Hourly rate" value={payroll.rateBreakdown&&payroll.rateBreakdown.length>1?'Multiple rates':money(payroll.rateBreakdown?.[0]?.rate??payroll.hourlyRate)} /><PayslipStat label="Current pay after advance" value={money(payroll.currentAmount)} /></div>
           {payroll.rateBreakdown&&payroll.rateBreakdown.length>1&&<div className="rounded-xl bg-slate-50 p-3 text-xs text-slate-700">{payroll.rateBreakdown.map(line=><p key={line.rate}>{line.hours.toFixed(2)} hours at {money(line.rate)}/hour: {money(line.amount)}</p>)}</div>}
-          <div className="overflow-hidden rounded-2xl border border-slate-200"><PayslipMoney label="Attendance-based pay" value={Number(payroll.grossAmount || 0)} />{additions.map((item, index) => <PayslipMoney key={`${item.label}-${index}`} label={item.label} value={item.value} plus />)}{Number(payroll.carryOverAmount || 0) > 0 && <PayslipMoney label="Carried unpaid balance" value={Number(payroll.carryOverAmount)} plus />}{(payroll.carriedQuarterlyAdditions ?? []).map(item => <p key={`carried-${item.label}`} className="px-4 py-1 text-xs text-slate-500">Included in carried balance: {item.label} - {money(item.value)}</p>)}<div className="flex items-center justify-between gap-4 bg-emerald-50 px-4 py-5"><span className="font-bold text-emerald-950">Total payout</span><span className="text-2xl font-bold text-emerald-700">{money(payroll.amount)}</span></div></div>
+          <div className="overflow-hidden rounded-2xl border border-slate-200"><PayslipMoney label="Attendance-based pay" value={Number(payroll.grossAmount || 0)} />{additions.map((item, index) => <PayslipMoney key={`${item.label}-${index}`} label={item.label} value={item.value} plus />)}{Number(payroll.advanceDeduction || 0) > 0 && <PayslipMoney label="Cash advance repayment" value={-Number(payroll.advanceDeduction)} />}{Number(payroll.carryOverAmount || 0) > 0 && <PayslipMoney label="Carried unpaid balance" value={Number(payroll.carryOverAmount)} plus />}{(payroll.carriedQuarterlyAdditions ?? []).map(item => <p key={`carried-${item.label}`} className="px-4 py-1 text-xs text-slate-500">Included in carried balance: {item.label} - {money(item.value)}</p>)}<div className="flex items-center justify-between gap-4 bg-emerald-50 px-4 py-5"><span className="font-bold text-emerald-950">Total payout</span><span className="text-2xl font-bold text-emerald-700">{money(payroll.amount)}</span></div></div>
           <div className="grid gap-2 text-sm text-slate-600 sm:grid-cols-2"><p><span className="font-semibold text-slate-800">Payroll status:</span> <span className="capitalize">{payroll.status.replace('_', ' ')}</span></p><p><span className="font-semibold text-slate-800">Payment date:</span> {payroll.paidAt ? new Date(payroll.paidAt).toLocaleString('en-PH') : 'Not paid yet'}</p></div>
           <div className="no-print flex flex-wrap justify-end gap-2"><button type="button" onClick={onClose} className="h-11 rounded-xl border border-slate-300 px-4 text-sm font-semibold text-slate-700 hover:bg-slate-50">Close</button><button type="button" onClick={() => window.print()} className="flex h-11 items-center gap-2 rounded-xl bg-[#8642ED] px-4 text-sm font-semibold text-white hover:bg-violet-700"><Printer className="h-4 w-4" />Print payslip</button></div>
         </div>
@@ -310,8 +317,8 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 function Status({ value }: { value: string }) {
   const good = ['approved', 'paid', 'Present', 'Idle', 'active'].includes(value)
   const bad = ['rejected', 'Absent'].includes(value)
-  const label = value === 'processing' ? 'Ready to pay' : value === 'rejected' ? 'Payment on hold' : value === 'carried_over' ? 'Carried to next period' : value
-  return <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold capitalize ${good ? 'bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200' : bad ? 'bg-rose-50 text-rose-700 ring-1 ring-rose-200' : 'bg-amber-50 text-amber-700 ring-1 ring-amber-200'}`}>{label}</span>
+  const label = value === 'passed' ? 'Leave request passed' : value === 'processing' ? 'Ready to pay' : value === 'rejected' ? 'Payment on hold' : value === 'carried_over' ? 'Carried to next period' : value
+  return <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold capitalize ${value === 'passed' ? 'bg-slate-100 text-slate-700 ring-1 ring-slate-200' : good ? 'bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200' : bad ? 'bg-rose-50 text-rose-700 ring-1 ring-rose-200' : 'bg-amber-50 text-amber-700 ring-1 ring-amber-200'}`}>{label}</span>
 }
 
 function DataTable({ headers, rows, empty }: { headers: string[]; rows: React.ReactNode[][]; empty: string }) {

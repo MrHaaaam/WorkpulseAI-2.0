@@ -16,6 +16,7 @@ import { Badge } from "./ui/Badge";
 export type ViewKey =
   | "overview"
   | "attendance"
+  | "calendar"
   | "employees"
   | "leave"
   | "payroll"
@@ -37,10 +38,11 @@ export function AdminSidebar({ active, onNavigate, mobileOpen = false, onMobileC
   const navItems: { key: ViewKey; label: string; icon: React.ElementType }[] = [
     { key: 'overview', label: 'Overview', icon: LayoutDashboard },
     { key: 'attendance', label: 'Attendance', icon: Calendar },
+    { key: 'calendar', label: 'Calendar', icon: Calendar },
     { key: 'employees', label: 'Employee Directory', icon: Users },
     { key: 'leave', label: 'Leave Requests', icon: Calendar },
     { key: 'payroll', label: 'Payroll', icon: ReceiptText },
-    { key: 'insights', label: 'AI Insights', icon: Sparkles },
+    { key: 'insights', label: 'Insights', icon: Sparkles },
     { key: 'settings', label: 'System Settings', icon: Settings },
     { key: 'admin', label: 'Admin Controls', icon: Settings },
   ];

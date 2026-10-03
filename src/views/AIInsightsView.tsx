@@ -16,7 +16,7 @@ import { usePagination } from "../hooks/usePagination";
 
 type Readiness = "ready" | "limited";
 type InsightKey = "forecast" | "risk" | "anomaly" | "verification";
-type ForecastDay = { date: string; expectedPresent: number; attendanceRate: number; weekdayAverage: number; weekdaySamples: number; trendDirection: "stable" | "increasing" | "decreasing"; explanation: string };
+type ForecastDay = { date: string; expectedPresent: number; attendanceRate: number; working: boolean; weekdayAverage: number; adjustment: number; weekdaySamples: number; pastDates: { date: string; value: number; used: boolean }[]; trendDirection: "stable" | "increasing" | "decreasing"; explanation: string };
 type RiskEmployee = { employeeId: string; name: string; tier: "green" | "orange" | "red"; absenceDays: number; absenceDates: string[] };
 type Anomaly = { employeeId: string; name: string; date: string; time: string; score: number; deviationMinutes: number };
 type Scanner = { deviceUid: string; scans: number; averageScore: number; health: number; status: "healthy" | "attention" | "critical" };
@@ -29,6 +29,8 @@ type Insights = {
   verification: { version: string; status: Readiness; matchesAnalyzed: number; threshold: number; averageHealth: number; summary: string; scanners: Scanner[]; recentMatches: RecentMatch[]; evaluation: EvaluationSummary };
   disclaimer: string;
 };
+
+let insightsPageCache: { token: string | null; data: Insights } | null = null;
 
 const modelMeta = {
   forecast: { title: "Expected Attendance", label: "Attendance outlook", icon: TrendingUp, accent: "violet", formula: "Uses recent attendance patterns", description: "Shows an estimate of how many employees may be present during the next seven days." },
@@ -82,6 +84,9 @@ function MetricCard({ modelKey, selected, insights, onSelect }: { modelKey: Insi
 }
 
 function ForecastPanel({ data }: { data: Insights["forecast"] }) {
+  const [selectedDate, setSelectedDate] = useState(data.forecast[0]?.date);
+  const selectedDay = data.forecast.find((day) => day.date === selectedDate) || data.forecast[0];
+  const workingDays = data.forecast.filter((day) => day.working);
   return <div className="space-y-5">
     <div className="flex gap-3 rounded-xl border border-violet-200 bg-violet-50 px-4 py-3 text-sm leading-6 text-violet-950"><TrendingUp className="mt-0.5 shrink-0 text-violet-600" size={17} aria-hidden="true" /><p><strong>This is an estimate, not a final result.</strong> It uses recent attendance patterns and may change when new records are added.</p></div>
     {data.dataStale && <div className="flex gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm leading-6 text-amber-950"><AlertTriangle className="mt-0.5 shrink-0 text-amber-600" size={17} aria-hidden="true" /><p><strong>Attendance data is not current.</strong> {data.latestDataDate ? <>The newest attendance record is from {shortDate(data.latestDataDate)}.</> : <>No attendance records are available.</>} The projection starts tomorrow, but it will remain limited until newer clock-ins are recorded.</p></div>}
@@ -89,18 +94,43 @@ function ForecastPanel({ data }: { data: Insights["forecast"] }) {
       <Stat label="Clock-in history" value={`${data.clockInDays} days`} />
       <Stat label="Active workforce" value={String(data.activeEmployees)} />
       <Stat label="Tomorrow" value={`${data.forecast[0]?.expectedPresent ?? 0} expected`} />
-      <Stat label="7-day average" value={`${Math.round(data.forecast.reduce((sum, item) => sum + item.attendanceRate, 0) / Math.max(1, data.forecast.length))}%`} />
+      <Stat label="Average on workdays" value={workingDays.length ? `${Math.round(workingDays.reduce((sum, item) => sum + item.attendanceRate, 0) / workingDays.length)}%` : "No workdays"} />
     </div>
     <div className="rounded-2xl border border-slate-200 bg-slate-50/70 p-4">
-      <div className="mb-4 flex items-center gap-2 text-sm font-semibold text-slate-700"><CalendarDays size={16} className="text-violet-600" /> Seven-day projection</div>
-      <div className="grid grid-cols-7 gap-2" role="list" aria-label="Expected attendance for the next seven days">
-        {data.forecast.map((day) => <div key={day.date} role="listitem" tabIndex={0} aria-label={`${shortDate(day.date)}: ${day.expectedPresent} employees expected, ${day.attendanceRate} percent. ${day.explanation}`} className="group relative flex min-w-0 flex-col items-center rounded-lg outline-none focus-visible:ring-2 focus-visible:ring-violet-500">
-          <div aria-hidden="true" className="flex h-28 w-full items-end overflow-hidden rounded-lg bg-white ring-1 ring-slate-200"><div className="w-full rounded-t-md bg-gradient-to-t from-violet-600 to-fuchsia-400 transition-all" style={{ height: `${Math.max(5, day.attendanceRate)}%` }} /></div>
+      <div className="mb-4 flex items-center gap-2 text-sm font-semibold text-slate-700"><CalendarDays size={16} className="text-violet-600" /> Seven-day projection <span className="ml-auto text-xs font-normal text-slate-500">Choose a day to see why</span></div>
+      <div className="grid grid-cols-7 gap-2" role="group" aria-label="Expected attendance for the next seven days">
+        {data.forecast.map((day) => <button key={day.date} type="button" onClick={() => setSelectedDate(day.date)} aria-pressed={selectedDay?.date === day.date} aria-label={`${shortDate(day.date)}: ${day.working ? `${day.expectedPresent} employees expected` : "No work scheduled"}. Show past records.`} className={cn("group relative flex min-w-0 cursor-pointer flex-col items-center rounded-lg p-1 outline-none transition-all duration-150 hover:-translate-y-1 hover:bg-violet-50 hover:shadow-md focus-visible:ring-2 focus-visible:ring-violet-500", selectedDay?.date === day.date && "bg-violet-100 ring-2 ring-violet-500")}>
+          <div aria-hidden="true" className="flex h-28 w-full items-end overflow-hidden rounded-lg bg-white ring-1 ring-slate-200"><div className="w-full rounded-t-md bg-gradient-to-t from-violet-600 to-fuchsia-400 transition-all" style={{ height: day.working ? `${Math.max(5, day.attendanceRate)}%` : "0%" }} /></div>
           <span className="mt-2 text-[10px] font-semibold text-slate-600 sm:text-xs">{shortDate(day.date).split(",")[0]}</span>
-          <span className="text-[10px] text-slate-400">{day.expectedPresent}</span>
-          <div role="tooltip" className="pointer-events-none absolute bottom-full left-1/2 z-20 mb-2 hidden w-64 -translate-x-1/2 rounded-xl bg-slate-950 p-3 text-left text-xs leading-5 text-white shadow-xl group-hover:block group-focus:block"><strong>Why this estimate?</strong><span className="mt-1 block text-slate-200">{day.explanation}</span></div>
-        </div>)}
+          <span className="text-[10px] text-slate-400">{day.working ? day.expectedPresent : "Closed"}</span>
+        </button>)}
       </div>
+      {selectedDay && <div className="mt-5 rounded-2xl border border-slate-200 bg-white shadow-sm" aria-live="polite">
+        <div className="rounded-t-2xl border-b border-slate-100 bg-gradient-to-r from-violet-50 to-white px-5 py-5 sm:px-6">
+          <p className="text-xs font-semibold uppercase tracking-[0.16em] text-violet-700">Forecast breakdown</p>
+          <h3 className="mt-1 text-lg font-semibold tracking-tight text-slate-900">{shortDate(selectedDay.date)} · {selectedDay.working ? `${selectedDay.expectedPresent} employees expected` : "No work scheduled"}</h3>
+          <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-600">{selectedDay.working ? data.status === "ready" ? "The estimate starts with attendance on the same weekday, then adjusts for the recent trend." : "This estimate uses the average for the same weekday while more recent attendance data is collected." : "The work schedule or an idle day marks this date as closed."}</p>
+        </div>
+        <div className="sticky top-16 z-20 border-b border-slate-200 bg-white/95 px-5 py-3 shadow-sm backdrop-blur sm:px-6">
+          <p className="mb-2 text-xs font-medium text-slate-500">Switch forecast day</p>
+          <div className="flex gap-2 overflow-x-auto pb-1" role="group" aria-label="Switch forecast day">
+            {data.forecast.map((day) => <button key={day.date} type="button" onClick={() => setSelectedDate(day.date)} aria-pressed={selectedDay.date === day.date} className={cn("shrink-0 cursor-pointer rounded-lg border px-3 py-2 text-xs font-medium transition-all duration-150 hover:-translate-y-0.5 hover:border-violet-400 hover:bg-violet-50 hover:text-violet-800 hover:shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500", selectedDay.date === day.date ? "border-violet-500 bg-violet-100 text-violet-800 shadow-sm" : "border-slate-200 bg-white text-slate-600")}>{shortDate(day.date).split(",")[0]} <span className="ml-1 tabular-nums">{day.working ? day.expectedPresent : "Closed"}</span></button>)}
+          </div>
+        </div>
+        {selectedDay.working && <div className="grid grid-cols-1 divide-y divide-slate-100 border-b border-slate-100 sm:grid-cols-3 sm:divide-x sm:divide-y-0">
+          <div className="px-5 py-4 sm:px-6"><p className="text-xs font-medium text-slate-500">Same weekday average</p><p className="mt-1 text-2xl font-semibold tabular-nums text-slate-900">{selectedDay.weekdayAverage}</p></div>
+          <div className="px-5 py-4 sm:px-6"><p className="text-xs font-medium text-slate-500">Recent trend adjustment</p><p className="mt-1 text-2xl font-semibold tabular-nums text-violet-700">{data.status === "ready" ? `${selectedDay.adjustment >= 0 ? "+" : ""}${selectedDay.adjustment}` : "—"}</p></div>
+          <div className="px-5 py-4 sm:px-6"><p className="text-xs font-medium text-slate-500">Expected attendance</p><p className="mt-1 text-2xl font-semibold tabular-nums text-slate-900">{selectedDay.expectedPresent}</p></div>
+        </div>}
+        {selectedDay.working && <p className="border-b border-slate-100 bg-violet-50/50 px-5 py-3 text-sm text-slate-700 sm:px-6"><strong className="font-semibold text-slate-900">How it is calculated:</strong> {selectedDay.weekdayAverage} average {data.status === "ready" ? `${selectedDay.adjustment >= 0 ? "+" : "−"} ${Math.abs(selectedDay.adjustment)} trend adjustment` : "+ 0 trend adjustment (limited data)"} = <strong className="font-semibold text-violet-800">{selectedDay.expectedPresent} employees expected</strong>.</p>}
+        <div className="px-5 py-5 sm:px-6">
+          <div className="mb-3 flex flex-wrap items-end justify-between gap-2"><div><h4 className="text-sm font-semibold text-slate-900">Past {shortDate(selectedDay.date).split(",")[0]}s</h4><p className="mt-1 text-xs leading-5 text-slate-500">{selectedDay.weekdaySamples} scheduled workdays in the last 90 days contributed to the weekday average. Counts are daily totals.</p></div>{selectedDay.pastDates.length >= 12 && <span className="text-xs text-slate-500">12 most recent dates shown</span>}</div>
+          <div className="overflow-x-auto rounded-xl border border-slate-200">
+            <table className="w-full min-w-[440px] text-left text-sm"><thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500"><tr><th scope="col" className="px-4 py-3 font-semibold">Date</th><th scope="col" className="px-4 py-3 text-right font-semibold">Clock-ins</th><th scope="col" className="px-4 py-3 text-right font-semibold">Forecast input</th></tr></thead><tbody>{selectedDay.pastDates.length ? selectedDay.pastDates.map((item) => <tr key={item.date} className="border-t border-slate-100 text-slate-700 even:bg-slate-50/50"><td className="px-4 py-3 font-medium text-slate-900">{shortDate(item.date)}</td><td className="px-4 py-3 text-right tabular-nums">{item.value}</td><td className="px-4 py-3 text-right"><span className={cn("inline-flex rounded-full px-2.5 py-1 text-xs font-medium", item.used ? "bg-emerald-50 text-emerald-700" : "bg-slate-100 text-slate-600")}>{item.used ? "Counted" : "Closed day"}</span></td></tr>) : <tr><td colSpan={3} className="px-4 py-6 text-center text-slate-500">No past records for this weekday yet.</td></tr>}</tbody></table>
+          </div>
+          <p className="mt-3 text-xs leading-5 text-slate-500"><strong className="font-semibold text-slate-700">Forecast input</strong> shows whether a scheduled workday was counted in the weekday average. Closed days are excluded.</p>
+        </div>
+      </div>}
     </div>
   </div>;
 }
@@ -227,9 +257,10 @@ function Stat({ label, value }: { label: string; value: string }) { return <div 
 function Empty({ text }: { text: string }) { return <div className="px-5 py-10 text-center text-sm text-slate-500">{text}</div>; }
 
 export function AIInsightsView() {
-  const [insights, setInsights] = useState<Insights | null>(null);
+  const cachedInsights = insightsPageCache?.token === sessionStorage.getItem("workpulse_token") ? insightsPageCache.data : null;
+  const [insights, setInsights] = useState<Insights | null>(cachedInsights);
   const [selected, setSelected] = useState<InsightKey>("forecast");
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(!cachedInsights);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const loadInsights = useCallback(async (manual = false) => {
@@ -237,9 +268,10 @@ export function AIInsightsView() {
     try {
       const response = await apiFetch(manual ? "/api/ai-insights?refresh=1" : "/api/ai-insights");
       const body = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(body.error || "Unable to load AI insights.");
+      if (!response.ok) throw new Error(body.error || "Unable to load Insights.");
+      insightsPageCache = { token: sessionStorage.getItem("workpulse_token"), data: body as Insights };
       setInsights(body as Insights); setError(null);
-    } catch (reason) { setError(reason instanceof Error ? reason.message : "Unable to load AI insights."); }
+    } catch (reason) { setError(reason instanceof TypeError ? "Could not connect to Insights. Please try again." : reason instanceof Error ? reason.message : "Unable to load Insights."); }
     finally { setLoading(false); setRefreshing(false); }
   }, []);
   useEffect(() => {

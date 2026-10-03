@@ -46,9 +46,13 @@ const sessionsFor = (record) => Array.isArray(record?.sessions) && record.sessio
       checkInAt: record?.checkInAt, checkOutAt: record?.checkOutAt,
     }];
 
-function forecastInsight(attendance, activeEmployees, today) {
+function forecastInsight(attendance, activeEmployees, today, schedule = {}) {
   const todayDate = utcDate(today);
   const historyStart = addDays(todayDate, -89);
+  const workWeekdays = Array.isArray(schedule.workWeekdays) ? schedule.workWeekdays : [0, 1, 2, 3, 4, 5, 6];
+  const overrides = new Map((schedule.scheduleOverrides || []).map((entry) => [entry.date, entry.working]));
+  const idleDates = new Set(schedule.idleDates || []);
+  const isWorking = (date) => !idleDates.has(date) && (overrides.get(date) ?? workWeekdays.includes(utcDate(date).getUTCDay()));
   const dated = attendance.filter((item) => {
     const date = utcDate(item.date);
     return date && date >= historyStart && date <= todayDate;
@@ -69,7 +73,8 @@ function forecastInsight(attendance, activeEmployees, today) {
       clockInDates.add(day);
     }
   }
-  const series = [...observedDates].sort().map((date) => ({ date, value: counts.get(date) || 0 }));
+  const history = [...observedDates].sort().map((date) => ({ date, value: counts.get(date) || 0, used: isWorking(date) }));
+  const series = history.filter((item) => item.used);
   const values = series.map((item) => item.value);
   // Allow a normal two-day weekend gap, but do not call an older dataset ready.
   const dataStale = !latestDataDate || latestDataDate < addDays(todayDate, -2);
@@ -95,14 +100,17 @@ function forecastInsight(attendance, activeEmployees, today) {
   const forecast = Array.from({ length: 7 }, (_, index) => {
     const date = addDays(todayDate, index + 1);
     const day = date.getUTCDay();
+    const dateKey = date.toISOString().slice(0, 10);
+    const working = isWorking(dateKey);
     const weekdayBaseline = weekdayAverages[day];
     const modelEstimate = level + (index + 1) * trend + season[day];
     const maxAdjustment = Math.max(2, weekdayBaseline * 0.15);
     const estimate = ready
       ? weekdayBaseline + clamp(modelEstimate - weekdayBaseline, -maxAdjustment, maxAdjustment)
       : weekdayBaseline;
-    const expectedPresent = Math.round(clamp(estimate, 0, activeEmployees));
+    const expectedPresent = working ? Math.round(clamp(estimate, 0, activeEmployees)) : 0;
     const weekdaySamples = series.filter((item) => utcDate(item.date).getUTCDay() === day);
+    const pastDates = history.filter((item) => utcDate(item.date).getUTCDay() === day).slice(-12).reverse();
     const weekdayAverage = Math.round(weekdayAverages[day]);
     const trendDirection = Math.abs(trend) < 0.05 ? 'stable' : trend > 0 ? 'increasing' : 'decreasing';
     const expectedLabel = `${expectedPresent} ${expectedPresent === 1 ? 'employee' : 'employees'}`;
@@ -113,10 +121,11 @@ function forecastInsight(attendance, activeEmployees, today) {
         ? 'Recent attendance has been going up.'
         : 'Recent attendance has been going down.';
     return {
-      date: date.toISOString().slice(0, 10), expectedPresent,
+      date: dateKey, expectedPresent, working,
       attendanceRate: activeEmployees ? round(expectedPresent / activeEmployees * 100) : 0,
-      weekdayAverage, weekdaySamples: weekdaySamples.length, trendDirection,
-      explanation: ready
+      weekdayAverage, adjustment: working ? expectedPresent - weekdayAverage : 0,
+      weekdaySamples: weekdaySamples.length, pastDates, trendDirection,
+      explanation: !working ? 'No work is scheduled for this day.' : ready
         ? `We expect ${expectedLabel} because usually around ${averageLabel} attended on recent ${displayWeekday(day)}s. ${trendExplanation}`
         : `We expect ${expectedLabel} because around ${averageLabel} attended on previous ${displayWeekday(day)}s. More attendance records will make this estimate clearer.`,
     };
@@ -184,9 +193,17 @@ function riskInsight(attendance, employees, leaveRequests, today) {
   const todayDate = utcDate(today);
   const periodStart = addDays(todayDate, -29).toISOString().slice(0, 10);
   const periodEnd = todayDate.toISOString().slice(0, 10);
+  const coveredLeave = leaveDateSet(leaveRequests);
+  const absencesByEmployee = new Map();
+  for (const record of attendance) {
+    const day = String(record.date).slice(0, 10);
+    if (record.status !== 'Absent' || day < periodStart || day > periodEnd || coveredLeave.get(record.employeeId)?.has(day)) continue;
+    if (!absencesByEmployee.has(record.employeeId)) absencesByEmployee.set(record.employeeId, []);
+    absencesByEmployee.get(record.employeeId).push(day);
+  }
   const rows = employees.map((employee) => {
-    const result = attendanceRiskForEmployee(attendance, employee.id, leaveRequests, today);
-    return { employeeId: employee.id, name: employee.name || employee.fullName || employee.id, ...result };
+    const absenceDates = (absencesByEmployee.get(employee.id) || []).sort();
+    return { employeeId: employee.id, name: employee.name || employee.fullName || employee.id, tier: attendanceFlagFor(absenceDates.length), absenceDays: absenceDates.length, absenceDates, periodStart, periodEnd };
   }).sort((a, b) => b.absenceDays - a.absenceDays || a.name.localeCompare(b.name));
   const flagged = rows.filter((row) => row.tier !== 'green').length;
   return {
@@ -304,12 +321,12 @@ function verificationInsight(attendance, verificationAttempts, evaluationTrials,
   };
 }
 
-export function buildAIInsights({ attendance = [], employees = [], leaveRequests = [], verificationAttempts = [], evaluationTrials = [], now = new Date(), fingerJetThreshold = 21_474 } = {}) {
+export function buildAIInsights({ attendance = [], employees = [], leaveRequests = [], verificationAttempts = [], evaluationTrials = [], schedule = {}, now = new Date(), fingerJetThreshold = 21_474 } = {}) {
   const today = isoDate(now);
   const activeEmployees = employees.filter((employee) => employee.archived !== true && employee.status !== 'inactive');
   return {
     generatedAt: now.toISOString(), today,
-    forecast: forecastInsight(attendance, activeEmployees.length, today),
+    forecast: forecastInsight(attendance, activeEmployees.length, today, schedule),
     risk: riskInsight(attendance, activeEmployees, leaveRequests, today),
     anomaly: anomalyInsight(attendance, activeEmployees),
     verification: verificationInsight(attendance, verificationAttempts, evaluationTrials, activeEmployees, fingerJetThreshold),

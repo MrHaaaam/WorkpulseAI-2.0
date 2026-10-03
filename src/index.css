@@ -90,6 +90,62 @@ code {
 @tailwind components;
 @tailwind utilities;
 
+.admin-page-header[data-compact="true"] .date-navigator {
+  width: auto;
+}
+
+.admin-page-header[data-compact="true"] .date-navigator > button:first-child,
+.admin-page-header[data-compact="true"] .date-navigator > button:last-child {
+  width: 30px;
+}
+
+.admin-page-header[data-compact="true"] .date-navigator-picker {
+  min-width: 0;
+  gap: 4px;
+  padding: 4px 6px;
+}
+
+.admin-page-header[data-compact="true"] .date-navigator-picker > span:first-child {
+  width: 24px;
+  height: 24px;
+}
+
+.admin-page-header[data-compact="true"] .date-navigator-label,
+.admin-page-header[data-compact="true"] .date-navigator-full,
+.admin-page-header[data-compact="true"] .date-navigator-choose,
+.admin-page-header[data-compact="true"] .header-button-label {
+  display: none;
+}
+
+.admin-page-header[data-compact="true"] .date-navigator-short {
+  display: block;
+}
+
+.admin-page-header[data-compact="true"] .tab-full-label {
+  display: none;
+}
+
+.admin-page-header[data-compact="true"] .tab-short-label {
+  display: inline;
+}
+
+.admin-page-header[data-compact="true"] .admin-header-actions [role="group"] button {
+  padding-left: 8px;
+  padding-right: 8px;
+}
+
+.admin-page-header[data-compact="true"] .admin-header-actions > span {
+  display: none;
+}
+
+.admin-page-header[data-compact="true"] .admin-header-actions > button {
+  flex: none;
+  width: 40px;
+  padding: 0;
+  justify-content: center;
+  font-size: 0;
+}
+
 @layer base {
   :root {
     --background: 0 0% 100%;

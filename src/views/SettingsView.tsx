@@ -10,11 +10,12 @@ import { Input, Label } from "../components/ui/Input";
 import { Button } from "../components/ui/Button";
 import { useToast } from "../components/ui/Toast";
 import { apiFetch } from "../lib/api";
+import { useAdminPasswordRetry } from "../lib/adminPasswordRetry";
 import { Dialog, DialogClose, DialogHeader } from "../components/ui/Dialog";
 
 type Settings = {
   shift: { enabled: boolean; startTime: string; workStopTime: string; autoClockOutTime: string; workDays: number; workWeekdays: number[]; scheduleOverrides: { date: string; working: boolean; kind?: "holiday" | "rest-day" | "workday" }[] };
-  payroll: { hourlyRates: { regular: number | ""; extra: number | ""; manager: number | ""; supervisor: number | "" } };
+  payroll: { hourlyRates: { regular: number | ""; extra: number | ""; manager: number | ""; supervisor: number | "" }; cashAdvanceMax: number | "" };
 };
 
 function isoDate(date: Date) {
@@ -41,14 +42,15 @@ function monthDates(month: Date) {
 }
 
 const defaults: Settings = {
-  shift: { enabled: true, startTime: "06:00", workStopTime: "18:00", autoClockOutTime: "21:00", workDays: 5, workWeekdays: [1, 2, 3, 4, 5], scheduleOverrides: [] },
-  payroll: { hourlyRates: { regular: 50, extra: 40, manager: 50, supervisor: 50 } },
+  shift: { enabled: true, startTime: "06:00", workStopTime: "18:00", autoClockOutTime: "21:00", workDays: 7, workWeekdays: [0, 1, 2, 3, 4, 5, 6], scheduleOverrides: [] },
+  payroll: { hourlyRates: { regular: 50, extra: 40, manager: 50, supervisor: 50 }, cashAdvanceMax: 1000 },
 };
 
 export function SettingsView() {
   const { toast } = useToast();
   const [settings, setSettings] = useState<Settings>(defaults);
   const [saving, setSaving] = useState(false);
+  const passwordRetrySeconds = useAdminPasswordRetry();
   const [scheduleMonth, setScheduleMonth] = useState(() => { const now = new Date(); return new Date(now.getFullYear(), now.getMonth(), 1); });
   const [scheduleMode, setScheduleMode] = useState<"holiday" | "rest-day" | "workday">("holiday");
   const [passwordDialogOpen, setPasswordDialogOpen] = useState(false);
@@ -63,7 +65,7 @@ export function SettingsView() {
       .then((response) => response.ok ? response.json() : Promise.reject())
       .then((data) => setSettings({
         shift: { ...defaults.shift, ...(data.shift ?? {}) },
-        payroll: { hourlyRates: { ...defaults.payroll.hourlyRates, ...(data.payroll?.hourlyRates ?? {}) } },
+        payroll: { hourlyRates: { ...defaults.payroll.hourlyRates, ...(data.payroll?.hourlyRates ?? {}) }, cashAdvanceMax: data.payroll?.cashAdvanceMax ?? defaults.payroll.cashAdvanceMax },
       }))
       .catch(() => undefined);
   }, []);
@@ -73,9 +75,13 @@ export function SettingsView() {
   };
 
   const save = async () => {
-    if (!adminPassword) return;
+    if (!adminPassword || passwordRetrySeconds > 0) return;
     if (Object.values(settings.payroll.hourlyRates).some(rate => rate === "")) {
       toast({ title: "Complete the number fields", description: "Enter the hourly-rate values before saving.", variant: "error" });
+      return;
+    }
+    if (settings.payroll.cashAdvanceMax === "" || Number(settings.payroll.cashAdvanceMax) < 1 || Number(settings.payroll.cashAdvanceMax) > 1000000) {
+      toast({ title: "Check cash advance limit", description: "Enter an amount from ₱1 to ₱1,000,000.", variant: "error" });
       return;
     }
     const numberError = settingsNumbersValidationError(settings);
@@ -93,11 +99,11 @@ export function SettingsView() {
       if (!response.ok) throw new Error(saved.error || "The server could not save your settings.");
       setSettings({
         shift: { ...defaults.shift, ...(saved.shift ?? {}) },
-        payroll: { hourlyRates: { ...defaults.payroll.hourlyRates, ...(saved.payroll?.hourlyRates ?? {}) } },
+        payroll: { hourlyRates: { ...defaults.payroll.hourlyRates, ...(saved.payroll?.hourlyRates ?? {}) }, cashAdvanceMax: saved.payroll?.cashAdvanceMax ?? defaults.payroll.cashAdvanceMax },
       });
       setAdminPassword("");
       setPasswordDialogOpen(false);
-      toast({ title: "Settings saved", description: "The company rules are now up to date.", variant: "success" });
+      toast({ title: "Settings saved", description: saved.clearedIdleDays?.length ? `${saved.clearedIdleDays.length} idle ${saved.clearedIdleDays.length === 1 ? 'day was' : 'days were'} removed because the dates are now holidays or rest days.` : "The company rules are now up to date.", variant: "success" });
     } catch (reason) {
       toast({ title: "Settings not saved", description: reason instanceof Error ? reason.message : "Please try again.", variant: "error" });
     } finally {
@@ -110,6 +116,7 @@ export function SettingsView() {
       <AdminPageHeader title="System Settings" description="Set attendance schedules and hourly pay rates. Save when finished." icon={Settings} />
 
       <div className="grid grid-cols-1 items-start gap-6 xl:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)]">
+        <div className="min-w-0 space-y-6">
         <Card className="min-w-0 overflow-hidden">
           <CardHeader className="border-b border-slate-100 bg-slate-50/70">
             <div className="flex items-start justify-between gap-4">
@@ -165,6 +172,22 @@ export function SettingsView() {
           </CardContent>
         </Card>
         <Card className="min-w-0 overflow-hidden">
+          <CardHeader className="border-b border-violet-100 bg-violet-50/50">
+            <div className="flex items-center gap-3">
+              <span className="rounded-xl bg-violet-100 p-2 text-violet-700"><WalletCards className="h-5 w-5" /></span>
+              <div><CardTitle>Cash advance limit</CardTitle><CardDescription>Set the most an employee can receive in one 15-day payroll period.</CardDescription></div>
+            </div>
+          </CardHeader>
+          <CardContent className="space-y-3 pt-5">
+            <div className="max-w-sm space-y-2">
+              <Label htmlFor="cash-advance-max">Maximum per employee per payroll period (₱)</Label>
+              <BoundedNumberInput id="cash-advance-max" min="1" max={1000000} value={settings.payroll.cashAdvanceMax} onChange={event => setSettings(current => ({ ...current, payroll: { ...current.payroll, cashAdvanceMax: event.target.value === "" ? "" : Number(event.target.value) } }))} />
+            </div>
+            <p className="text-sm text-slate-500">Employees may request again next period even with debt. Repayment stays at up to ₱200 total per paid payroll.</p>
+          </CardContent>
+        </Card>
+        </div>
+        <Card className="min-w-0 overflow-hidden">
           <CardHeader className="border-b border-slate-100 bg-slate-50/70">
             <div className="flex gap-3">
               <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-amber-50">
@@ -181,10 +204,10 @@ export function SettingsView() {
               Allowed: PHP 1-10,000 per hour, up to 2 decimal places. New rates update future and unpaid payroll calculations. Paid payroll remains unchanged.
             </div>
             <div className="grid gap-4 sm:grid-cols-2">
-              <div className="space-y-2"><Label htmlFor="regular-hourly-rate">Regular employee rate</Label><div className="relative"><span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-slate-500">₱</span><BoundedNumberInput id="regular-hourly-rate" className="pl-8 pr-16" min="1" max={HOURLY_RATE_MAX} title="1 to 10,000; up to 2 decimal places" value={settings.payroll.hourlyRates.regular} onChange={(event) => setSettings((current) => ({ ...current, payroll: { hourlyRates: { ...current.payroll.hourlyRates, regular: event.target.value === "" ? "" : Number(event.target.value) } } }))} /><span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-xs text-slate-400">/ hour</span></div></div>
-              <div className="space-y-2"><Label htmlFor="extra-hourly-rate">Extra employee rate</Label><div className="relative"><span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-slate-500">₱</span><BoundedNumberInput id="extra-hourly-rate" className="pl-8 pr-16" min="1" max={HOURLY_RATE_MAX} title="1 to 10,000; up to 2 decimal places" value={settings.payroll.hourlyRates.extra} onChange={(event) => setSettings((current) => ({ ...current, payroll: { hourlyRates: { ...current.payroll.hourlyRates, extra: event.target.value === "" ? "" : Number(event.target.value) } } }))} /><span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-xs text-slate-400">/ hour</span></div></div>
-              <div className="space-y-2"><Label htmlFor="manager-hourly-rate">Manager employee rate</Label><div className="relative"><span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-slate-500">₱</span><BoundedNumberInput id="manager-hourly-rate" className="pl-8 pr-16" min="1" max={HOURLY_RATE_MAX} title="1 to 10,000; up to 2 decimal places" value={settings.payroll.hourlyRates.manager} onChange={(event) => setSettings((current) => ({ ...current, payroll: { hourlyRates: { ...current.payroll.hourlyRates, manager: event.target.value === "" ? "" : Number(event.target.value) } } }))} /><span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-xs text-slate-400">/ hour</span></div></div>
-              <div className="space-y-2"><Label htmlFor="supervisor-hourly-rate">Supervisor employee rate</Label><div className="relative"><span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-slate-500">₱</span><BoundedNumberInput id="supervisor-hourly-rate" className="pl-8 pr-16" min="1" max={HOURLY_RATE_MAX} title="1 to 10,000; up to 2 decimal places" value={settings.payroll.hourlyRates.supervisor} onChange={(event) => setSettings((current) => ({ ...current, payroll: { hourlyRates: { ...current.payroll.hourlyRates, supervisor: event.target.value === "" ? "" : Number(event.target.value) } } }))} /><span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-xs text-slate-400">/ hour</span></div></div>
+              <div className="space-y-2"><Label htmlFor="regular-hourly-rate">Regular employee rate</Label><div className="relative"><span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-slate-500">₱</span><BoundedNumberInput id="regular-hourly-rate" className="pl-8 pr-16" min="1" max={HOURLY_RATE_MAX} title="1 to 10,000; up to 2 decimal places" value={settings.payroll.hourlyRates.regular} onChange={(event) => setSettings((current) => ({ ...current, payroll: { ...current.payroll, hourlyRates: { ...current.payroll.hourlyRates, regular: event.target.value === "" ? "" : Number(event.target.value) } } }))} /><span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-xs text-slate-400">/ hour</span></div></div>
+              <div className="space-y-2"><Label htmlFor="extra-hourly-rate">Extra employee rate</Label><div className="relative"><span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-slate-500">₱</span><BoundedNumberInput id="extra-hourly-rate" className="pl-8 pr-16" min="1" max={HOURLY_RATE_MAX} title="1 to 10,000; up to 2 decimal places" value={settings.payroll.hourlyRates.extra} onChange={(event) => setSettings((current) => ({ ...current, payroll: { ...current.payroll, hourlyRates: { ...current.payroll.hourlyRates, extra: event.target.value === "" ? "" : Number(event.target.value) } } }))} /><span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-xs text-slate-400">/ hour</span></div></div>
+              <div className="space-y-2"><Label htmlFor="manager-hourly-rate">Manager employee rate</Label><div className="relative"><span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-slate-500">₱</span><BoundedNumberInput id="manager-hourly-rate" className="pl-8 pr-16" min="1" max={HOURLY_RATE_MAX} title="1 to 10,000; up to 2 decimal places" value={settings.payroll.hourlyRates.manager} onChange={(event) => setSettings((current) => ({ ...current, payroll: { ...current.payroll, hourlyRates: { ...current.payroll.hourlyRates, manager: event.target.value === "" ? "" : Number(event.target.value) } } }))} /><span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-xs text-slate-400">/ hour</span></div></div>
+              <div className="space-y-2"><Label htmlFor="supervisor-hourly-rate">Supervisor employee rate</Label><div className="relative"><span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-slate-500">₱</span><BoundedNumberInput id="supervisor-hourly-rate" className="pl-8 pr-16" min="1" max={HOURLY_RATE_MAX} title="1 to 10,000; up to 2 decimal places" value={settings.payroll.hourlyRates.supervisor} onChange={(event) => setSettings((current) => ({ ...current, payroll: { ...current.payroll, hourlyRates: { ...current.payroll.hourlyRates, supervisor: event.target.value === "" ? "" : Number(event.target.value) } } }))} /><span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-xs text-slate-400">/ hour</span></div></div>
             </div>
             <div className="grid gap-3 sm:grid-cols-2" role="status" aria-live="polite">
               <div className="rounded-xl border border-violet-100 bg-violet-50 p-3"><p className="text-xs font-semibold text-violet-700">Regular employee example</p><p className="mt-1 text-sm text-violet-950">8 completed hours × ₱{Number(settings.payroll.hourlyRates.regular || 0).toFixed(2)} = <strong>₱{(8 * Number(settings.payroll.hourlyRates.regular || 0)).toFixed(2)}</strong></p></div>
@@ -205,7 +228,7 @@ export function SettingsView() {
             </div>
             <div className="min-w-0 space-y-2">
               <CardTitle className="leading-snug">Holiday and Rest-Day Calendar</CardTitle>
-              <CardDescription>Choose a type, then select dates. Holidays and rest days block new time-ins and do not create absences. If someone has already clocked in, they can still clock out; their worked hours remain recorded.</CardDescription>
+              <CardDescription>Choose a type, then select dates. Holidays and rest days block new time-ins and do not create absences. Saving one over an idle day removes that idle day; approved leave dates are adjusted. Existing worked hours remain recorded.</CardDescription>
             </div>
           </div>
         </CardHeader>
@@ -226,8 +249,8 @@ export function SettingsView() {
       <Dialog open={passwordDialogOpen} onClose={() => !saving && setPasswordDialogOpen(false)}>
         <DialogHeader><div><div className="mb-3 grid h-10 w-10 place-items-center rounded-xl bg-violet-100 text-violet-700"><KeyRound className="h-5 w-5" /></div><h3 className="text-lg font-bold text-slate-950">Confirm settings changes</h3><p className="mt-1 text-sm text-slate-500">Enter your administrator password before applying company rules and hourly rates.</p></div><DialogClose onClose={() => !saving && setPasswordDialogOpen(false)} /></DialogHeader>
         <form onSubmit={(event) => { event.preventDefault(); void save(); }} className="space-y-4 px-6 pb-6 pt-3">
-          <div className="space-y-2"><Label htmlFor="settings-admin-password">Administrator password</Label><div className="relative"><Input id="settings-admin-password" autoFocus autoComplete="current-password" type={showAdminPassword ? "text" : "password"} required value={adminPassword} onChange={(event) => setAdminPassword(event.target.value)} className="pr-12" placeholder="Enter your password" /><button type="button" onClick={() => setShowAdminPassword((shown) => !shown)} aria-label={showAdminPassword ? "Hide password" : "Show password"} className="absolute right-2 top-1/2 grid h-8 w-8 -translate-y-1/2 place-items-center rounded-lg text-slate-500 hover:bg-slate-100">{showAdminPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}</button></div></div>
-          <div className="flex justify-end gap-2"><Button type="button" variant="outline" disabled={saving} onClick={() => setPasswordDialogOpen(false)}>Cancel</Button><Button type="submit" disabled={saving || !adminPassword}><Save className="h-4 w-4" />{saving ? "Saving..." : "Confirm and save"}</Button></div>
+          <div className="space-y-2"><Label htmlFor="settings-admin-password">Administrator password</Label><div className="relative"><Input id="settings-admin-password" autoFocus autoComplete="current-password" type={showAdminPassword ? "text" : "password"} required disabled={passwordRetrySeconds > 0} value={adminPassword} onChange={(event) => setAdminPassword(event.target.value)} className="pr-12" placeholder="Enter your password" /><button type="button" onClick={() => setShowAdminPassword((shown) => !shown)} aria-label={showAdminPassword ? "Hide password" : "Show password"} className="absolute right-2 top-1/2 grid h-8 w-8 -translate-y-1/2 place-items-center rounded-lg text-slate-500 hover:bg-slate-100">{showAdminPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}</button></div></div>
+          <div className="flex justify-end gap-2"><Button type="button" variant="outline" disabled={saving} onClick={() => setPasswordDialogOpen(false)}>Cancel</Button><Button type="submit" disabled={saving || !adminPassword || passwordRetrySeconds > 0}><Save className="h-4 w-4" />{saving ? "Saving..." : "Confirm and save"}</Button></div>
         </form>
       </Dialog>
     </div>

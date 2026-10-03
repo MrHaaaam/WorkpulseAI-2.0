@@ -36,12 +36,12 @@ export function buildNotifications({ leaveRequests = [], attendance = [], insigh
     if (!['orange', 'red'].includes(risk.tier)) continue;
     const lastDate = [...risk.absenceDates].sort().at(-1);
     const source = attendance.find((record) => record.employeeId === risk.employeeId && record.date === lastDate);
-    add(`ai:risk:${risk.employeeId}:${lastDate}:${risk.tier}`, 'insights', `${risk.name}: ${risk.tier} attendance flag`, `${risk.absenceDays} unapproved absence days in the last 30 days. Review AI Insights.`, source?.createdAt || eventTime(lastDate, '23:59:59'), risk.employeeId);
+    add(`ai:risk:${risk.employeeId}:${lastDate}:${risk.tier}`, 'insights', `${risk.name}: ${risk.tier} attendance flag`, `${risk.absenceDays} unapproved absence days in the last 30 days. Review Insights.`, source?.createdAt || eventTime(lastDate, '23:59:59'), risk.employeeId);
   }
   if (insights?.anomaly?.status === 'ready') {
     for (const anomaly of insights.anomaly.anomalies) {
       const source = attendance.find((record) => record.employeeId === anomaly.employeeId && record.date === anomaly.date);
-      add(`ai:arrival:${anomaly.employeeId}:${anomaly.date}`, 'insights', `${anomaly.name}: unusual arrival time`, `Arrival at ${anomaly.time} on ${anomaly.date} differs from the usual pattern. Review AI Insights.`, source?.sessions?.[0]?.checkInAt || eventTime(anomaly.date, anomaly.time), anomaly.employeeId);
+      add(`ai:arrival:${anomaly.employeeId}:${anomaly.date}`, 'insights', `${anomaly.name}: unusual arrival time`, `Arrival at ${anomaly.time} on ${anomaly.date} differs from the usual pattern. Review Insights.`, source?.sessions?.[0]?.checkInAt || eventTime(anomaly.date, anomaly.time), anomaly.employeeId);
     }
   }
   return [...events.values()].sort((a, b) => b.createdAt - a.createdAt || a.id.localeCompare(b.id));

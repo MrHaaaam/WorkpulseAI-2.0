@@ -19,9 +19,9 @@ export function identifiersValidationError(identifiers) {
   if (!Array.isArray(identifiers) || identifiers.length > 20) return 'Use at most 20 identification records.';
   for (const item of identifiers) {
     if (!item || typeof item.type !== 'string' || !item.type.trim() || item.type.length > 50) return 'Enter an ID type using at most 50 characters.';
-    if (typeof item.value !== 'string' || !item.value.trim()) return `Enter the ${item.type} identification number or remove its record.`;
+    if (typeof item.value !== 'string') return `${item.type} identification number must be text.`;
     const lengths = identifierLengths(item.type);
-    if (lengths ? !/^[0-9]+(?:[ -][0-9]+)*$/.test(item.value) || !lengths.includes(item.value.replace(/[ -]/g, '').length) : !/^[a-zA-Z0-9 -]{1,50}$/.test(item.value)) return lengths ? `${item.type} must contain ${lengths.join(' or ')} digits; separators may be spaces or hyphens.` : 'Custom IDs must use at most 50 letters, numbers, spaces, or hyphens.';
+    if (item.value.trim() && (lengths ? !/^[0-9]+(?:[ -][0-9]+)*$/.test(item.value) || !lengths.includes(item.value.replace(/[ -]/g, '').length) : !/^[a-zA-Z0-9 -]{1,50}$/.test(item.value))) return lengths ? `${item.type} must contain ${lengths.join(' or ')} digits; separators may be spaces or hyphens.` : 'Custom IDs must use at most 50 letters, numbers, spaces, or hyphens.';
     if (item.frequency !== undefined && !['quarterly', 'per-payroll'].includes(item.frequency)) return 'Choose Quarterly or Every payroll for the addition frequency.';
     if (!validBoundedNumber(item.amount, 0, ADDITION_MAX)) return 'Salary additions must be between 0 and 1,000,000 with at most 2 decimal places.';
   }

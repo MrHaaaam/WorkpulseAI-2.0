@@ -27,6 +27,8 @@ export interface AttendanceRecord {
   status: "Present" | "Absent" | "On Leave" | "Idle";
 }
 
+type IdleDayReport = { date: string; employees: number; worked: number };
+
 function attendanceSessions(record: AttendanceRecord) {
   if (record.sessions?.length) return record.sessions;
   if (!record.checkIn) return [];
@@ -69,6 +71,14 @@ export function AttendanceView(props: {
   const [manualOpen, setManualOpen] = useState(false);
   const [idleOpen, setIdleOpen] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
+  const [idleDays, setIdleDays] = useState<IdleDayReport[]>([]);
+  const [idleReportError, setIdleReportError] = useState("");
+  const idleWindow = useMemo(() => {
+    const from = workforceDateToday();
+    const end = new Date(`${from}T00:00:00Z`);
+    end.setUTCDate(end.getUTCDate() + 29);
+    return { from, to: end.toISOString().slice(0, 10) };
+  }, []);
   const range = useMemo(() => {
     if (rangeMode === "day") return { from: selectedDate, to: selectedDate };
     if (rangeMode === "custom") return { from: customFrom, to: customTo };
@@ -112,7 +122,15 @@ export function AttendanceView(props: {
       mounted = false;
     };
   }, [range.from, range.to, records.length, refreshKey]);
-  const totals = { present: filteredRecords.filter(r=>r.status==="Present").length, absent: filteredRecords.filter(r=>r.status==="Absent").length, leave: filteredRecords.filter(r=>r.status==="On Leave").length, idle: filteredRecords.filter(r=>r.status==="Idle").length };
+  useEffect(() => {
+    let active = true;
+    apiFetch(`/api/attendance/idle-days?from=${idleWindow.from}&to=${idleWindow.to}`)
+      .then(async (response) => { const data = await response.json(); if (!response.ok) throw new Error(data.error || "Unable to load idle day report."); return data as IdleDayReport[]; })
+      .then((data) => { if (active) { setIdleDays(data); setIdleReportError(""); } })
+      .catch((reason) => { if (active) { setIdleDays([]); setIdleReportError(reason instanceof Error ? reason.message : "Unable to load idle day report."); } });
+    return () => { active = false; };
+  }, [idleWindow.from, idleWindow.to, refreshKey]);
+  const totals = { present: filteredRecords.filter(r=>r.status==="Present").length, absent: filteredRecords.filter(r=>r.status==="Absent").length, leave: filteredRecords.filter(r=>r.status==="On Leave").length, idle: idleDays.length };
 
   const exportAttendance = async () => {
     const headers = ["Employee ID", "Employee Name", "Role", "Date", "Status", "Session Count", "Session 1 In", "Session 1 Out", "Session 2 In", "Session 2 Out", "Session 3 In", "Session 3 Out"];
@@ -129,7 +147,7 @@ export function AttendanceView(props: {
       case "Present":
         return (
           <Badge variant="success">
-            <Check className="h-3 w-3" /> On time
+            <Check className="h-3 w-3" /> Present
           </Badge>
         );
       case "Absent":
@@ -153,11 +171,11 @@ export function AttendanceView(props: {
 
   return (
     <div className="space-y-6">
-      <AdminPageHeader title="Attendance" description="Review daily attendance and up to three sessions per employee." icon={Clock} actions={<>{rangeMode === "day" && <DateNavigator label="Workforce date" value={selectedDate} onChange={setSelectedDate} />}{props.role === "admin" && <button type="button" onClick={() => setManualOpen(true)} className="inline-flex h-10 items-center gap-2 rounded-lg bg-violet-600 px-4 text-sm font-semibold text-white shadow-sm hover:bg-violet-700"><ShieldCheck className="h-4 w-4" />Record attendance</button>}{props.role === "admin" && rangeMode === "day" && <button type="button" onClick={() => setIdleOpen(true)} className="inline-flex h-10 items-center gap-2 rounded-lg border border-violet-200 bg-white px-4 text-sm font-semibold text-violet-700 shadow-sm hover:bg-violet-50"><CalendarOff className="h-4 w-4" />Idle day</button>}<button type="button" disabled={loading || filteredRecords.length === 0} onClick={() => void exportAttendance()} className="inline-flex h-10 items-center gap-2 rounded-lg border border-violet-200 bg-white px-4 text-sm font-semibold text-violet-700 shadow-sm hover:bg-violet-50 disabled:cursor-not-allowed disabled:opacity-50"><Download className="h-4 w-4" />Export CSV</button></>} />
+      <AdminPageHeader title="Attendance" description="Review daily attendance and up to three sessions per employee." icon={Clock} actions={<>{rangeMode === "day" && <DateNavigator label="Workforce date" value={selectedDate} onChange={setSelectedDate} />}{props.role === "admin" && <button type="button" aria-label="Record attendance" onClick={() => setManualOpen(true)} className="inline-flex h-10 items-center gap-2 rounded-lg bg-violet-600 px-4 text-sm font-semibold text-white shadow-sm hover:bg-violet-700"><ShieldCheck className="h-4 w-4" /><span className="header-button-label">Record attendance</span></button>}{props.role === "admin" && <button type="button" aria-label="Idle day" onClick={() => setIdleOpen(true)} className="inline-flex h-10 items-center gap-2 rounded-lg border border-violet-200 bg-white px-4 text-sm font-semibold text-violet-700 shadow-sm hover:bg-violet-50"><CalendarOff className="h-4 w-4" /><span className="header-button-label">Idle day</span></button>}<button type="button" aria-label="Export CSV" disabled={loading || filteredRecords.length === 0} onClick={() => void exportAttendance()} className="inline-flex h-10 items-center gap-2 rounded-lg border border-violet-200 bg-white px-4 text-sm font-semibold text-violet-700 shadow-sm hover:bg-violet-50 disabled:cursor-not-allowed disabled:opacity-50"><Download className="h-4 w-4" /><span className="header-button-label">Export CSV</span></button></>} />
       {manualOpen && <ManualAttendanceDialog onClose={() => setManualOpen(false)} onSaved={() => setRefreshKey(key => key + 1)} />}
-      {idleOpen && <IdleDayDialog date={selectedDate} onClose={() => setIdleOpen(false)} onSaved={() => setRefreshKey(key => key + 1)} />}
+      {idleOpen && <IdleDayDialog onClose={() => setIdleOpen(false)} onSaved={() => setRefreshKey(key => key + 1)} />}
       <div className="rounded-2xl border border-slate-200 bg-white p-4"><div className="flex flex-wrap gap-2">{([['day','One Day'],['current','Current 15 Days'],['previous','Previous 15 Days'],['custom','Custom Range']] as const).map(([value,label])=><button key={value} type="button" onClick={()=>setRangeMode(value)} className={`rounded-lg px-3 py-2 text-xs font-semibold ${rangeMode===value?'bg-violet-600 text-white':'border border-slate-200 text-slate-600'}`}>{label}</button>)}</div>{rangeMode==='custom'&&<div className="mt-4 flex flex-wrap gap-3"><label className="text-xs font-semibold text-slate-600">From<input type="date" value={customFrom} onChange={e=>setCustomFrom(e.target.value)} className="ml-2 rounded-lg border border-slate-300 px-3 py-2"/></label><label className="text-xs font-semibold text-slate-600">To<input type="date" value={customTo} onChange={e=>setCustomTo(e.target.value)} className="ml-2 rounded-lg border border-slate-300 px-3 py-2"/></label></div>}<p className="mt-3 text-xs text-slate-500">Showing {displayWorkforceDate(range.from)}{range.from!==range.to?` to ${displayWorkforceDate(range.to)}`:''}</p></div>
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">{Object.entries(totals).map(([label,value])=><div key={label} className="rounded-xl border border-slate-200 bg-white p-3"><p className="text-xs capitalize text-slate-500">{label==='leave'?'On leave':label==='idle'?'Idle day':label}</p><p className="mt-1 text-2xl font-bold text-slate-900">{value}</p></div>)}</div>
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">{Object.entries(totals).map(([label,value])=><div key={label} className="rounded-xl border border-slate-200 bg-white p-3"><p className="text-xs capitalize text-slate-500">{label==='leave'?'On leave':label==='idle'?'Upcoming idle days':label}</p><p className="mt-1 text-2xl font-bold text-slate-900">{value}</p><p className="mt-1 text-[11px] text-slate-500">{label === 'idle' ? 'Saved dates in the next 30 days' : 'Employees in current view'}</p></div>)}</div>
 
       {error ? (
         <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800">
@@ -222,6 +240,12 @@ export function AttendanceView(props: {
             </TableBody>
           </Table>
           <PaginationControls {...attendancePage} onPageChange={attendancePage.setPage} />
+        </CardContent>
+      </Card>
+      <Card>
+        <div className="border-b border-slate-100 px-4 py-4 sm:px-6"><h2 className="font-semibold text-slate-900">Upcoming idle days</h2><p className="mt-1 text-sm text-slate-600">Saved dates from {displayWorkforceDate(idleWindow.from)} to {displayWorkforceDate(idleWindow.to)}, nearest first. This report does not follow the attendance filter.</p></div>
+        <CardContent className="space-y-3 py-4">
+          {idleReportError ? <p role="alert" className="text-sm text-rose-700">{idleReportError}</p> : idleDays.length === 0 ? <p className="text-sm text-slate-500">No idle days are scheduled in the next 30 days.</p> : idleDays.map((item) => <div key={item.date} className="flex flex-col gap-2 rounded-lg border border-slate-200 px-4 py-3 sm:flex-row sm:items-center sm:justify-between"><p className="font-medium text-slate-900">{displayWorkforceDate(item.date)}</p><p className="text-sm text-slate-700">{item.employees} {item.employees === 1 ? 'employee' : 'employees'} covered{item.date <= idleWindow.from ? ` · ${item.worked} worked` : ''}</p></div>)}
         </CardContent>
       </Card>
     </div>

@@ -6,6 +6,7 @@ import crypto from 'node:crypto';
 import apiRouter, { enforceAutomaticAbsences, enforceAutomaticClockOut, getSettings } from './routes/api.js';
 import authRouter from './routes/auth.js';
 import { securityHeaders } from './security.js';
+import { migrateLegacySalaryAdditions } from './salary-addition-migration.js';
 
 dotenv.config();
 
@@ -77,13 +78,11 @@ async function startServer() {
   try {
     await mongoose.connect(mongoUri);
     console.log('Connected to MongoDB Atlas.');
-    // The API can serve requests as soon as MongoDB is connected. Index checks
-    // and attendance housekeeping run afterward so a restart never holds the
-    // whole application hostage to a large historical reconciliation.
-    app.listen(port, () => console.log(`Server is running on http://localhost:${port}`));
-    try {
-      const db = mongoose.connection.db;
-      await Promise.all([
+    const salaryMigration = await migrateLegacySalaryAdditions(mongoose.connection.db);
+    if (salaryMigration.converted || salaryMigration.needsReview) console.log(`Owner-funded additions converted: ${salaryMigration.converted}; profiles needing frequency review: ${salaryMigration.needsReview}.`);
+    // Required uniqueness and expiry constraints must exist before requests arrive.
+    const db = mongoose.connection.db;
+    await Promise.all([
         db.collection('login_captchas').createIndex({ expiresAt: 1 }, { expireAfterSeconds: 0 }),
         db.collection('login_otps').createIndex({ expiresAt: 1 }, { expireAfterSeconds: 0 }),
         db.collection('password_reset_otps').createIndex({ expiresAt: 1 }, { expireAfterSeconds: 0 }),
@@ -102,6 +101,14 @@ async function startServer() {
         db.collection('leave_requests').createIndex({ employeeId: 1, createdAt: -1 }),
         db.collection('leave_requests').createIndex({ status: 1, startDate: 1, endDate: 1 }),
         db.collection('payroll_requests').createIndex({ employeeId: 1, createdAt: -1 }),
+        db.collection('cash_advances').createIndex({ employeeId: 1, date: -1 }),
+        db.collection('cash_advances').createIndex({ id: 1 }, { unique: true }),
+        db.collection('cash_advances').createIndex({ requestId: 1 }, { unique: true, sparse: true }),
+        db.collection('cash_advances').createIndex({ employeeId: 1, issuePeriod: 1 }, { unique: true, partialFilterExpression: { issuePeriod: { $exists: true }, reversedAt: { $exists: false } } }),
+        db.collection('cash_advance_requests').createIndex({ id: 1 }, { unique: true }),
+        db.collection('cash_advance_requests').createIndex({ employeeId: 1 }, { unique: true, partialFilterExpression: { open: true } }),
+        db.collection('cash_advance_requests').createIndex({ employeeId: 1, requestPeriod: 1 }, { unique: true, partialFilterExpression: { periodClaim: true } }),
+        db.collection('cash_advance_requests').createIndex({ status: 1, requestedAt: -1 }),
         db.collection('payroll_requests').createIndex({ employeeId: 1, periodStart: 1, status: 1 }),
         db.collection('payroll_requests').createIndex({ periodStart: 1, status: 1 }),
         // Preparing payroll can be triggered by both employee and admin pages.
@@ -112,10 +119,8 @@ async function startServer() {
         ),
         db.collection('biometric_verification_attempts').createIndex({ createdAt: -1 }),
         db.collection('biometric_evaluation_trials').createIndex({ createdAt: -1 }),
-      ]);
-    } catch (error) {
-      console.error('Security index setup failed:', error instanceof Error ? error.message : error);
-    }
+    ]);
+    app.listen(port, () => console.log(`Server is running on http://localhost:${port}`));
     let clockOutJobRunning = false;
     let absenceJobRunning = false;
     const enforceAutomaticClockOutSafely = async () => {

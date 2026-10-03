@@ -26,10 +26,14 @@ export async function apiFetch(path: string, init: RequestInit = {}) {
   if (token && !headers.has('Authorization')) headers.set('Authorization', `Bearer ${token}`)
   if (csrfToken && !headers.has('X-CSRF-Token') && !['GET', 'HEAD'].includes(String(init.method ?? 'GET').toUpperCase())) headers.set('X-CSRF-Token', csrfToken)
   const response = await fetch(path, { ...init, headers, credentials: 'include' })
-  if (response.status === 401 && !path.startsWith('/api/auth/')) {
-    clearSession()
-    window.location.replace('/')
-    return response
+  if ([401, 429].includes(response.status)) {
+    const failure = await response.clone().json().catch(() => null)
+    recordAdminPasswordRetry(response, failure?.error)
+    if (response.status === 401 && !path.startsWith('/api/auth/') && !/incorrect (?:admin|administrator) password/i.test(String(failure?.error ?? ''))) {
+      clearSession()
+      window.location.replace('/')
+      return response
+    }
   }
   if (response.status !== 403 || path === '/api/auth/session') return response
 
@@ -66,3 +70,4 @@ export function clearSession() {
   sessionStorage.removeItem('workpulse_session_expires')
   sessionRestorePromise = null
 }
+import { recordAdminPasswordRetry } from './adminPasswordRetry'

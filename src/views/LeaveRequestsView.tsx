@@ -30,7 +30,7 @@ export interface LeaveRequest {
   approvedDates?: string[];
   totalDays: number;
   reason: string;
-  status: "pending" | "approved" | "rejected" | "cancelled";
+  status: "pending" | "approved" | "rejected" | "cancelled" | "passed";
   avatarUrl?: string;
   initials: string;
   createdAt?: string;
@@ -70,7 +70,7 @@ export function LeaveRequestsView({
 }: LeaveRequestsViewProps) {
   const { toast } = useToast();
   const [searchTerm, setSearchTerm] = useState("");
-  const [filterStatus, setFilterStatus] = useState<"all" | "pending" | "approved" | "rejected">("all");
+  const [filterStatus, setFilterStatus] = useState<"all" | "pending" | "approved" | "rejected" | "passed">("all");
   const [localRequests, setLocalRequests] = useState(requests);
   const [reviewTarget, setReviewTarget] = useState<LeaveRequest | null>(null);
   const [undoTarget, setUndoTarget] = useState<LeaveRequest | null>(null);
@@ -129,13 +129,10 @@ export function LeaveRequestsView({
   // REMOVED: filterLeaveType state declaration
 
   const today = (() => { const parts = Object.fromEntries(new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Manila", year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(new Date()).filter((part) => part.type !== "literal").map((part) => [part.type, part.value])); return `${parts.year}-${parts.month}-${parts.day}`; })();
-  const activeRequests = localRequests.filter((request) => {
-    const dates = request.approvedDates?.length ? request.approvedDates : request.requestedDates?.length ? request.requestedDates : [request.endDate];
-    return [...dates].sort().at(-1)! >= today;
-  }).sort((left, right) => Number(right.status === "pending") - Number(left.status === "pending") || new Date(right.createdAt ?? 0).getTime() - new Date(left.createdAt ?? 0).getTime());
+  const activeRequests = [...localRequests].sort((left, right) => Number(right.status === "pending") - Number(left.status === "pending") || new Date(right.createdAt ?? 0).getTime() - new Date(left.createdAt ?? 0).getTime());
   const pendingCount = activeRequests.filter(r => r.status === "pending").length;
-  const approvedCount = activeRequests.filter(r => r.status === "approved").length;
-  const totalDaysRequested = activeRequests.reduce((acc, r) => acc + (r.status === "approved" ? r.totalDays : 0), 0);
+  const approvedCount = activeRequests.filter(r => r.status === "approved" && r.approvedDates?.some(date => date >= today)).length;
+  const totalDaysRequested = activeRequests.reduce((acc, r) => acc + (r.status === "approved" ? r.approvedDates?.filter(date => date >= today).length ?? 0 : 0), 0);
 
   // UPDATED: Filtration rules look strictly at search text and status matches now
   const filteredRequests = activeRequests.filter(req => {
@@ -208,12 +205,13 @@ export function LeaveRequestsView({
             ["pending", "Pending"],
             ["approved", "Approved"],
             ["rejected", "Declined"]
+            , ["passed", "Passed"]
           ].map(([val, label]) => (
             <button
               type="button"
               key={val}
               aria-pressed={filterStatus === val}
-              onClick={() => setFilterStatus(val as "all" | "pending" | "approved" | "rejected")}
+              onClick={() => setFilterStatus(val as "all" | "pending" | "approved" | "rejected" | "passed")}
               className={`whitespace-nowrap rounded-lg px-3 py-2 text-sm font-medium transition-colors ${
                 filterStatus === val
                   ? "bg-[#8642ED] text-white"
@@ -285,6 +283,7 @@ export function LeaveRequestsView({
                   </span>
                 )}
                 {request.status === "cancelled" && <span className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-600"><XCircle className="h-3.5 w-3.5" /> Cancelled</span>}
+                {request.status === "passed" && <span className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-600"><Clock className="h-3.5 w-3.5" /> Leave request passed</span>}
 
                 {request.status === "pending" && (
                   <div className="flex items-center gap-2 w-full md:w-auto">

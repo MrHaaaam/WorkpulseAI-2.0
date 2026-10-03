@@ -51,7 +51,7 @@ export async function verifyAdminPassword(request, password) {
     passwordCooldowns.set(key, { failures, lockedUntil: 0 });
     return { valid: false };
   }
-  const retryAfterSeconds = Math.min(50, 5 + (failures - 3) * 10);
+  const retryAfterSeconds = Math.min(60, 5 + (failures - 3) * 5);
   passwordCooldowns.set(key, { failures, lockedUntil: now + retryAfterSeconds * 1000 });
   return { valid: false, retryAfterSeconds };
 }
@@ -99,6 +99,7 @@ router.post('/login', async (request, response) => {
     let accountType = 'admin';
     if (!account) { account = await db.collection('employee_accounts').findOne({ email: normalizedEmail, active: true }); accountType = 'employee'; }
     if (!account || !(await verifySecret(password, account.passwordHash))) { await auditEvent({ req: request, actor: account, action: 'auth.login', targetType: 'session', outcome: 'failure', metadata: { reason: 'credentials', attemptedEmail: email } }); return failedLogin(401, 'Invalid email or password'); }
+    if (accountType === 'employee' && !(await db.collection('employees').findOne({ id: account.employeeId, archived: { $ne: true }, banned: { $ne: true }, status: { $ne: 'inactive' } }, { projection: { _id: 1 } }))) return failedLogin(401, 'Employee access is unavailable');
     loginCooldown.reset(cooldownKey);
     if (accountType === 'employee' && (await getSystemControls(db)).maintenanceMode) {
       await auditEvent({ req: request, actor: account, action: 'auth.login', targetType: 'session', outcome: 'failure', metadata: { reason: 'maintenance_mode' } });
@@ -136,16 +137,17 @@ router.post('/verify-otp', otpLimit, async (request, response) => {
     return response.status(401).json({ error: 'Invalid or expired verification code' });
   }
   await db.collection('login_otps').deleteOne({ _id: record._id });
+  const accountId = record.accountId ?? record.adminId;
+  const accountType = record.accountType ?? 'admin';
+  const account = await db.collection(accountType === 'employee' ? 'employee_accounts' : 'admin_accounts').findOne({ _id: accountId, active: true });
+  if (!account || (accountType === 'employee' && (!(await db.collection('employees').findOne({ id: account.employeeId, archived: { $ne: true }, banned: { $ne: true }, status: { $ne: 'inactive' } }, { projection: { _id: 1 } })) || (await getSystemControls(db)).maintenanceMode))) return response.status(401).json({ error: 'Account access is unavailable' });
   const token = crypto.randomBytes(32).toString('hex');
   const tokenDigest = crypto.createHash('sha256').update(token).digest('hex');
   const csrf = createCsrfToken();
-  const accountId = record.accountId ?? record.adminId;
-  const accountType = record.accountType ?? 'admin';
   const createdAt = new Date();
   const expiresAt = new Date(createdAt.getTime() + SESSION_LIFETIME_MS);
   await db.collection('admin_sessions').insertOne({ tokenDigest, csrfDigest: csrf.tokenDigest, accountId, accountType, ...(accountType === 'admin' ? { adminId: accountId } : {}), createdAt, expiresAt });
   setSessionCookie(response, token);
-  const account = await db.collection(accountType === 'employee' ? 'employee_accounts' : 'admin_accounts').findOne({ _id: accountId });
   if (accountType === 'employee' && account && typeof account.mustChangePassword !== 'boolean' && !account.passwordChangedAt) {
     account.mustChangePassword = true;
     await db.collection('employee_accounts').updateOne(
@@ -181,6 +183,7 @@ router.get('/session', async (request, response) => {
   const accountType = session.accountType ?? 'admin';
   const account = await mongoose.connection.db.collection(accountType === 'employee' ? 'employee_accounts' : 'admin_accounts').findOne({ _id: accountId, active: true });
   if (!account) return response.status(401).json({ authenticated: false });
+  if (accountType === 'employee' && !(await mongoose.connection.db.collection('employees').findOne({ id: account.employeeId, archived: { $ne: true }, banned: { $ne: true }, status: { $ne: 'inactive' } }, { projection: { _id: 1 } }))) return response.status(401).json({ authenticated: false });
   if (accountType === 'employee' && (await getSystemControls(mongoose.connection.db)).maintenanceMode) {
     return response.status(503).json({ authenticated: false, error: 'WORKPULSE MVL is temporarily available to administrators only while maintenance is in progress.' });
   }

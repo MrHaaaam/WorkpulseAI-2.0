@@ -119,6 +119,8 @@ export async function authenticate(req, res, next) {
     const actor = await db.collection(collection).findOne({ _id: accountId, active: true });
     if (!actor) return res.status(401).json({ error: 'Account is unavailable' });
     if (accountType === 'employee') {
+      const employee = await db.collection('employees').findOne({ id: actor.employeeId, archived: { $ne: true }, banned: { $ne: true }, status: { $ne: 'inactive' } }, { projection: { _id: 1 } });
+      if (!employee) return res.status(401).json({ error: 'Employee access is unavailable' });
       const controls = await getSystemControls(db);
       if (controls.maintenanceMode) return res.status(503).json({ error: 'WORKPULSE MVL is temporarily available to administrators only while maintenance is in progress.' });
     }

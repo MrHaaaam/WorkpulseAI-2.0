@@ -3,7 +3,7 @@ import { cn } from "../../lib/util";
 interface TabsProps {
   value: string;
   onValueChange: (value: string) => void;
-  items: { value: string; label: string }[];
+  items: { value: string; label: string; shortLabel?: string }[];
   className?: string;
   ariaLabel?: string;
 }
@@ -24,7 +24,8 @@ export function Tabs({ value, onValueChange, items, className, ariaLabel = "View
               : "text-slate-500 hover:text-slate-700"
           )}
         >
-          {item.label}
+          <span className="tab-full-label">{item.label}</span>
+          {item.shortLabel && <span className="tab-short-label hidden">{item.shortLabel}</span>}
         </button>
       ))}
     </div>

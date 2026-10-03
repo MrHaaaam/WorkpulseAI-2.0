@@ -1,10 +1,9 @@
-import { frequencyForQuarter, quarterForDate, quarterLabel, nextQuarter, manilaDate } from "../../shared/quarterly-additions.js";
 import { BoundedNumberInput } from "../components/ui/BoundedNumberInput";
 import { ADDITION_MAX, HOURLY_RATE_MAX, identifierInput, identifierLengths, identifiersValidationError, validBoundedNumber } from "../../shared/field-limits.js";
 import { nameInput, emailInput, validEmail } from '../../shared/input-format.js';
 import { AdminPageHeader } from "../components/AdminPageHeader";
 import { useEffect, useMemo, useState } from "react";
-import { Archive, BriefcaseBusiness, CalendarDays, Check, Clock, Contact, Fingerprint, Grid2X2, IdCard, KeyRound, List, Mail, MapPin, Pencil, Phone, Plus, ScanLine, Search, ShieldCheck, UserRound, X } from "lucide-react";
+import { Archive, BriefcaseBusiness, CalendarDays, Check, Clock, Contact, Fingerprint, Grid2X2, IdCard, KeyRound, List, Mail, MapPin, Pencil, Phone, Plus, ScanLine, Search, ShieldCheck, UserRound, Wallet, X } from "lucide-react";
 
 import { Badge } from "../components/ui/Badge";
 import { Button } from "../components/ui/Button";
@@ -40,6 +39,8 @@ export interface Employee {
   pagIbigNumber?: string;
   tinNumber?: string;
   identifiers?: { type: string; value: string; amount: number; frequency?: "quarterly" | "per-payroll"; eligibleFromQuarter?: string; frequencyHistory?: { fromQuarter: string; frequency: "quarterly" | "per-payroll" }[] }[];
+  salaryAddition?: { amount: number; frequency: "quarterly" | "per-payroll"; eligibleFromQuarter?: string; frequencyHistory?: { fromQuarter: string; frequency: "quarterly" | "per-payroll" }[] };
+  salaryAdditionNeedsReview?: boolean;
 }
 
 interface EmployeeDirectoryViewProps { employees: Employee[] }
@@ -58,6 +59,7 @@ const emptyEmployee: Employee = {
   hoursWorked: 0,
   hourlyRate: 50,
   hourlyRateOverride: null,
+  salaryAddition: { amount: 0, frequency: "quarterly" },
   email: "",
   phone: "",
   address: "",
@@ -210,7 +212,10 @@ export function EmployeeDirectoryView({ employees: initialEmployees }: Partial<E
     const normalizedRole = ["regular", "extra", "manager", "supervisor"].includes(employee.role) ? employee.role : "regular";
     const hourlyRate = normalizedRole === "extra" ? 40 : 50;
     const nameParts = employee.name.trim().split(/\s+/);
-    const editable = { ...emptyEmployee, ...employee, firstName: employee.firstName || nameParts[0] || "", lastName: employee.lastName || nameParts.slice(1).join(" "), role: normalizedRole, hourlyRate, hoursWorked: employee.hoursWorked ?? ((employee.grossSalary ?? 0) / hourlyRate), identifiers: employee.identifiers ?? legacyIdentifiers };
+    const identifiers = employee.identifiers ?? legacyIdentifiers;
+    const fallbackAmount = Math.round(identifiers.reduce((sum, item) => sum + Number(item.amount || 0), 0) * 100) / 100;
+    const salaryAddition = { ...(employee.salaryAddition ?? { amount: fallbackAmount }), frequency: "quarterly" as const };
+    const editable = { ...emptyEmployee, ...employee, firstName: employee.firstName || nameParts[0] || "", lastName: employee.lastName || nameParts.slice(1).join(" "), role: normalizedRole, hourlyRate, hoursWorked: employee.hoursWorked ?? ((employee.grossSalary ?? 0) / hourlyRate), identifiers, salaryAddition };
     setDraft(editable);
     setSavedDraft(editable);
     setAdminPassword("");
@@ -290,6 +295,7 @@ export function EmployeeDirectoryView({ employees: initialEmployees }: Partial<E
     if (saving) return;
     const identifierError = identifiersValidationError(draft.identifiers);
     if (identifierError) { const index = draft.identifiers?.findIndex(item => identifiersValidationError([item])) ?? -1; showFieldError(index >= 0 ? `identifier-${index}` : 'identifiers', identifierError); return; }
+    if (!validBoundedNumber(draft.salaryAddition?.amount, 0, ADDITION_MAX)) { showFieldError('salaryAddition', 'Enter an amount from 0 to 1,000,000 with up to 2 decimal places.'); return; }
     const names = [draft.firstName, draft.lastName].map(value => (value ?? '').normalize('NFC').trim().replace(/ +/g, ' '));
     const badName = names.findIndex(value => value.length < 2 || value.length > 50 || !/^(?=.*\p{L})[\p{L}\p{M} '\u2019.-]+$/u.test(value));
     if (badName >= 0) { showFieldError(badName === 0 ? 'firstName' : 'lastName', 'Enter a name using 2 to 50 characters.'); return; }
@@ -464,26 +470,33 @@ export function EmployeeDirectoryView({ employees: initialEmployees }: Partial<E
               <div className="sm:col-span-2"><label htmlFor="employee-employment-status" className="mb-1 block text-sm font-medium text-slate-600">Employment status</label><select id="employee-employment-status" value={draft.status === "inactive" ? "inactive" : "active"} onChange={(e) => update("status", e.target.value as "active" | "inactive")} className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-[#8642ED] focus:ring-2 focus:ring-[#8642ED]/20"><option value="active">Active</option><option value="inactive">Inactive</option></select><p className="mt-1 text-xs text-slate-500">Inactive stops new clock-ins and absences. Past records stay.</p></div>
             </div>
           </FormSection>
-          <FormSection icon={<IdCard className="h-4 w-4" />} title="Government IDs & salary additions" description="Store each government ID and any extra amount the owner wants to add to this employee's pay.">
+          <FormSection icon={<IdCard className="h-4 w-4" />} title="Government IDs" description="Add an ID type now; its number can be filled in later. IDs do not change payroll.">
             <div className="space-y-3">
-            <div className="flex flex-wrap gap-2">
-              <select value={identifierType} onChange={(event) => setIdentifierType(event.target.value)} className="h-9 rounded-lg border border-slate-200 bg-white px-3 text-sm">
-                <option>SSS</option><option>PhilHealth</option><option>Pag-IBIG</option><option>TIN</option><option>Custom</option>
-              </select>
-              {identifierType === "Custom" && <Input className="h-9 w-44" maxLength={50} value={customIdentifierType} onChange={(event) => setCustomIdentifierType(event.target.value)} placeholder="ID type name" />}
-              <Button type="button" size="sm" variant="outline" onClick={addIdentifier}><Plus className="h-3.5 w-3.5" /> Add ID</Button>
-            </div>
-            {(draft.identifiers ?? []).length === 0 ? <p className="rounded-lg border border-dashed border-slate-200 bg-white p-3 text-center text-xs text-slate-400">No IDs added. This is allowed.</p> : null}
-            <div className="space-y-3">{(draft.identifiers ?? []).map((identifier, index) => (
-              <div key={`${identifier.type}-${index}`} className="rounded-xl border border-slate-200 bg-slate-50/50 p-4">
-                <div className="mb-3 flex items-center justify-between"><div className="flex items-center gap-2"><span className="rounded-md bg-violet-100 px-2 py-1 text-xs font-bold text-violet-700">{identifier.type}</span><span className="text-[11px] text-slate-400">Government record</span></div><button type="button" onClick={() => update("identifiers", draft.identifiers?.filter((_, itemIndex) => itemIndex !== index))} className="text-xs font-medium text-rose-600 hover:text-rose-700">Remove</button></div>
-                <div className="grid gap-3 sm:grid-cols-2"><Field label={`${identifier.type} identification number`} hint={identifierLengths(identifier.type) ? `${identifierLengths(identifier.type)!.join(" or ")} digits` : "Up to 50 characters"}><Input data-employee-field={`identifier-${index}`} aria-invalid={invalidField===`identifier-${index}`} className={invalidField===`identifier-${index}`?"border-rose-500 ring-2 ring-rose-200":""} inputMode={identifierLengths(identifier.type) ? "numeric" : "text"} maxLength={identifierLengths(identifier.type) ? Math.max(...identifierLengths(identifier.type)!) + 4 : 50} value={identifier.value} onChange={(event) => update("identifiers", draft.identifiers?.map((item, itemIndex) => itemIndex === index ? { ...item, value: identifierInput(identifier.type, event.target.value) } : item))} placeholder={`Enter ${identifier.type} number`} /></Field><Field label="Owner-funded salary addition" hint="PHP 0-1,000,000; up to 2 decimals"><div className="relative"><span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-slate-400">₱</span><BoundedNumberInput className="pl-8" min="0" max={ADDITION_MAX} value={identifier.amount || ""} onChange={(event) => update("identifiers", draft.identifiers?.map((item, itemIndex) => itemIndex === index ? { ...item, amount: event.target.value === "" ? 0 : Number(event.target.value) } : item))} aria-label={`${identifier.type} salary addition`} placeholder="Leave blank if none" /></div></Field><Field label="Addition frequency"><select className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm" value={identifier.frequency ?? "quarterly"} onChange={(event) => update("identifiers", draft.identifiers?.map((item, itemIndex) => itemIndex === index ? { ...item, frequency: event.target.value as "quarterly" | "per-payroll" } : item))}><option value="quarterly">Quarterly (every 3 months)</option><option value="per-payroll">Every payroll (each pay period)</option></select></Field><p className="self-center text-xs leading-5 text-slate-500">{editingId && savedDraft?.identifiers?.some(old => old.type === identifier.type && frequencyForQuarter(old, quarterForDate(manilaDate())) !== (identifier.frequency ?? "quarterly")) ? `Frequency change takes effect ${quarterLabel(nextQuarter(quarterForDate(manilaDate())))}. This quarter keeps its original frequency.` : identifier.frequency === "per-payroll" ? "The full amount is included each pay period. It is not divided from a quarterly amount." : "Quarterly means once every 3 months. It is added to the last payroll of the quarter."}</p>{invalidField===`identifier-${index}` && <p className="sm:col-span-2 text-xs font-medium text-rose-700">{formError}</p>}</div>
+              <div className="flex flex-wrap gap-2">
+                <select value={identifierType} onChange={(event) => setIdentifierType(event.target.value)} className="h-9 rounded-lg border border-slate-200 bg-white px-3 text-sm">
+                  <option>SSS</option><option>PhilHealth</option><option>Pag-IBIG</option><option>TIN</option><option>Custom</option>
+                </select>
+                {identifierType === "Custom" && <Input className="h-9 w-44" maxLength={50} value={customIdentifierType} onChange={(event) => setCustomIdentifierType(event.target.value)} placeholder="ID type name" />}
+                <Button type="button" size="sm" variant="outline" onClick={addIdentifier}><Plus className="h-3.5 w-3.5" /> Add ID</Button>
               </div>
-            ))}</div>
-            {(draft.identifiers ?? []).length > 0 && <div className="rounded-xl border border-violet-200 bg-violet-50 px-4 py-3 text-sm text-violet-900"><p className="font-semibold">Quarterly additions: PHP {(draft.identifiers ?? []).filter(item => item.frequency !== "per-payroll").reduce((sum, item) => sum + item.amount, 0).toLocaleString("en-PH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} per quarter</p><p className="mt-1 text-xs">Quarterly amounts enter the last payroll of each quarter automatically. Paid payrolls keep their recorded amounts.</p></div>}
+              {(draft.identifiers ?? []).length === 0 && <p className="rounded-lg border border-dashed border-slate-200 bg-white p-3 text-center text-xs text-slate-400">No IDs added. This is allowed.</p>}
+              <div className="grid gap-3 sm:grid-cols-2">{(draft.identifiers ?? []).map((identifier, index) => (
+                <div key={`${identifier.type}-${index}`} className="rounded-xl border border-slate-200 bg-slate-50/50 p-3">
+                  <div className="mb-2 flex items-center justify-between"><span className="rounded-md bg-violet-100 px-2 py-1 text-xs font-bold text-violet-700">{identifier.type}</span><button type="button" onClick={() => update("identifiers", draft.identifiers?.filter((_, itemIndex) => itemIndex !== index))} className="text-xs font-medium text-rose-600 hover:text-rose-700">Remove</button></div>
+                  <Field label={`${identifier.type} identification number (optional)`} hint={identifierLengths(identifier.type) ? `${identifierLengths(identifier.type)!.join(" or ")} digits if provided` : "Up to 50 characters if provided"}><Input data-employee-field={`identifier-${index}`} aria-invalid={invalidField===`identifier-${index}`} className={invalidField===`identifier-${index}`?"border-rose-500 ring-2 ring-rose-200":""} inputMode={identifierLengths(identifier.type) ? "numeric" : "text"} maxLength={identifierLengths(identifier.type) ? Math.max(...identifierLengths(identifier.type)!) + 4 : 50} value={identifier.value} onChange={(event) => update("identifiers", draft.identifiers?.map((item, itemIndex) => itemIndex === index ? { ...item, value: identifierInput(identifier.type, event.target.value) } : item))} placeholder="Add number later" /></Field>
+                  {invalidField===`identifier-${index}` && <p className="mt-1 text-xs font-medium text-rose-700">{formError}</p>}
+                </div>
+              ))}</div>
             </div>
           </FormSection>
-          <FormSection icon={<ShieldCheck className="h-4 w-4" />} title="Attendance access" description="Register the fingerprint used to clock in and out.">
+          <FormSection icon={<Wallet className="h-4 w-4" />} title="Owner-funded addition" description="One extra amount for this employee, separate from government IDs.">
+            <div className="grid gap-4 sm:grid-cols-2">
+              {draft.salaryAdditionNeedsReview && <p className="sm:col-span-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">The old amounts need review. Check the combined amount before saving.</p>}
+              <Field label="Amount" hint="One amount for all owner-funded additions" error={invalidField==="salaryAddition"?formError:undefined}><div className="relative"><span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-slate-400">₱</span><BoundedNumberInput data-employee-field="salaryAddition" aria-invalid={invalidField==="salaryAddition"} className={`pl-8 ${invalidField==="salaryAddition"?"border-rose-500 ring-2 ring-rose-200":""}`} min="0" max={ADDITION_MAX} value={draft.salaryAddition?.amount || ""} onChange={(event) => update("salaryAddition", { ...draft.salaryAddition, amount: event.target.value === "" ? 0 : Number(event.target.value), frequency: draft.salaryAddition?.frequency ?? "quarterly" })} placeholder="0.00" /></div></Field>
+              <p className="self-center text-sm text-violet-800">Added once each quarter: Mar 16–31, Jun 16–30, Sep 16–30, and Dec 16–31.</p>
+              <p className="sm:col-span-2 text-xs leading-5 text-slate-500">Changing this amount updates future quarterly additions. An amount already placed in payroll stays as recorded, even if that payroll has not been paid yet. Paid payrolls never change.</p>
+            </div>
+          </FormSection>          <FormSection icon={<ShieldCheck className="h-4 w-4" />} title="Attendance access" description="Register the fingerprint used to clock in and out.">
           <div className="rounded-xl border border-violet-200 bg-violet-50/60 p-4">
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <div className="flex items-center gap-3">

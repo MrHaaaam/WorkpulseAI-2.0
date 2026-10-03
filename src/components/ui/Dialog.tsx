@@ -1,6 +1,7 @@
-import { useEffect } from "react";
+import { useEffect, useRef, useState } from "react";
 import { X } from "lucide-react";
 import { cn } from "../../lib/util";
+import { useAdminPasswordRetry } from "../../lib/adminPasswordRetry";
 
 interface DialogProps {
   open: boolean;
@@ -10,6 +11,9 @@ interface DialogProps {
 }
 
 export function Dialog({ open, onClose, children, className }: DialogProps) {
+  const contentRef = useRef<HTMLDivElement>(null);
+  const [hasPassword, setHasPassword] = useState(false);
+  const retrySeconds = useAdminPasswordRetry();
   useEffect(() => {
     if (open) {
       document.body.style.overflow = "hidden";
@@ -19,11 +23,19 @@ export function Dialog({ open, onClose, children, className }: DialogProps) {
     };
   }, [open]);
 
+  useEffect(() => {
+    setHasPassword(Boolean(open && contentRef.current?.querySelector('input[type="password"], input[autocomplete="current-password"]')));
+  }, [open, children]);
+
   if (!open) return null;
 
   return (
     <div className="fixed inset-0 z-50 flex items-end justify-center p-0 sm:items-center sm:p-4">
       <div
+        ref={contentRef}
+        onSubmitCapture={(event) => {
+          if (retrySeconds > 0 && contentRef.current?.querySelector('input[type="password"], input[autocomplete="current-password"]')) event.preventDefault();
+        }}
         className="absolute inset-0 bg-slate-900/50 backdrop-blur-sm animate-fade-in"
         onClick={onClose}
       />
@@ -33,6 +45,7 @@ export function Dialog({ open, onClose, children, className }: DialogProps) {
           className
         )}
       >
+        {hasPassword && retrySeconds > 0 && <p role="status" className="mx-4 mt-4 rounded-lg bg-amber-50 px-3 py-2 text-sm font-medium text-amber-800 sm:mx-6">Incorrect admin password. Try again in {retrySeconds} seconds.</p>}
         {children}
       </div>
     </div>

@@ -14,7 +14,8 @@ test('server rejects malformed IDs and invalid additions before normalization', 
   const record = { type: 'SSS', value: '01-2345678-9', amount: 12.34 };
   assert.equal(identifiersValidationError([record]), null);
   assert.equal(identifiersValidationError([]), null);
-  for (const value of ['', '012345678', '01234567890', '0123456789ssss']) assert.ok(identifiersValidationError([{ ...record, value }]));
+  for (const value of ['012345678', '01234567890', '0123456789ssss']) assert.ok(identifiersValidationError([{ ...record, value }]));
+  assert.equal(identifiersValidationError([{ ...record, value: '' }]), null);
   for (const amount of [-1, 1000000.01, 1e60, Infinity, NaN, null, '', 12.345]) assert.ok(identifiersValidationError([{ ...record, amount }]));
   for (const amount of [0, 1000000, 19.99]) assert.equal(identifiersValidationError([{ ...record, amount }]), null);
   for (const value of ['012345678', '012345678000', '01234567800000']) assert.equal(identifiersValidationError([{ ...record, type: 'TIN', value }]), null);

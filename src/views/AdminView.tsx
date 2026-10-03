@@ -16,6 +16,7 @@ import { useToast } from "../components/ui/Toast";
 import { apiFetch } from "../lib/api";
 import { PaginationControls } from "../components/ui/Pagination";
 import { usePagination } from "../hooks/usePagination";
+import { downloadCsv } from "../lib/exportCsv";
 
 const hoverScrollbarClasses = 
   "max-h-[400px] overflow-y-auto pr-2 " +
@@ -177,6 +178,24 @@ export function AdminView() {
     finally { setControlBusy(null); }
   }
 
+  async function exportReport(name: string) {
+    setControlBusy(`report-${name}`);
+    try {
+      const response = await apiFetch(`/api/admin/report/${name}`);
+      const report = await response.json();
+      if (!response.ok) throw new Error(report.error || 'Report could not be generated');
+      const fields: string[] = report.fields;
+      const rows: Record<string, unknown>[] = report.rows;
+      downloadCsv(`workpulse-${name}-${new Date().toISOString().slice(0, 10)}.csv`, fields, rows.map((row) => fields.map((field) => {
+        const value = row[field];
+        return value == null ? '' : typeof value === 'object' ? JSON.stringify(value) : String(value);
+      })));
+      toast({ title: 'Excel-compatible report saved', description: `${rows.length} records exported as CSV.`, variant: 'success' });
+    } catch (reason) {
+      toast({ title: 'Report was not saved', description: reason instanceof Error ? reason.message : 'Please try again.', variant: 'error' });
+    } finally { setControlBusy(null); }
+  }
+
   async function unlockAdminControls(event: React.FormEvent) {
     event.preventDefault();
     if (!password) { setPasswordError("Enter your admin password."); return; }
@@ -262,7 +281,10 @@ export function AdminView() {
           </CardHeader>
           <CardContent>
             <div className="relative mb-4 max-w-sm"><Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" /><Input aria-label="Search employee access" value={employeeSearch} onChange={(event) => setEmployeeSearch(event.target.value)} placeholder="Search employee, ID, or role" className="pl-9" /></div>
-            <div className={hoverScrollbarClasses}>
+            <div className="space-y-2 sm:hidden">
+              {employeePage.pageItems.map((employee) => <div key={employee.id} className="rounded-xl border border-slate-200 p-4"><div className="flex items-start justify-between gap-2"><div className="min-w-0"><p className="break-words font-semibold text-slate-900">{employee.name}</p><p className="text-xs text-slate-500">{employee.id} · {employee.role}</p></div><Badge variant={employee.banned ? "danger" : "success"}>{employee.banned ? "Blocked" : "Active"}</Badge></div><Button className="mt-3 w-full" size="sm" variant="outline" onClick={() => void toggleBanEmployee(employee.id)}>{employee.banned ? "Restore access" : "Block access"}</Button></div>)}
+            </div>
+            <div className={`${hoverScrollbarClasses} hidden sm:block`}>
               <Table className="min-w-[620px]">
                 <TableHeader className="sticky top-0 bg-white z-10 shadow-sm">
                   <TableRow>
@@ -306,7 +328,7 @@ export function AdminView() {
         </Card>
 
         {/* Global Settings Table */}
-        <Card className="xl:col-span-2">
+        <Card className="xl:col-span-2 border-slate-200 shadow-sm">
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
               <ShieldCheck className="h-5 w-5 text-slate-700" />
@@ -315,42 +337,13 @@ export function AdminView() {
             <CardDescription>Global configuration and system restrictions</CardDescription>
           </CardHeader>
           <CardContent>
-            <Table className="min-w-[680px]">
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Configuration</TableHead>
-                  <TableHead>Description</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead className="text-right">Action</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                <TableRow>
-                  <TableCell className="font-medium text-slate-900"><span className="flex items-center gap-2"><Wrench className="h-4 w-4 text-slate-400" />Maintenance Mode</span></TableCell>
-                  <TableCell className="text-slate-500 text-sm">Lock out all non-admin users instantly</TableCell>
-                  <TableCell><Badge variant={controls.maintenanceMode ? "warning" : "neutral"}>{controls.maintenanceMode ? "On" : "Off"}</Badge></TableCell>
-                  <TableCell className="text-right"><Button size="sm" variant="outline" disabled={controlBusy === "maintenanceMode"} onClick={() => void updateControl("maintenanceMode", !controls.maintenanceMode)}>{controls.maintenanceMode ? "Turn Off" : "Turn On"}</Button></TableCell>
-                </TableRow>
-                <TableRow>
-                  <TableCell className="font-medium text-slate-900"><span className="flex items-center gap-2"><DatabaseBackup className="h-4 w-4 text-slate-400" />Database Backup</span></TableCell>
-                  <TableCell className="text-slate-500 text-sm">Save business records and encrypted biometric templates to a location you approve</TableCell>
-                  <TableCell><Badge variant="info">Manual</Badge></TableCell>
-                  <TableCell className="text-right"><Button size="sm" variant="outline" disabled={controlBusy === "backup"} onClick={() => void createBackup()}>{controlBusy === "backup" ? "Saving…" : "Choose & Save"}</Button></TableCell>
-                </TableRow>
-                <TableRow>
-                  <TableCell className="font-medium text-slate-900"><span className="flex items-center gap-2"><UserPlus className="h-4 w-4 text-slate-400" />New Employee Registration</span></TableCell>
-                  <TableCell className="text-slate-500 text-sm">Allow administrators to create new employee records</TableCell>
-                  <TableCell><Badge variant={controls.registrationOpen ? "success" : "danger"}>{controls.registrationOpen ? "Open" : "Restricted"}</Badge></TableCell>
-                  <TableCell className="text-right"><Button size="sm" variant="outline" disabled={controlBusy === "registrationOpen"} onClick={() => void updateControl("registrationOpen", !controls.registrationOpen)}>{controls.registrationOpen ? "Restrict" : "Open"}</Button></TableCell>
-                </TableRow>
-                <TableRow>
-                  <TableCell className="font-medium text-slate-900"><span className="flex items-center gap-2"><LogOut className="h-4 w-4 text-red-500" />Force Clock Out</span></TableCell>
-                  <TableCell className="text-slate-500 text-sm">Clock out everyone or an individual who clocked in today</TableCell>
-                  <TableCell><Badge variant="neutral">On demand</Badge></TableCell>
-                  <TableCell className="text-right"><Button size="sm" variant="destructive" disabled={controlBusy === "clock-out"} onClick={() => setForceClockOutOpen(true)}>{controlBusy === "clock-out" ? "Clocking out…" : "Force Clock Out"}</Button></TableCell>
-                </TableRow>
-              </TableBody>
-            </Table>
+            <div className="grid gap-3 lg:grid-cols-2">
+              <div className="rounded-xl border border-slate-200 p-4 sm:p-5"><div className="flex flex-wrap items-center justify-between gap-2"><h3 className="flex items-center gap-2 font-semibold text-slate-900"><Wrench className="h-4 w-4 text-slate-500" />Maintenance mode</h3><Badge variant={controls.maintenanceMode ? "warning" : "neutral"}>{controls.maintenanceMode ? "On" : "Off"}</Badge></div><p className="mt-2 text-sm text-slate-600">Temporarily blocks employee sign-in and portal access. Administrators retain access.</p><Button className="mt-4 w-full sm:w-auto" size="sm" variant="outline" disabled={controlBusy === "maintenanceMode"} onClick={() => void updateControl("maintenanceMode", !controls.maintenanceMode)}>{controls.maintenanceMode ? "Turn off" : "Turn on"}</Button></div>
+              <div className="rounded-xl border border-slate-200 p-4 sm:p-5"><div className="flex flex-wrap items-center justify-between gap-2"><h3 className="flex items-center gap-2 font-semibold text-slate-900"><UserPlus className="h-4 w-4 text-slate-500" />New employee registration</h3><Badge variant={controls.registrationOpen ? "success" : "danger"}>{controls.registrationOpen ? "Open" : "Restricted"}</Badge></div><p className="mt-2 text-sm text-slate-600">Controls whether administrators can create new employee records.</p><Button className="mt-4 w-full sm:w-auto" size="sm" variant="outline" disabled={controlBusy === "registrationOpen"} onClick={() => void updateControl("registrationOpen", !controls.registrationOpen)}>{controls.registrationOpen ? "Restrict" : "Open"}</Button></div>
+              <div className="rounded-xl border border-slate-200 p-4 sm:p-5"><h3 className="flex items-center gap-2 font-semibold text-slate-900"><DatabaseBackup className="h-4 w-4 text-slate-500" />Database backup</h3><p className="mt-2 text-sm text-slate-600">Save a recovery backup to a restricted folder and keep a copy on an approved external drive.</p><Button className="mt-4 w-full sm:w-auto" size="sm" variant="outline" disabled={controlBusy === "backup"} onClick={() => void createBackup()}>{controlBusy === "backup" ? "Saving…" : "Choose & save"}</Button></div>
+              <div className="rounded-xl border border-slate-200 p-4 sm:p-5"><h3 className="font-semibold text-slate-900">Excel reports</h3><p className="mt-2 text-sm text-slate-600">Download CSV files for Excel. Reports cannot restore the database.</p><div className="mt-4 grid grid-cols-2 gap-2 sm:flex sm:flex-wrap">{([['employees', 'Employees'], ['attendance', 'Attendance'], ['leave_requests', 'Leave'], ['payroll_requests', 'Payroll']] as const).map(([name, label]) => <Button key={name} size="sm" variant="outline" disabled={controlBusy !== null} onClick={() => void exportReport(name)}>{label}</Button>)}</div></div>
+              <div className="rounded-xl border border-slate-200 p-4 sm:p-5 lg:col-span-2"><div className="flex flex-wrap items-center justify-between gap-2"><h3 className="flex items-center gap-2 font-semibold text-slate-900"><LogOut className="h-4 w-4 text-rose-600" />Force clock out</h3><Badge variant="neutral">On demand</Badge></div><p className="mt-2 text-sm text-slate-600">Clock out everyone or one employee who clocked in today.</p><Button className="mt-4 w-full sm:w-auto" size="sm" variant="destructive" disabled={controlBusy === "clock-out"} onClick={() => setForceClockOutOpen(true)}>{controlBusy === "clock-out" ? "Clocking out…" : "Force clock out"}</Button></div>
+            </div>
           </CardContent>
         </Card>
 

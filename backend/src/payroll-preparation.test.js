@@ -6,17 +6,28 @@ const employee = { id: 'EMP-018', name: 'Test Employee', role: 'regular' };
 const periodStart = '2026-09-16';
 const conflict = () => Object.assign(new Error('duplicate payroll'), { code: 11000, keyPattern: { employeeId: 1, periodStart: 1 } });
 
-function database({ error, winner, attendance = [] } = {}) {
+function database({ error, winner, attendance = [], advances = [], priorPayroll = [{ _id: 'old', amount: 100 }] } = {}) {
   const writes = [];
   let inserted = false;
   const payroll = {
-    find: (query) => ({ toArray: async () => typeof query.periodStart === 'string' ? [] : [{ _id: 'old', amount: 100 }] }),
+    find: (query) => ({ toArray: async () => typeof query.periodStart === 'string' || query.status === 'paid' ? [] : priorPayroll }),
     findOne: async () => inserted ? winner : null,
     insertOne: async (record) => { inserted = true; writes.push(record); if (error) throw error; },
     updateMany: async (filter, update) => { writes.push({ filter, update }); },
   };
-  return { writes, collection: (name) => name === 'payroll_requests' ? payroll : { find: () => ({ toArray: async () => name === 'attendance' ? attendance : [] }) } };
+  return { writes, collection: (name) => name === 'payroll_requests' ? payroll : { find: () => ({ toArray: async () => name === 'attendance' ? attendance : name === 'cash_advances' ? advances : [] }) } };
 }
+
+test('cash advance uses earned hourly pay and does not duplicate a carried proposal', async () => {
+  const attendance = [{ employeeId: employee.id, date: periodStart, sessions: [{ checkIn: '09:00 AM', checkOut: '11:30 AM', hourlyRate: 60 }] }];
+  const db = database({ attendance, advances: [{ employeeId: employee.id, amount: 1000 }], priorPayroll: [{ _id: 'old', amount: 100, advanceDeduction: 200 }] });
+  const { record } = await preparePayrollRecord(db, employee, periodStart, {});
+  assert.equal(record.grossAmount, 150);
+  assert.equal(record.advanceDeduction, 150);
+  assert.equal(record.currentAmount, 0);
+  assert.equal(record.carryOverAmount, 300);
+  assert.equal(record.amount, 300);
+});
 
 test('a concurrent insert returns the winning payroll without relinking carry-over', async () => {
   const winner = { id: 'PR-winner', employeeId: employee.id, periodStart, status: 'processing', amount: 100 };

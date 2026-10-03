@@ -1,10 +1,17 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { isDeepStrictEqual } from 'node:util';
-import { configuredAdditions, scheduleIdentifierFrequencies, frequencyForQuarter, nextQuarter } from '../../shared/quarterly-additions.js';
+import { configuredAdditions, combinedSalaryAddition, scheduleSalaryAddition, scheduleIdentifierFrequencies, frequencyForQuarter, nextQuarter } from '../../shared/quarterly-additions.js';
+
+test('a new allowance starts next calendar quarter after quarter-end payroll is paid', () => {
+  const [allowance] = scheduleIdentifierFrequencies({ identifiers: [] }, [{ type: 'SSS', amount: 120, frequency: 'quarterly', value: '123' }], '2026-09-30', '2026-Q4');
+  assert.equal(allowance.eligibleFromQuarter, '2026-Q4');
+  assert.equal(frequencyForQuarter(allowance, '2026-Q3'), null);
+  assert.equal(frequencyForQuarter(allowance, '2026-Q4'), 'quarterly');
+});
 import { identifiersValidationError } from '../../shared/field-limits.js';
-import { previewQuarterlyAdditions, includeQuarterlyAdditions, removeQuarterlyAdditions, quarterlySelectionError, recurringPayrollAdditions, undoPaymentValidationError } from './quarterly-additions.js';
-import { preparePayrollRecord } from './routes/api.js';
+import { previewQuarterlyAdditions, includeQuarterlyAdditions, removeQuarterlyAdditions, quarterlySelectionError, recurringPayrollAdditions, automaticQuarterlyAdditions, undoPaymentValidationError } from './quarterly-additions.js';
+import { preparePayrollRecord, requireQuarterlyAdditionsBeforePayment } from './routes/api.js';
 import { payrollTransaction } from './payroll-transaction.js';
 
 const period = '2026-09-16';
@@ -15,6 +22,16 @@ const employee = { id: 'E1', name: 'Employee One', createdAt: '2025-01-01T00:00:
   { type: 'Travel', value: 'T-1', amount: 50, frequency: 'per-payroll' },
 ] };
 const payroll = (id = 'P1', periodStart = period) => ({ _id: id, id, employeeId: 'E1', periodStart, status: 'processing', grossAmount: 100, additions: [], currentAmount: 100, amount: 100 });
+
+test('one owner-funded amount replaces separate government ID pay amounts', () => {
+  const legacy = { identifiers: [{ type: 'SSS', value: '123', amount: 145 }, { type: 'Pag-IBIG', value: '456', amount: 105 }] };
+  assert.equal(combinedSalaryAddition(legacy).amount, 250);
+  const salaryAddition = scheduleSalaryAddition(legacy, { amount: 250, frequency: 'quarterly' }, '2026-09-30');
+  const configured = configuredAdditions({ ...legacy, salaryAddition }, 'quarterly', '2026-Q4');
+  assert.equal(configured.length, 1);
+  assert.equal(configured[0].label, 'Owner-funded addition (Q4 2026)');
+  assert.equal(configured[0].value, 250);
+});
 
 function matches(record, query) {
   return Object.entries(query).every(([key, expected]) => {
@@ -73,6 +90,21 @@ function database(records = [payroll()], employees = [structuredClone(employee)]
   return db;
 }
 
+test('an older SSS and Pag-IBIG payment prevents a second combined payment for that quarter', async () => {
+  const merged = { ...structuredClone(employee), identifiers: [
+    { type: 'SSS', value: '0123456789', amount: 0 },
+    { type: 'Pag-IBIG', value: '012345678901', amount: 0 },
+  ], salaryAddition: { amount: 250, frequency: 'quarterly', eligibleFromQuarter: '2026-Q3' } };
+  const old = { ...payroll('old', '2026-09-01'), status: 'carried_over', additions: [{ label: 'SSS', value: 145 }, { label: 'Pag-IBIG', value: 105 }] };
+  const db = database([old, payroll()], [merged]);
+  assert.deepEqual(await automaticQuarterlyAdditions(db, merged, period, db.data.payroll_requests[1]), []);
+  assert.deepEqual(db.data.payroll_requests[0].additions.map(item => item.label), ['SSS', 'Pag-IBIG']);
+  assert.equal((await automaticQuarterlyAdditions(db, merged, '2026-12-16')).length, 1);
+  const quarterEnd = { ...payroll(), additions: [{ label: 'SSS allowance (Q3 2026)', value: 145, quarter }], quarterlyAdditions: [{ label: 'SSS allowance (Q3 2026)', value: 145, quarter }], quarterlyKeys: [quarter] };
+  const samePayroll = database([quarterEnd], [merged]);
+  assert.deepEqual(await automaticQuarterlyAdditions(samePayroll, merged, period, quarterEnd), []);
+});
+
 async function include(db, selectedPeriod = period, selectedQuarter = quarter) {
   const entries = await previewQuarterlyAdditions(db, selectedPeriod, selectedQuarter);
   const entry = entries.find(row => row.eligible);
@@ -92,6 +124,21 @@ test('quarterly allowances automatically enter the final payroll of the quarter'
   const refreshed = await preparePayrollRecord(db, employee, period, {});
   assert.equal(refreshed.record.currentAmount, 1750);
   assert.equal(refreshed.record.quarterlyAdditions.length, 2);
+});
+
+test('recalculating an undone quarter-end payroll adds allowances missing from its old paid record', async () => {
+  const oldPaidRecord = { ...payroll(), status: 'processing', quarterlyAdditions: [], quarterlyKeys: [] };
+  const db = database([oldPaidRecord]);
+  const refreshed = await preparePayrollRecord(db, db.data.employees[0], period, {});
+  assert.equal(refreshed.record.quarterlyAdditions.length, 2);
+  assert.equal(refreshed.record.currentAmount, 1750);
+});
+
+test('payment stops if an eligible quarterly allowance is missing from an unpaid payroll', async () => {
+  const db = database([payroll()]);
+  await assert.rejects(requireQuarterlyAdditionsBeforePayment(db, db.data.payroll_requests[0]), { message: 'QUARTERLY_MISSING' });
+  await preparePayrollRecord(db, db.data.employees[0], period, {});
+  await assert.doesNotReject(requireQuarterlyAdditionsBeforePayment(db, db.data.payroll_requests[0]));
 });
 
 test('quarter selection supports late payments and year boundaries but rejects future or malformed quarters', () => {

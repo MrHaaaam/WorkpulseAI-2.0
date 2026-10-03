@@ -21,8 +21,6 @@ import {
   ResponsiveContainer,
   AreaChart,
   Area,
-  LineChart,
-  Line,
   BarChart,
   Bar,
   XAxis,
@@ -101,9 +99,9 @@ interface AdminOverviewProps {
   latestAttendanceDate?: string;
   performanceDate: string;
   onPerformanceDateChange: (value: string) => void;
-  employees: { createdAt?: string }[];
+  employees: { createdAt?: string; role?: string; status?: string }[];
   leaveRequests: { id: string; employeeId?: string; startDate: string; endDate: string; approvedDates?: string[]; totalDays: number; status: string }[];
-  attendanceRecords: { date?: string; status: string; worked?: boolean }[];
+  attendanceRecords: { employeeId?: string; date?: string; status: string; worked?: boolean }[];
   onNavigate?: (view: "attendance" | "employees" | "leave" | "payroll" | "settings" | "admin" | "insights") => void;
   auditLoading?: boolean;
   auditError?: string;
@@ -134,24 +132,47 @@ export function AdminOverviewView({
   const chartData = attendanceTrends?.[viewMode] || [];
   const chartHasData = chartData.some((item) => item.present > 0 || item.absent > 0);
   const chartSummary = chartData.map((item) => `${item.label}: ${item.present} present, ${item.absent} recorded absent`).join("; ");
-  const attendanceCountTrend = chartData.map((item) => ({ label: item.label, attended: item.uniquePresent }));
-  const attendanceCountTrendHasData = attendanceCountTrend.some((item) => item.attended > 0);
-  const attendanceCountTrendSummary = attendanceCountTrend.map((item) => `${item.label}: ${item.attended} attended`).join("; ");
-  const weekdayPatternData = (() => {
-    const end = new Date(`${performanceDate}T00:00:00Z`);
-    const start = new Date(end);
-    start.setUTCDate(start.getUTCDate() - 89);
-    const rows = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((label) => ({ label, onTime: 0 }));
-    attendanceRecords.forEach((record) => {
-      if (!record.date || (record.status !== "Present" && !(record.status === "Idle" && record.worked))) return;
-      const date = new Date(`${record.date}T00:00:00Z`);
-      if (Number.isNaN(date.getTime()) || date < start || date > end) return;
-      rows[date.getUTCDay()].onTime += 1;
-    });
-    return [...rows.slice(1), rows[0]];
-  })();
-  const weekdayPatternHasData = weekdayPatternData.some((item) => item.onTime > 0);
-  const weekdayPatternSummary = weekdayPatternData.map((item) => `${item.label}: ${item.onTime} attended`).join("; ");
+  const anchor = new Date(`${performanceDate}T00:00:00Z`);
+  const bucketStart = (date: Date) => {
+    const start = new Date(date);
+    if (viewMode === "weekly") start.setUTCDate(start.getUTCDate() - ((start.getUTCDay() + 6) % 7));
+    if (viewMode === "monthly") start.setUTCDate(1);
+    return start;
+  };
+  const hiringData = Array.from({ length: viewMode === "daily" ? 7 : 6 }, (_, index) => {
+    const date = bucketStart(anchor);
+    const offset = (viewMode === "daily" ? 6 : 5) - index;
+    if (viewMode === "daily") date.setUTCDate(date.getUTCDate() - offset);
+    else if (viewMode === "weekly") date.setUTCDate(date.getUTCDate() - offset * 7);
+    else date.setUTCMonth(date.getUTCMonth() - offset);
+    const key = date.toISOString().slice(0, 10);
+    const label = date.toLocaleDateString("en-US", { timeZone: "UTC", month: "short", ...(viewMode === "monthly" ? {} : { day: "numeric" }) });
+    return { label, key, count: 0 };
+  });
+  const chartRangeStart = hiringData[0].key;
+  const chartRangeStartLabel = new Date(`${chartRangeStart}T00:00:00Z`).toLocaleDateString("en-US", { timeZone: "UTC", month: "short", day: "numeric", year: "numeric" });
+  employees.forEach((employee) => {
+    if (!employee.createdAt) return;
+    const created = new Date(employee.createdAt);
+    if (Number.isNaN(created.getTime())) return;
+    const parts = new Intl.DateTimeFormat("en-US", { timeZone: "Asia/Manila", year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(created);
+    const part = (type: "year" | "month" | "day") => parts.find((item) => item.type === type)?.value || "";
+    const createdDate = `${part("year")}-${part("month")}-${part("day")}`;
+    if (createdDate < chartRangeStart || createdDate > performanceDate) return;
+    const bucketKey = bucketStart(new Date(`${createdDate}T00:00:00Z`)).toISOString().slice(0, 10);
+    const bucket = hiringData.find((item) => item.key === bucketKey);
+    if (bucket) bucket.count += 1;
+  });
+  const hiringSummary = hiringData.map((item) => `${item.key}: ${item.count} registered`).join("; ");
+  const leavesInRange = leaveRequests.filter((leave) => leave.startDate <= performanceDate && leave.endDate >= chartRangeStart);
+  const leaveStatusData = [
+    { label: "Pending", count: leavesInRange.filter((leave) => leave.status.toLowerCase() === "pending").length, fill: "#f59e0b" },
+    { label: "Approved", count: leavesInRange.filter((leave) => leave.status.toLowerCase() === "approved").length, fill: "#10b981" },
+    { label: "Rejected", count: leavesInRange.filter((leave) => leave.status.toLowerCase() === "rejected").length, fill: "#ef4444" },
+  ];
+  const leaveStatusSummary = leaveStatusData.map((item) => `${item.label}: ${item.count}`).join("; ");
+  const totalLeaveRequests = leaveStatusData.reduce((total, item) => total + item.count, 0);
+  const newEmployeesInPeriod = hiringData.reduce((total, item) => total + item.count, 0);
   const performanceDateLabel = new Date(`${performanceDate}T00:00:00Z`).toLocaleDateString("en-US", {
     timeZone: "UTC", month: "short", day: "numeric", year: "numeric",
   });
@@ -159,13 +180,19 @@ export function AdminOverviewView({
     if (leave.status !== "approved") return false;
     return leave.approvedDates?.length ? leave.approvedDates.includes(performanceDate) : leave.startDate <= performanceDate && leave.endDate >= performanceDate;
   });
-  const employeesOnLeave = new Set(approvedLeavesForDate.map((leave) => leave.employeeId || leave.id)).size;
   const performanceRecords = attendanceRecords.filter((record) => record.date === performanceDate);
-  const attendedForDate = performanceRecords.filter((record) => record.status === "Present" || (record.status === "Idle" && record.worked)).length;
+  const attendedEmployeeIds = new Set(performanceRecords.flatMap((record, index) =>
+    record.status === "Present" || (record.status === "Idle" && record.worked) ? [record.employeeId || `record-${index}`] : []));
+  const attendedForDate = attendedEmployeeIds.size;
   const onTimeForDate = attendedForDate;
-  const performanceLeave = new Set(leaveRequests.filter((leave) => leave.status === "approved" && (leave.approvedDates?.length ? leave.approvedDates.includes(performanceDate) : leave.startDate <= performanceDate && leave.endDate >= performanceDate)).map((leave) => leave.employeeId || leave.id)).size;
-  const idleWithoutWork = performanceRecords.filter(record => record.status === "Idle" && !record.worked).length;
-  const expectedWorkforceForDate = Math.max(0, metrics.workforceEligible - performanceLeave - idleWithoutWork);
+  const employeesOnLeave = new Set(approvedLeavesForDate.map((leave) => leave.employeeId || leave.id).filter((id) => !attendedEmployeeIds.has(id))).size;
+  const idleWithoutWork = new Set(performanceRecords.flatMap((record, index) =>
+    record.status === "Idle" && !record.worked && !attendedEmployeeIds.has(record.employeeId || `record-${index}`) ? [record.employeeId || `record-${index}`] : [])).size;
+  const expectedWorkforceForDate = Math.max(attendedForDate, metrics.workforceEligible - employeesOnLeave - idleWithoutWork);
+  const manilaTodayParts = new Intl.DateTimeFormat("en-US", { timeZone: "Asia/Manila", year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(new Date());
+  const todayPart = (type: "year" | "month" | "day") => manilaTodayParts.find((part) => part.type === type)?.value || "";
+  const manilaToday = `${todayPart("year")}-${todayPart("month")}-${todayPart("day")}`;
+  const attendanceReviewCount = performanceDate < manilaToday ? Math.max(0, expectedWorkforceForDate - attendedForDate) : 0;
   const attendanceRateForDate = expectedWorkforceForDate ? attendedForDate / expectedWorkforceForDate * 100 : 0;
   const registeredOnSelectedDate = employees.filter((employee) => {
     if (!employee.createdAt) return false;
@@ -180,12 +207,13 @@ export function AdminOverviewView({
     const value = (type: "year" | "month" | "day") => parts.find((part) => part.type === type)?.value || "";
     return `${value("year")}-${value("month")}-${value("day")}` === performanceDate;
   }).length;
-  const selectedBreakdown = [
-    { name: "Present", value: onTimeForDate, color: "#10b981" },
-    { name: "No attendance recorded", value: Math.max(0, expectedWorkforceForDate - attendedForDate), color: "#ef4444" },
-    { name: "Idle day", value: idleWithoutWork, color: "#8642ed" },
-    { name: "On Leave", value: performanceLeave, color: "#6366f1" },
-  ].filter((item) => item.value > 0);
+  const roleCounts = ([
+    { key: "supervisor", label: "Supervisors", color: "bg-slate-700" },
+    { key: "manager", label: "Managers", color: "bg-violet-600" },
+    { key: "regular", label: "Regular", color: "bg-sky-600" },
+    { key: "extra", label: "Extra", color: "bg-teal-600" },
+  ] as const).map((role) => ({ ...role, count: employees.filter((employee) => employee.role?.toLowerCase() === role.key && employee.status !== "inactive").length }));
+  const roleTotal = roleCounts.reduce((total, role) => total + role.count, 0);
   const failedAuditEvents = auditTrail.filter((event) => event.status === "Failed").length;
   const performanceMetrics = [
     { label: "Attendance rate", value: attendanceRateForDate, icon: Gauge, color: "text-emerald-600", bar: "bg-emerald-500", hint: attendedForDate ? `${attendedForDate} of ${expectedWorkforceForDate} expected employees recorded attendance` : "No attendance has been recorded for this date", format: "percent" as const, unavailable: expectedWorkforceForDate === 0 },
@@ -194,7 +222,7 @@ export function AdminOverviewView({
   ];
 
   const adminMetrics = [
-    { label: "Expected workforce", value: expectedWorkforceForDate, progress: metrics.workforceEligible ? expectedWorkforceForDate / metrics.workforceEligible * 100 : 0, hint: "Scheduled workforce excluding approved leave", icon: Users, color: "text-violet-600", bar: "bg-violet-500" },
+    { label: "Expected workforce", value: expectedWorkforceForDate, progress: metrics.workforceEligible ? expectedWorkforceForDate / metrics.workforceEligible * 100 : 0, hint: "Eligible staff, excluding leave without attendance and idle days", icon: Users, color: "text-violet-600", bar: "bg-violet-500" },
     { label: "Present", value: onTimeForDate, progress: expectedWorkforceForDate ? onTimeForDate / expectedWorkforceForDate * 100 : 0, hint: "Recorded attendance on the selected date", icon: UserCheck, color: "text-emerald-600", bar: "bg-emerald-500" },
     { label: "No attendance recorded", value: Math.max(0, expectedWorkforceForDate - attendedForDate), progress: expectedWorkforceForDate ? Math.max(0, expectedWorkforceForDate - attendedForDate) / expectedWorkforceForDate * 100 : 0, hint: "Review before treating these records as absences", icon: AlertCircle, color: "text-red-600", bar: "bg-red-500" },
     { label: "On approved leave", value: employeesOnLeave, progress: metrics.workforceEligible ? employeesOnLeave / metrics.workforceEligible * 100 : 0, hint: "No time-in required for the selected date", icon: Calendar, color: "text-sky-600", bar: "bg-sky-500" },
@@ -202,7 +230,7 @@ export function AdminOverviewView({
 
   return (
     <div className="space-y-6">
-      <AdminPageHeader title="Admin Overview" description="Track your workforce, attendance, and items to review." icon={Activity} actions={<DateNavigator label="Overview date" value={performanceDate} onChange={onPerformanceDateChange} />} />
+      <AdminPageHeader title="Admin Overview" description="Track your workforce, attendance, and items to review." icon={Activity} actions={<><Tabs ariaLabel="Overview chart period" value={viewMode} onValueChange={(value) => onViewModeChange(value as ViewMode)} items={[{ value: "daily", label: "Daily", shortLabel: "D" }, { value: "weekly", label: "Weekly", shortLabel: "W" }, { value: "monthly", label: "Monthly", shortLabel: "M" }]} /><DateNavigator label="Overview date" value={performanceDate} onChange={onPerformanceDateChange} /></>} />
 
       {/* Workforce inventory cards */}
       <Card data-guide="workforce-operations">
@@ -282,13 +310,8 @@ export function AdminOverviewView({
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
         <Card data-guide="attendance-trends" className="lg:col-span-2">
           <CardHeader>
-            <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
-              <div><CardTitle>Workforce Attendance Trends</CardTitle><CardDescription>Present vs Absent — {viewMode} view ending {performanceDateLabel}</CardDescription></div>
-              <div className="flex flex-wrap items-center gap-2">
-                <div className="flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2"><Calendar className="h-4 w-4 text-slate-400" /><span className="whitespace-nowrap text-sm font-medium text-slate-700">{latestAttendanceDate ? `Through ${new Date(`${latestAttendanceDate}T00:00:00`).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}` : 'No attendance period'}</span></div>
-                <Tabs ariaLabel="Attendance trend period" value={viewMode} onValueChange={(value) => onViewModeChange(value as ViewMode)} items={[{ value: "daily", label: "Daily" }, { value: "weekly", label: "Weekly" }, { value: "monthly", label: "Monthly" }]} />
-              </div>
-            </div>
+            <CardTitle>Workforce Attendance Trends</CardTitle>
+            <CardDescription>Present vs recorded absent by {viewMode === "daily" ? "day" : viewMode === "weekly" ? "week" : "month"}, {chartRangeStartLabel} to {performanceDateLabel}{latestAttendanceDate ? ` · latest record ${latestAttendanceDate}` : ""}</CardDescription>
           </CardHeader>
           <CardContent>
             <p className="sr-only">Attendance trend summary. {chartSummary || "No attendance data is available for this period."}</p>
@@ -325,73 +348,60 @@ export function AdminOverviewView({
 
         <Card data-guide="today-breakdown">
           <CardHeader>
-            <CardTitle>Selected Day Breakdown</CardTitle>
-            <CardDescription>{performanceDateLabel}</CardDescription>
+            <CardTitle>Employees by Role</CardTitle>
+            <CardDescription>Active workforce across the four employee roles</CardDescription>
           </CardHeader>
           <CardContent>
-            <p className="sr-only">Selected-day breakdown: {selectedBreakdown.map((item) => `${item.name} ${item.value}`).join(", ") || "no records available"}.</p>
-            {selectedBreakdown.length ? <div role="img" aria-label={`Selected-day breakdown for ${performanceDateLabel}: ${selectedBreakdown.map((item) => `${item.name} ${item.value}`).join(", ")}.`}><ResponsiveContainer width="100%" height={300}>
-              <PieChart>
-                <Pie
-                  data={selectedBreakdown}
-                  cx="50%"
-                  cy="45%"
-                  innerRadius={55}
-                  outerRadius={85}
-                  paddingAngle={3}
-                  dataKey="value"
-                >
-                  {selectedBreakdown.map((entry, index) => (
-                    <Cell key={`cell-adm-${index}`} fill={entry.color || "#cbd5e1"} />
-                  ))}
-                </Pie>
-                <Tooltip
-                  contentStyle={{
-                    borderRadius: "10px",
-                    border: "1px solid #e2e8f0",
-                    fontSize: "13px",
-                  }}
-                />
-                <Legend wrapperStyle={{ fontSize: "13px" }} />
-              </PieChart>
-            </ResponsiveContainer></div> : <div className="grid h-[300px] place-items-center text-center text-sm text-slate-500">No workforce or attendance records are available for this date.</div>}
+            <div className="mb-6 flex items-end justify-between border-b border-slate-200 pb-5">
+              <div><p className="text-xs font-medium uppercase tracking-wider text-slate-500">Total employees</p><p className="mt-1 text-4xl font-semibold tabular-nums text-slate-900">{roleTotal}</p></div>
+              <Users className="h-6 w-6 text-slate-400" aria-hidden="true" />
+            </div>
+            <div className="space-y-5" aria-label="Employee count by role">
+              {roleCounts.map((role) => <div key={role.key}>
+                <div className="mb-2 flex items-baseline justify-between gap-3 text-sm"><span className="font-medium text-slate-700">{role.label}</span><span className="font-semibold tabular-nums text-slate-900">{role.count}</span></div>
+                <div className="h-2 overflow-hidden rounded-full bg-slate-100"><div className={`h-full rounded-full ${role.color}`} style={{ width: `${roleTotal ? role.count / roleTotal * 100 : 0}%` }} /></div>
+              </div>)}
+            </div>
           </CardContent>
         </Card>
       </div>
 
-      <section aria-label="Attendance analytics">
+      <section aria-label="Workforce and leave analytics">
         <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
           <Card>
-            <CardHeader><CardTitle>Employees Present at Work</CardTitle><CardDescription>Different employees who clocked in during each {viewMode === "daily" ? "day" : viewMode === "weekly" ? "week" : "month"}</CardDescription></CardHeader>
+            <CardHeader><CardTitle>New Employees by {viewMode === "daily" ? "Day" : viewMode === "weekly" ? "Week" : "Month"}</CardTitle><CardDescription>{chartRangeStartLabel} to {performanceDateLabel}</CardDescription></CardHeader>
             <CardContent>
-              <p className="sr-only">Employees present at work over time. {attendanceCountTrendSummary || "No attendance data is available."}</p>
-              {attendanceCountTrendHasData ? <div role="img" aria-label={`Employees present at work over time. ${attendanceCountTrendSummary}`}><ResponsiveContainer width="100%" height={280}>
-                <LineChart data={attendanceCountTrend} margin={{ top: 5, right: 12, left: -12, bottom: 0 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-                  <XAxis dataKey="label" tick={{ fontSize: 12, fill: "#64748b" }} axisLine={false} tickLine={false} />
-                  <YAxis allowDecimals={false} tick={{ fontSize: 12, fill: "#64748b" }} axisLine={false} tickLine={false} />
-                  <Tooltip contentStyle={{ borderRadius: "10px", border: "1px solid #e2e8f0", fontSize: "13px" }} />
-                  <Legend wrapperStyle={{ fontSize: "13px" }} />
-                  <Line type="monotone" dataKey="attended" name="Employees present" stroke="#7c3aed" strokeWidth={3} dot={{ r: 4, fill: "#7c3aed" }} activeDot={{ r: 6 }} />
-                </LineChart>
-              </ResponsiveContainer></div> : <div className="grid h-[280px] place-items-center rounded-xl border border-dashed border-slate-200 bg-slate-50 px-6 text-center text-sm text-slate-500">No employee arrivals are available for this period.</div>}
+              <p className="sr-only">New employees by {viewMode === "daily" ? "day" : viewMode === "weekly" ? "week" : "month"}. {hiringSummary}</p>
+              <div className="mb-5 flex items-baseline gap-2 border-b border-slate-100 pb-4">
+                <span className="text-3xl font-semibold tracking-tight text-slate-900">{newEmployeesInPeriod}</span>
+                <span className="text-xs text-slate-500">new employees in this range</span>
+              </div>
+              {newEmployeesInPeriod > 0 ? <div role="img" aria-label={`New employees by ${viewMode}. ${hiringSummary}`}><ResponsiveContainer width="100%" height={205}>
+                <BarChart data={hiringData} margin={{ top: 8, right: 8, left: -30, bottom: 0 }} barCategoryGap="45%">
+                  <CartesianGrid vertical={false} stroke="#e9edf3" />
+                  <XAxis dataKey="label" tick={{ fontSize: 11, fill: "#64748b" }} axisLine={false} tickLine={false} tickMargin={10} />
+                  <YAxis allowDecimals={false} tick={{ fontSize: 11, fill: "#94a3b8" }} axisLine={false} tickLine={false} tickCount={4} />
+                  <Tooltip cursor={{ fill: "#f8fafc" }} contentStyle={{ borderRadius: "8px", border: "1px solid #e2e8f0", fontSize: "12px", boxShadow: "0 8px 24px rgba(15,23,42,0.08)" }} />
+                  <Bar dataKey="count" name="New employees" fill="#64748b" maxBarSize={36} radius={[2, 2, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer></div> : <div className="grid h-[205px] place-items-center border-t border-slate-100 text-center text-sm text-slate-500">No employees were registered in this range.</div>}
             </CardContent>
           </Card>
 
           <Card>
-            <CardHeader><CardTitle>Weekday Attendance Pattern</CardTitle><CardDescription>Employee workdays recorded in the 90 days ending {performanceDateLabel}</CardDescription></CardHeader>
+            <CardHeader><CardTitle>Leave Request Status</CardTitle><CardDescription>Requests overlapping {chartRangeStartLabel} to {performanceDateLabel}</CardDescription></CardHeader>
             <CardContent>
-              <p className="sr-only">Weekday arrival pattern. {weekdayPatternSummary}</p>
-              {weekdayPatternHasData ? <div role="img" aria-label={`Weekday arrival pattern. ${weekdayPatternSummary}`}><ResponsiveContainer width="100%" height={280}>
-                <BarChart data={weekdayPatternData} margin={{ top: 5, right: 12, left: -12, bottom: 0 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-                  <XAxis dataKey="label" tick={{ fontSize: 12, fill: "#64748b" }} axisLine={false} tickLine={false} />
-                  <YAxis allowDecimals={false} tick={{ fontSize: 12, fill: "#64748b" }} axisLine={false} tickLine={false} />
-                  <Tooltip contentStyle={{ borderRadius: "10px", border: "1px solid #e2e8f0", fontSize: "13px" }} />
-                  <Legend wrapperStyle={{ fontSize: "13px" }} />
-                  <Bar dataKey="onTime" name="Employee workdays" fill="#059669" radius={[5, 5, 0, 0]} />
-                </BarChart>
-              </ResponsiveContainer></div> : <div className="grid h-[280px] place-items-center rounded-xl border border-dashed border-slate-200 bg-slate-50 px-6 text-center text-sm text-slate-500">No attendance was recorded in this 90-day period.</div>}
+              <p className="sr-only">Leave request status. {leaveStatusSummary}</p>
+              <div className="mb-5 flex items-baseline gap-2 border-b border-slate-100 pb-4">
+                <span className="text-3xl font-semibold tracking-tight text-slate-900">{totalLeaveRequests}</span>
+                <span className="text-xs text-slate-500">total requests</span>
+              </div>
+              {totalLeaveRequests > 0 ? <div className="flex h-[205px] flex-col justify-center gap-6" role="img" aria-label={`Leave request status. ${leaveStatusSummary}`}>
+                {leaveStatusData.map((item) => <div key={item.label}>
+                  <div className="mb-2 flex items-center justify-between text-sm"><span className="font-medium text-slate-700">{item.label}</span><span className="tabular-nums font-semibold text-slate-900">{item.count}<span className="ml-2 text-xs font-normal text-slate-400">{Math.round(item.count / totalLeaveRequests * 100)}%</span></span></div>
+                  <div className="h-1.5 overflow-hidden rounded-full bg-slate-100"><div className="h-full rounded-full" style={{ width: `${item.count / totalLeaveRequests * 100}%`, backgroundColor: item.fill }} /></div>
+                </div>)}
+              </div> : <div className="grid h-[205px] place-items-center border-t border-slate-100 text-center text-sm text-slate-500">No leave requests are available.</div>}
             </CardContent>
           </Card>
         </div>
@@ -407,8 +417,8 @@ export function AdminOverviewView({
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-3">
-              {Math.max(0, expectedWorkforceForDate - attendedForDate) > 0 && <div className="flex items-center justify-between gap-3 rounded-lg border border-red-200 bg-red-50/70 p-3">
-                <div className="flex items-center gap-3"><div className="rounded-full bg-red-100 p-2 text-red-700"><AlertCircle className="h-4 w-4" /></div><div><h4 className="text-xs font-semibold text-red-950">Attendance records to review</h4><p className="text-[11px] leading-5 text-red-800">{Math.max(0, expectedWorkforceForDate - attendedForDate)} expected {Math.max(0, expectedWorkforceForDate - attendedForDate) === 1 ? "employee has" : "employees have"} no recorded attendance. This is not automatically a confirmed absence.</p></div></div>
+              {attendanceReviewCount > 0 && <div className="flex items-center justify-between gap-3 rounded-lg border border-red-200 bg-red-50/70 p-3">
+                <div className="flex items-center gap-3"><div className="rounded-full bg-red-100 p-2 text-red-700"><AlertCircle className="h-4 w-4" /></div><div><h4 className="text-xs font-semibold text-red-950">Attendance records to review</h4><p className="text-[11px] leading-5 text-red-800">{attendanceReviewCount} expected {attendanceReviewCount === 1 ? "employee has" : "employees have"} no recorded attendance. This is not automatically a confirmed absence.</p></div></div>
                 <Button size="sm" variant="outline" onClick={() => onNavigate?.("attendance")} className="h-7 shrink-0 text-xs">Review</Button>
               </div>}
               {metrics.pendingPayrollCount > 0 && <div className="flex items-center justify-between rounded-lg border border-amber-200 bg-amber-50/70 p-3">
@@ -417,8 +427,8 @@ export function AdminOverviewView({
                     <ReceiptText className="h-4 w-4" />
                   </div>
                   <div>
-                    <h4 className="text-xs font-semibold text-amber-900">Payroll Processing</h4>
-                    <p className="text-[11px] text-amber-700">{metrics.pendingPayrollCount} payroll records currently processing</p>
+                    <h4 className="text-xs font-semibold text-amber-900">Payroll periods to review</h4>
+                    <p className="text-[11px] text-amber-700">{metrics.pendingPayrollCount} records still processing after their pay period ended</p>
                   </div>
                 </div>
                 <Button size="sm" onClick={() => onNavigate?.("payroll")} className="h-7 border-0 bg-amber-500 text-xs text-white hover:bg-amber-600">View</Button>
@@ -436,7 +446,7 @@ export function AdminOverviewView({
                 </div>
                 <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => document.getElementById("overview-audit-trail")?.scrollIntoView({ behavior: "smooth" })}>Logs</Button>
               </div>}
-              {Math.max(0, expectedWorkforceForDate - attendedForDate) === 0 && metrics.pendingPayrollCount === 0 && failedAuditEvents === 0 && <div className="flex items-center gap-3 rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-900"><CheckCircle2 className="h-5 w-5 shrink-0" /><span>No attendance, payroll, or audit items currently require review.</span></div>}
+              {attendanceReviewCount === 0 && metrics.pendingPayrollCount === 0 && failedAuditEvents === 0 && <div className="flex items-center gap-3 rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-900"><CheckCircle2 className="h-5 w-5 shrink-0" /><span>No attendance, payroll, or audit items currently require review.</span></div>}
             </CardContent>
           </Card>
 

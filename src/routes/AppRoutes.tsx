@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { Bell, CalendarDays, Clock, LogOut, Menu, Sparkles } from 'lucide-react';
 import { Dialog, DialogHeader } from '../components/ui/Dialog';
 import { Button } from '../components/ui/Button';
@@ -12,9 +12,10 @@ import { AIInsightsView } from '../views/AIInsightsView';
 import { LeaveRequestsView } from '../views/LeaveRequestsView';
 import { AdminView } from '../views/AdminView';
 import { AttendanceView } from '../views/AttendanceView';
+import { EmployeeCalendar } from '../views/EmployeeCalendar';
 import { apiFetch, clearSession } from '../lib/api';
 
-type OverviewEmployee = { status: string; biometricStatus: string; createdAt?: string };
+type OverviewEmployee = { role?: string; status: string; biometricStatus: string; createdAt?: string };
 type OverviewPayroll = { status: string; periodStart?: string };
 type OverviewAttendance = { employeeId?: string; name?: string; role?: string; date?: string; checkIn?: string; checkOut?: string; worked?: boolean; status: string };
 type OverviewLeave = { id: string; employeeId?: string; startDate: string; endDate: string; approvedDates?: string[]; totalDays: number; status: string };
@@ -223,7 +224,7 @@ function manilaDateToday() {
 export function AppRoutes() {
   const params = typeof window !== 'undefined' ? new URLSearchParams(window.location.search) : new URLSearchParams();
   const paramView = params.get('view') as ViewKey;
-  const validViews: ViewKey[] = ['overview', 'attendance', 'employees', 'leave', 'payroll', 'insights', 'settings', 'admin'];
+  const validViews: ViewKey[] = ['overview', 'attendance', 'calendar', 'employees', 'leave', 'payroll', 'insights', 'settings', 'admin'];
   const initialView: ViewKey = validViews.includes(paramView) ? paramView : 'overview';
   const [active, setActive] = useState<ViewKey>(initialView);
   const [mobileNavigationOpen, setMobileNavigationOpen] = useState(false);
@@ -242,7 +243,7 @@ export function AppRoutes() {
     { key: 'all', label: 'All', icon: Bell },
     { key: 'leave', label: 'Leave Requests', icon: CalendarDays },
     { key: 'attendance', label: 'Attendance', icon: Clock },
-    { key: 'insights', label: 'AI Insights', icon: Sparkles },
+    { key: 'insights', label: 'Insights', icon: Sparkles },
   ] as const;
   useEffect(() => {
     const timer = window.setInterval(() => setNotificationNow(Date.now()), 1000);
@@ -251,7 +252,43 @@ export function AppRoutes() {
   const [notificationsLoading, setNotificationsLoading] = useState(true);
   const [notificationsError, setNotificationsError] = useState('');
   const [notificationReadError, setNotificationReadError] = useState('');
+  const seenOnOpenRef = useRef(new Set<string>());
   const unreadCount = notificationsOpen ? 0 : visibleNotifications.filter((request) => !request.read).length;
+
+  async function openNotifications() {
+    setNotificationCategory('all');
+    setNewNotificationIds([]);
+    setNotificationReadError('');
+    setNotificationsOpen(true);
+    let ids: string[] = [];
+    try {
+      let items = visibleNotifications;
+      if (notificationsLoading || notificationsError) {
+        const response = await apiFetch('/api/admin/notifications');
+        if (!response.ok) throw new Error('Unable to load notifications');
+        items = await response.json() as typeof notifications;
+        setNotifications(items);
+        setNotificationsError('');
+        setNotificationsLoading(false);
+      }
+      ids = items.filter((item) => !item.read && new Date(item.expiresAt).getTime() > Date.now()).map((item) => item.id);
+      if (!ids.length) return;
+      ids.forEach((id) => seenOnOpenRef.current.add(id));
+      setNotifications((current) => current.map((item) => seenOnOpenRef.current.has(item.id) ? { ...item, read: true } : item));
+      const response = await apiFetch('/api/admin/notifications/read', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids }),
+      });
+      if (!response.ok) throw new Error('Unable to save read status');
+      const { readIds } = await response.json() as { readIds: string[] };
+      const unreadIds = ids.filter((id) => !readIds.includes(id));
+      unreadIds.forEach((id) => seenOnOpenRef.current.delete(id));
+      if (unreadIds.length) setNotifications((current) => current.map((item) => unreadIds.includes(item.id) ? { ...item, read: false } : item));
+    } catch {
+      ids.forEach((id) => seenOnOpenRef.current.delete(id));
+      setNotifications((current) => current.map((item) => ids.includes(item.id) ? { ...item, read: false } : item));
+      setNotificationReadError('Could not save read status. Reopen notifications to retry.');
+    }
+  }
 
   useEffect(() => {
     let cancelled = false;
@@ -274,7 +311,7 @@ export function AppRoutes() {
         if (!response.ok) throw new Error('Unable to load notifications. Please try again.');
         const requests = await response.json() as typeof notifications;
         if (!cancelled) {
-          setNotifications(requests);
+          setNotifications(requests.map((request) => seenOnOpenRef.current.has(request.id) ? { ...request, read: true } : request));
           setNotificationsError('');
           if (notificationsOpen) {
             const ids = requests.filter((request) => !request.read).map((request) => request.id);
@@ -389,8 +426,16 @@ export function AppRoutes() {
     const totalStaff = overviewEmployees.length;
     const activeWorkforce = overviewEmployees.filter((employee) => employee.status === "active").length;
     const workforceEligible = overviewEmployees.filter((employee) => employee.status === "active" || employee.status === "on-leave").length;
-    const currentPayroll = overviewPayroll.filter((payroll) => payroll.periodStart === currentPayrollPeriodKey());
-    const pendingPayrollCount = currentPayroll.filter((payroll) => payroll.status === "processing").length;
+    const today = manilaDateToday();
+    const pendingPayrollCount = overviewPayroll.filter((payroll) => {
+      if (payroll.status !== 'processing' || !/^\d{4}-\d{2}-(01|16)$/.test(payroll.periodStart || '')) return false;
+      const start = new Date(`${payroll.periodStart}T00:00:00Z`);
+      if (Number.isNaN(start.getTime())) return false;
+      const nextPeriod = new Date(start);
+      if (start.getUTCDate() === 1) nextPeriod.setUTCDate(16);
+      else { nextPeriod.setUTCMonth(nextPeriod.getUTCMonth() + 1); nextPeriod.setUTCDate(1); }
+      return nextPeriod.toISOString().slice(0, 10) <= today;
+    }).length;
     
     return {
       totalStaff,
@@ -463,6 +508,7 @@ export function AppRoutes() {
       />
     ),
     attendance: <AttendanceView role="admin" records={[]} />,
+    calendar: <EmployeeCalendar admin />,
 
     employees: <EmployeeDirectoryView employees={[]} />,
 
@@ -479,8 +525,8 @@ export function AppRoutes() {
   };
 
   const viewLabels: Record<ViewKey, string> = {
-    overview: 'Overview', attendance: 'Attendance', employees: 'Employee Directory', leave: 'Leave Requests',
-    payroll: 'Payroll', insights: 'AI Insights', settings: 'System Settings', admin: 'Admin Controls',
+    overview: 'Overview', attendance: 'Attendance', calendar: 'Calendar', employees: 'Employee Directory', leave: 'Leave Requests',
+    payroll: 'Payroll', insights: 'Insights', settings: 'System Settings', admin: 'Admin Controls',
   };
 
   // Sync state transitions back to URL queries
@@ -503,14 +549,14 @@ export function AppRoutes() {
           <button onClick={() => setMobileNavigationOpen(true)} aria-label="Open navigation" className="mr-2 grid h-11 w-11 shrink-0 place-items-center rounded-xl border border-slate-200 sm:mr-3 text-slate-600 hover:bg-slate-50 lg:hidden"><Menu className="h-5 w-5" /></button>
           <div className="min-w-0"><p className="text-[10px] font-bold uppercase tracking-[0.16em] text-violet-600">Admin workspace</p><h1 className="truncate text-base font-bold text-slate-900 sm:text-lg">{viewLabels[active]}</h1></div>
           <div className="ml-auto flex shrink-0 items-center gap-2 pl-2">
-            <button type="button" onClick={() => { setNotificationCategory('all'); setNewNotificationIds([]); setNotificationReadError(''); setNotificationsOpen(true); }} aria-label={`Notifications${!notificationsError && unreadCount ? `, ${unreadCount} unread notifications` : ''}`} className="relative grid h-11 w-11 place-items-center rounded-xl border border-slate-200 text-slate-600 hover:bg-violet-50 hover:text-violet-700">
+            <button type="button" onClick={() => void openNotifications()} aria-label={`Notifications${!notificationsError && unreadCount ? `, ${unreadCount} unread notifications` : ''}`} className="relative grid h-11 w-11 place-items-center rounded-xl border border-slate-200 text-slate-600 hover:bg-violet-50 hover:text-violet-700">
               <Bell className="h-5 w-5" />
               {!notificationsError && unreadCount > 0 && <span className="absolute -right-1 -top-1 rounded-full bg-violet-600 px-1.5 text-[10px] font-bold text-white">{unreadCount > 99 ? '99+' : unreadCount}</span>}
             </button>
             <Button variant="outline" className="h-11 w-11 px-0 sm:w-auto sm:px-4" onClick={requestLogout}><LogOut className="h-4 w-4" /><span className="hidden sm:inline">Log out</span><span className="sr-only sm:hidden">Log out</span></Button>
           </div>
         </header>
-        <main className="min-w-0 overflow-x-hidden px-3 py-4 sm:px-5 sm:py-6 lg:px-8 lg:py-8">
+        <main className="min-w-0 overflow-x-clip px-3 py-4 sm:px-5 sm:py-6 lg:px-8 lg:py-8">
           <div className="mx-auto w-full max-w-[1600px]">{viewMap[active] || viewMap.overview}</div>
         </main>
       </div>

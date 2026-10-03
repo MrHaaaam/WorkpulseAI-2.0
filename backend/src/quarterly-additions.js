@@ -1,6 +1,6 @@
 import { payrollTransaction } from './payroll-transaction.js';
 import crypto from 'node:crypto';
-import { configuredAdditions, validQuarter, quarterForDate, allowanceKey, manilaDate } from '../../shared/quarterly-additions.js';
+import { configuredAdditions, validQuarter, quarterForDate, allowanceKey, manilaDate, COMBINED_ADDITION_KEY } from '../../shared/quarterly-additions.js';
 
 const indexPromises = new WeakMap();
 export async function ensureQuarterlyIndex(db) {
@@ -45,7 +45,7 @@ export async function recurringPayrollAdditions(db, employee, periodStart) {
   const blocked = new Set();
   for (const record of history) {
     for (const item of [...(record.additions || []), ...(record.quarterlyAdditions || [])]) {
-      if (item.quarter === quarter || (!item.frequency && !item.quarter && item.label !== 'Bonus')) blocked.add(allowanceKey(item));
+      if (item.quarter === quarter || (!item.frequency && !item.quarter && item.label !== 'Bonus' && recordQuarter(record) === quarter)) blocked.add(allowanceKey(item));
     }
   }
   return configured.filter(item => !blocked.has(item.sourceKey));
@@ -59,7 +59,14 @@ export async function automaticQuarterlyAdditions(db, employee, periodStart, exi
   const history = await db.collection('payroll_requests').find({ employeeId: employee.id, status: { $in: activeStatuses } }).toArray();
   if (history.some(record => record.id !== existing?.id && record.quarterlyKeys?.includes(quarter))) return [];
   const priorKeys = new Set((existing?.quarterlyAdditions || []).filter(item => item.quarter === quarter).map(allowanceKey));
-  return configured.filter(item => !priorKeys.has(item.sourceKey) && !history.some(record =>
+  const legacyKeys = new Set((employee.identifiers || []).map(allowanceKey));
+  const legacyPaidInQuarter = history.some(record => [...(record.additions || []), ...(record.quarterlyAdditions || [])].some(item =>
+    item.label !== 'Bonus' && (
+      (item.quarter === quarter && legacyKeys.has(allowanceKey(item))) ||
+      (recordQuarter(record) === quarter && !item.quarter && (!item.frequency || legacyKeys.has(allowanceKey(item))))
+    )
+  ));
+  return configured.filter(item => !(item.sourceKey === COMBINED_ADDITION_KEY && legacyPaidInQuarter) && !priorKeys.has(item.sourceKey) && !history.some(record =>
     (record.additions || []).some(old =>
       allowanceKey(old) === item.sourceKey && (old.quarter === quarter || (!old.quarter && !old.frequency))
     )
