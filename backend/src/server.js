@@ -23,7 +23,12 @@ async function ensureAuditRetentionIndex(db) {
   });
   const occurredAtIndex = indexes.find((index) => index.key?.occurredAt === -1 && Object.keys(index.key).length === 1);
   if (occurredAtIndex && occurredAtIndex.expireAfterSeconds !== AUDIT_RETENTION_SECONDS) {
-    await db.command({ collMod: 'audit_events', index: { name: occurredAtIndex.name, expireAfterSeconds: AUDIT_RETENTION_SECONDS } });
+    try {
+      await db.command({ collMod: 'audit_events', index: { name: occurredAtIndex.name, expireAfterSeconds: AUDIT_RETENTION_SECONDS } });
+    } catch (error) {
+      if (error?.code !== 13 && error?.codeName !== 'Unauthorized') throw error;
+      console.warn('Audit retention index was not updated: MongoDB user lacks collMod permission. Existing retention remains unchanged; a database administrator must configure the 90-day TTL.');
+    }
     return;
   }
   if (!occurredAtIndex) {
