@@ -1519,11 +1519,14 @@ router.post('/employees', async (req, res) => {
       console.error('Employee email service verification failed:', emailError instanceof Error ? emailError.message : emailError);
       return res.status(503).json({ error: 'The employee email service is unavailable. No account was created. Check the email provider settings and restart the backend.' });
     }
-    const fingerprintSamples = normalizeFingerprintSamples(req.body?.fingerprintSamples, 3);
+    const suppliedSamples = req.body?.fingerprintSamples;
+    const skipFingerprint = suppliedSamples == null || (Array.isArray(suppliedSamples) && suppliedSamples.length === 0);
+    const fingerprintSamples = skipFingerprint ? [] : normalizeFingerprintSamples(suppliedSamples, 3);
     const deviceUid = String(req.body?.fingerprintDeviceUid ?? '').trim().slice(0, 200);
-    const enrollment = await validateEnrollmentSamples(fingerprintSamples);
+    const enrollment = skipFingerprint ? null : await validateEnrollmentSamples(fingerprintSamples);
     employee.id = await nextEmployeeId(db);
-    await rejectDuplicateEnrollment(db, enrollment.templates);
+    if (enrollment) await rejectDuplicateEnrollment(db, enrollment.templates);
+    const biometricStatus = enrollment ? 'enrolled' : 'none';
     const createdAt = new Date();
     const generatedPassword = generateTemporaryPassword();
     const passwordHash = await hashSecret(generatedPassword);
@@ -1532,12 +1535,12 @@ router.post('/employees', async (req, res) => {
       await session.withTransaction(async () => {
         const consumed = await db.collection('employee_email_verifications').deleteOne({ _id: verification._id, expiresAt: { $gt: new Date() } }, { session });
         if (consumed.deletedCount !== 1) throw new Error('Email verification expired or was already used. Request a new code.');
-        await db.collection('employees').insertOne({ ...employee, biometricStatus: 'enrolled', createdAt, updatedAt: createdAt }, { session });
+        await db.collection('employees').insertOne({ ...employee, biometricStatus, createdAt, updatedAt: createdAt }, { session });
         await db.collection('employee_accounts').insertOne({
           employeeId: employee.id, email: employee.email, passwordHash,
           role: employee.role, active: true, mustChangePassword: true, emailVerifiedAt: createdAt, createdAt, updatedAt: createdAt,
         }, { session });
-        await db.collection('biometric_templates').insertOne({
+        if (enrollment) await db.collection('biometric_templates').insertOne({
           employeeId: employee.id,
           protectedSamples: encryptFingerprintSamples(enrollment.templates),
           sampleFormat: 'ansi-378-fmd', sampleCount: enrollment.templates.length,
@@ -1583,7 +1586,7 @@ router.post('/employees', async (req, res) => {
       return res.status(502).json({ error: 'The login email could not be sent, so the employee account was removed. Request a new verification code before trying again.' });
     }
     res.locals.auditMetadata = { targetName: employee.name, employeeId: employee.id, employeeAction: 'created' };
-    res.status(201).json({ ...employee, biometricStatus: 'enrolled', createdAt, loginEmailSent: true });
+    res.status(201).json({ ...employee, biometricStatus, createdAt, loginEmailSent: true });
   } catch (error) {
     if (error instanceof BiometricError) return res.status(error.status).json({ error: error.message });
     if (error?.code === 11000) return res.status(409).json({ error: duplicateEmployeeMessage(error) });

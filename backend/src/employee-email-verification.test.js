@@ -14,6 +14,7 @@ function response() {
 
 test('employee registration requires inbox verification', async (t) => {
   const originalDb = mongoose.connection.db;
+  const originalStartSession = mongoose.startSession;
   const originalTransport = nodemailer.createTransport;
   const originalUser = process.env.SMTP_USER;
   const originalPassword = process.env.SMTP_APP_PASSWORD;
@@ -21,15 +22,19 @@ test('employee registration requires inbox verification', async (t) => {
   process.env.SMTP_APP_PASSWORD = 'test-only';
   t.after(() => {
     mongoose.connection.db = originalDb;
+    mongoose.startSession = originalStartSession;
     nodemailer.createTransport = originalTransport;
     if (originalUser === undefined) delete process.env.SMTP_USER; else process.env.SMTP_USER = originalUser;
     if (originalPassword === undefined) delete process.env.SMTP_APP_PASSWORD; else process.env.SMTP_APP_PASSWORD = originalPassword;
   });
   let record;
   let sentMessage;
+  const writes = [];
+  mongoose.startSession = async () => ({ withTransaction: async callback => callback(), endSession: async () => {} });
   mongoose.connection.db = { collection(name) {
     if (name === 'employee_email_verifications') return {
       createIndex: async () => {},
+      deleteOne: async () => ({ deletedCount: 1 }),
       insertOne: async (value) => { record = { ...value, _id: 'verification' }; },
       findOneAndUpdate: async (filter) => {
         if (!record || record.verificationId !== filter.verificationId || record.email !== filter.email || record.requestedBy !== filter.requestedBy || record.expiresAt <= filter.expiresAt.$gt || record.attempts >= filter.attempts.$lt) return null;
@@ -38,9 +43,9 @@ test('employee registration requires inbox verification', async (t) => {
       },
     };
     // Any account writes or biometric work would fail this mock and the assertion.
-    return { findOne: async () => null };
+    return { findOne: async () => null, distinct: async () => [], insertOne: async value => { assert.notEqual(name, 'biometric_templates'); writes.push({ name, value }); } };
   } };
-  nodemailer.createTransport = () => ({ sendMail: async (message) => { sentMessage = message; return { accepted: [employee.email] }; } });
+  nodemailer.createTransport = () => ({ verify: async () => true, sendMail: async (message) => { sentMessage = message; return { accepted: [employee.email] }; } });
 
   await t.test('mail acceptance only issues a challenge, without creating an employee', async () => {
     const res = response();
@@ -86,4 +91,17 @@ test('employee registration requires inbox verification', async (t) => {
       record = saved;
     });
   }
+  await t.test('verified employee can be created without fingerprint enrollment', async () => {
+    record = { _id: 'verification', verificationId: 'skip-test', email: employee.email, requestedBy: 'admin@example.test', expiresAt: new Date(Date.now() + 60000), attempts: 0, codeHash: await hashSecret('123456') };
+    const res = response();
+    res.locals = {};
+    await handler('/employees')(request({ ...employee, emailVerificationId: 'skip-test', emailVerificationCode: '123456', fingerprintSamples: [] }), res);
+    assert.equal(res.statusCode, 201);
+    assert.equal(res.body.biometricStatus, 'none');
+    assert.equal(res.body.loginEmailSent, true);
+    assert.deepEqual(writes.map(write => write.name), ['employees', 'employee_accounts']);
+    assert.equal(writes[0].value.biometricStatus, 'none');
+    assert.equal(writes[1].value.mustChangePassword, true);
+  });
+
 });
