@@ -4,6 +4,7 @@ import express from 'express';
 import mongoose from 'mongoose';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
+import { validText } from '../../shared/input-format.js';
 import apiRouter, { enforceAutomaticAbsences, enforceAutomaticClockOut, getSettings } from './routes/api.js';
 import authRouter from './routes/auth.js';
 import { securityHeaders } from './security.js';
@@ -58,6 +59,15 @@ app.use((req, res, next) => {
 // The matcher separately caps each decoded sample at 1 MB, and raw images are
 // converted to templates immediately rather than persisted.
 app.use(express.json({ limit: '6mb' }));
+app.use((req, res, next) => {
+  // Apply the same free-text rules to requests that bypass browser inputs.
+  for (const [field, limit] of [['note', 500], ['reason', 500], ['address', 500]]) {
+    if (req.body?.[field] !== undefined && !validText(req.body[field], limit)) {
+      return res.status(400).json({ error: `${field}: use normal text with single spaces, no emoji, and at most ${limit} characters.` });
+    }
+  }
+  next();
+});
 app.use('/api/auth', authRouter);
 
 app.get('/api/health', (_request, response) => {

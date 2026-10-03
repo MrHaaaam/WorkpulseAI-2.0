@@ -1,3 +1,4 @@
+import { validPhone } from '../../../shared/input-format.js';
 import { payrollTransaction } from '../payroll-transaction.js';
 import { cashAdvanceSummary, proposedAdvanceDeduction } from '../cash-advances.js';
 import { additionFrequency, validQuarter, quarterForDate, nextQuarter, scheduleSalaryAddition, combinedSalaryAddition } from '../../../shared/quarterly-additions.js';
@@ -321,11 +322,11 @@ router.patch('/employee/me/contact', requireRole('regular', 'extra', 'manager', 
   try {
     const phone = String(req.body?.phone ?? '').trim();
     const address = String(req.body?.address ?? '').trim().replace(/\s+/g, ' ');
-    if (phone.length < 7 || phone.length > 30 || !/^[0-9+()\-\s.]+$/.test(phone)) {
-      return res.status(400).json({ error: 'Enter a valid phone number using 7 to 30 characters.' });
+    if (!validPhone(phone)) {
+      return res.status(400).json({ error: 'Use 7 to 15 digits with an optional leading +; spaces and other symbols are not allowed.' });
     }
     if (!validAddress(address)) {
-      return res.status(400).json({ error: 'Enter an address using 5 to 255 characters.' });
+      return res.status(400).json({ error: 'Enter an address using 5 to 500 characters.' });
     }
     const db = mongoose.connection.db;
     const employeeId = req.auth.actor.employeeId;
@@ -2887,7 +2888,7 @@ router.post('/attendance/manual', async (req, res) => {
     const db = mongoose.connection.db;
     const settings = await getSettings(db);
     await enforceAutomaticClockOut(db, settings);
-    const note = String(req.body?.note ?? '').trim().slice(0, 200);
+    const note = String(req.body?.note ?? '').trim().slice(0, 500);
     const result = await recordManualAttendance(db, { employeeId, action, stamp, settings, actor: req.auth.actor.email, note });
     res.locals.auditMetadata = { attendanceAction: action, captureMethod: 'admin-manual', employeeId, targetName: result.name, eventTime: stamp.time, date: stamp.date, manualReason: 'Scanner unavailable', manualNote: note };
     res.json(result);
@@ -2916,7 +2917,7 @@ router.post('/attendance/manual/bulk', async (req, res) => {
     const db = mongoose.connection.db;
     const settings = await getSettings(db);
     await enforceAutomaticClockOut(db, settings);
-    const note = String(req.body?.note ?? '').trim().slice(0, 200);
+    const note = String(req.body?.note ?? '').trim().slice(0, 500);
     const results = [];
     for (const employeeId of ids) {
       const employeeAction = action === 'mixed' ? employeeActions.find(item => item.employeeId === employeeId).action : action;

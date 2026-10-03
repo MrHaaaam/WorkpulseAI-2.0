@@ -1,4 +1,4 @@
-import { LOGIN_PASSWORD_MAX, passwordValidationError } from '../../../shared/password-policy.js';
+import { LOGIN_PASSWORD_MAX, validPasswordCharacters, passwordValidationError } from '../../../shared/password-policy.js';
 import { validEmail } from '../input-validation.js';
 import { createLoginCooldown } from '../login-cooldown.js';
 import { Router } from 'express';
@@ -42,7 +42,7 @@ export async function verifyAdminPassword(request, password) {
   const now = Date.now();
   const state = passwordCooldowns.get(key) ?? { failures: 0, lockedUntil: 0 };
   if (state.lockedUntil > now) return { valid: false, retryAfterSeconds: Math.ceil((state.lockedUntil - now) / 1000) };
-  if (await verifySecret(String(password ?? ''), admin.passwordHash)) {
+  if (typeof password === 'string' && password.length <= LOGIN_PASSWORD_MAX && validPasswordCharacters(password) && await verifySecret(password, admin.passwordHash)) {
     passwordCooldowns.delete(key);
     return { valid: true, admin };
   }
@@ -79,7 +79,7 @@ router.post('/login', async (request, response) => {
   try {
     const { email, password, captchaId, captchaAnswer } = request.body ?? {};
     if (!email || !password || !captchaId || captchaAnswer === undefined) return response.status(400).json({ error: 'Complete all login fields' });
-    if (String(email).length > 254 || String(password).length > LOGIN_PASSWORD_MAX || String(captchaAnswer).length > 20) return response.status(400).json({ error: 'Invalid login input' });
+    if (String(email).length > 254 || String(password).length > LOGIN_PASSWORD_MAX || !validPasswordCharacters(password) || String(captchaAnswer).length > 20) return response.status(400).json({ error: 'Invalid login input' });
     if (typeof password !== 'string' || /\s/.test(password)) return response.status(400).json({ error: 'Passwords cannot contain spaces.' });
     if (!validEmail(email)) return response.status(400).json({ error: 'Enter a valid email address.' });
     const cooldownKey = `${request.ip}:${String(email).trim().toLowerCase()}`;

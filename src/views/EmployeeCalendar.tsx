@@ -1,3 +1,4 @@
+import { Input } from "../components/ui/Input";
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { CalendarDays, ChevronLeft, ChevronRight, Clock3 } from 'lucide-react'
 import { apiFetch } from '../lib/api'
@@ -102,7 +103,7 @@ export function EmployeeCalendar({ refreshKey = 0, admin = false }: { refreshKey
   }
 
   return <div className="space-y-5">
-    {admin && <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm"><label htmlFor="calendar-employee-search" className="block text-sm font-semibold text-slate-700">Find employee</label><input id="calendar-employee-search" type="search" value={employeeSearch} onChange={(event) => setEmployeeSearch(event.target.value)} placeholder="Search by name" className="mt-2 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm focus:border-violet-400 focus:outline-none focus:ring-2 focus:ring-violet-100" /><p className="mt-2 text-xs text-slate-500">{employeeSearch.trim() ? matches.length ? `Showing ${matches[0].name}${matches.length > 1 ? `, first of ${matches.length} matches` : ''}` : 'No employees match your search.' : 'Showing company schedule. Type a name to open an employee calendar.'}</p></div>}
+    {admin && <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm"><label htmlFor="calendar-employee-search" className="block text-sm font-semibold text-slate-700">Find employee</label><Input id="calendar-employee-search" type="search" value={employeeSearch} onChange={(event) => setEmployeeSearch(event.target.value)} placeholder="Search by name" className="mt-2 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm focus:border-violet-400 focus:outline-none focus:ring-2 focus:ring-violet-100" /><p className="mt-2 text-xs text-slate-500">{employeeSearch.trim() ? matches.length ? `Showing ${matches[0].name}${matches.length > 1 ? `, first of ${matches.length} matches` : ''}` : 'No employees match your search.' : 'Showing company schedule. Type a name to open an employee calendar.'}</p></div>}
     <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
       {([['Scheduled work', summary.workdays], ['Rest days', summary.rest], ['Holidays', summary.holidays], ['Idle days', summary.idle], ['Approved leave', summary.leave]] as const).map(([label, value]) =>
         <div key={label} className="rounded-2xl border border-slate-200 bg-white px-4 py-3 shadow-sm"><p className="text-xs font-medium text-slate-500">{label}</p><p className="mt-1 text-2xl font-semibold tracking-tight text-slate-900">{loading ? '—' : value}</p></div>)}

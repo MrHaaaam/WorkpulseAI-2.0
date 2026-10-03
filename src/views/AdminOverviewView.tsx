@@ -1,3 +1,4 @@
+import { Input } from "../components/ui/Input";
 import { AdminPageHeader } from "../components/AdminPageHeader";
 import { useState } from "react";
 import { 
@@ -575,7 +576,7 @@ export function OverviewView({
         <div className="flex items-center gap-3">
           <div className="flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2">
             <Calendar className="h-4 w-4 text-slate-400" />
-            <input
+            <Input
               type="text"
               defaultValue="Jul 01 – Jul 13, 2026"
               className="text-sm font-medium text-slate-700 outline-none bg-transparent"

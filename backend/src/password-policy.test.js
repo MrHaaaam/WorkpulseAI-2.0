@@ -1,12 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { passwordValidationError, countSpecialCharacters } from '../../shared/password-policy.js';
+import { passwordInput, passwordValidationError, countSpecialCharacters } from '../../shared/password-policy.js';
 import { nameInput, emailInput } from '../../shared/input-format.js';
 import authRouter from './routes/auth.js';
 
 test('password boundaries and special-character maximum do not require uppercase or digits', () => {
-  for (const value of ['abcdefgh', 'a'.repeat(64), 'abc!@#$%', '12345678', 'ñ'.repeat(8)]) assert.equal(passwordValidationError(value), null);
-  for (const value of [undefined, {}, '', 'a'.repeat(7), 'a'.repeat(65), 'abc!@#$%^', '*&&*SDSD*()__*(']) assert.ok(passwordValidationError(value));
+  for (const value of ['abcdefgh', 'a'.repeat(60), 'abc!@#$%', '12345678', 'ñ'.repeat(8)]) assert.equal(passwordValidationError(value), null);
+  for (const value of [undefined, {}, '', 'a'.repeat(7), 'a'.repeat(61), 'abc!@#$%^', 'abcd\u{1F600}efgh', '*&&*SDSD*()__*(']) assert.ok(passwordValidationError(value));
   assert.equal(countSpecialCharacters('abc!@#$%'), 5);
   assert.equal(countSpecialCharacters('abc  def'), 2);
   assert.equal(countSpecialCharacters('ñá字123'), 0);
@@ -41,7 +41,7 @@ test('name input preserves Unicode and valid punctuation, blocks symbols and dou
 test('first-login and recovery endpoints reject invalid passwords before accessing storage', async () => {
   for (const path of ['/change-initial-password', '/forgot-password/reset']) {
     const handler = authRouter.stack.find(layer => layer.route?.path === path).route.stack.at(-1).handle;
-    for (const newPassword of ['abcdefg', 'a'.repeat(65), 'abc!@#$%^', 'abcd efgh', 'abcd\tefgh']) {
+    for (const newPassword of ['abcdefg', 'a'.repeat(61), 'abc!@#$%^', 'abcd efgh', 'abcd\tefgh']) {
       const req = { body: { newPassword, verificationId: 'test', resetToken: 'a'.repeat(64) }, auth: { actor: { role: 'regular' }, accountType: 'employee' } };
       const res = { statusCode: 200, status(code) { this.statusCode = code; return this; }, json(body) { this.body = body; return this; } };
       await handler(req, res);
@@ -49,4 +49,9 @@ test('first-login and recovery endpoints reject invalid passwords before accessi
       assert.equal(res.body.error, passwordValidationError(newPassword));
     }
   }
+});
+
+test('password typing blocks emoji and caps pasted text at 60', () => {
+  assert.equal(passwordInput('abc\u{1F602} def123!'), 'abcdef123!');
+  assert.equal(passwordInput('a'.repeat(100)).length, 60);
 });

@@ -1,3 +1,4 @@
+import { Input } from "../components/ui/Input";
 import { AdminPageHeader } from "../components/AdminPageHeader";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
@@ -152,7 +153,7 @@ function RiskPanel({ data }: { data: Insights["risk"] }) {
       <FlagLegend color="red" title="Red flag" range="26–30 absences" note="Needs prompt human review" />
     </div>
     <div className="flex gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm leading-6 text-amber-950"><AlertTriangle className="mt-0.5 shrink-0 text-amber-600" size={17} aria-hidden="true" /><p><strong>Simple 30-day rule:</strong> The flag counts absences without approved leave from {shortDate(data.periodStart)} to {shortDate(data.periodEnd)}. Review the employee's schedule and circumstances before making a decision.</p></div>
-    <div className="flex flex-col gap-3 rounded-xl border border-slate-200 bg-white p-4 sm:flex-row sm:items-center"><input type="search" aria-label="Search employees in attendance flags" placeholder="Search employee name..." value={search} onChange={event=>setSearch(event.target.value)} className="min-w-0 flex-1 rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-violet-500"/><div className="flex flex-wrap gap-1">{([['all','All'],['green','Green'],['orange','Orange'],['red','Red']] as const).map(([value,label])=><button key={value} type="button" onClick={()=>setFilter(value)} className={`rounded-lg px-3 py-2 text-xs font-semibold ${filter===value?'bg-violet-600 text-white':'bg-slate-100 text-slate-600'}`}>{label}</button>)}</div></div>
+    <div className="flex flex-col gap-3 rounded-xl border border-slate-200 bg-white p-4 sm:flex-row sm:items-center"><Input type="search" aria-label="Search employees in attendance flags" placeholder="Search employee name..." value={search} onChange={event=>setSearch(event.target.value)} className="min-w-0 flex-1 rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-violet-500"/><div className="flex flex-wrap gap-1">{([['all','All'],['green','Green'],['orange','Orange'],['red','Red']] as const).map(([value,label])=><button key={value} type="button" onClick={()=>setFilter(value)} className={`rounded-lg px-3 py-2 text-xs font-semibold ${filter===value?'bg-violet-600 text-white':'bg-slate-100 text-slate-600'}`}>{label}</button>)}</div></div>
     <div className="overflow-hidden rounded-2xl border border-slate-200">
       <div className="grid grid-cols-[1fr_auto] gap-3 border-b border-slate-200 bg-slate-50 px-4 py-3 text-xs font-semibold uppercase tracking-wider text-slate-500 sm:grid-cols-[1fr_120px_180px]">
         <span>Employee</span><span>Flag</span><span className="hidden sm:block">Last 30 days</span>

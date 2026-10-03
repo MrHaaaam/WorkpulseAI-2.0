@@ -27,7 +27,7 @@ const recordQuarter = (record) => /^20\d{2}-\d{2}-\d{2}$/.test(record.periodStar
 
 export function undoPaymentValidationError(body) {
   if (body?.paymentReversedConfirmed !== true) return 'Confirm that payment was not made or the money was returned. Undo does not recover money.';
-  if (typeof body.reason !== 'string' || body.reason.trim().length < 10 || body.reason.trim().length > 250) return 'Explain why this payment is being undone using 10 to 250 characters.';
+  if (typeof body.reason !== 'string' || body.reason.trim().length < 10 || body.reason.trim().length > 500) return 'Explain why this payment is being undone using 10 to 500 characters.';
   return null;
 }
 

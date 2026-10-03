@@ -1,3 +1,4 @@
+import { Input } from "./ui/Input";
 import { useRef } from "react";
 import { Calendar, ChevronLeft, ChevronRight } from "lucide-react";
 
@@ -46,7 +47,7 @@ export function DateNavigator({ label, value, onChange, navigation = "day" }: { 
         </span>
         <span className="date-navigator-choose ml-auto hidden text-[10px] font-semibold sm:inline text-[#8642ED]">Choose</span>
       </button>
-      <input ref={inputRef} aria-label={label} type="date" value={value} onChange={(event) => onChange(event.target.value)} className="pointer-events-none absolute h-px w-px opacity-0" />
+      <Input ref={inputRef} aria-label={label} type="date" value={value} onChange={(event) => onChange(event.target.value)} className="pointer-events-none absolute h-px w-px opacity-0" />
       <button type="button" onClick={() => moveDay(1)} aria-label={navigation === "semi-monthly" ? "Next payroll period" : "Next day"} className="flex min-h-11 w-10 shrink-0 items-center justify-center border-l border-slate-200 text-slate-400 transition-colors hover:bg-violet-50 hover:text-[#8642ED]">
         <ChevronRight className="h-4 w-4" />
       </button>

@@ -389,7 +389,8 @@ test('unlabelled payments in another period cannot be assumed to cover a differe
 });
 
 test('undo requires a reason and returned-or-not-paid confirmation; the quarter remains reserved', async () => {
-  for (const body of [undefined, {}, { reason: 'Incorrect payment record' }, { paymentReversedConfirmed: true, reason: 'short' }, { paymentReversedConfirmed: true, reason: 'a'.repeat(251) }]) assert.ok(undoPaymentValidationError(body));
+  for (const body of [undefined, {}, { reason: 'Incorrect payment record' }, { paymentReversedConfirmed: true, reason: 'short' }, { paymentReversedConfirmed: true, reason: 'a'.repeat(501) }]) assert.ok(undoPaymentValidationError(body));
+  assert.equal(undoPaymentValidationError({ paymentReversedConfirmed: true, reason: 'a'.repeat(500) }), null);
   assert.equal(undoPaymentValidationError({ paymentReversedConfirmed: true, reason: 'The transfer was cancelled before completion.' }), null);
   const db = database();
   await include(db);

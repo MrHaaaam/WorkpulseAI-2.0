@@ -18,8 +18,8 @@ test('email and address boundaries are consistent', () => {
   assert.ok(validEmail('first.last+tag@example.com'));
   for (const email of ['bad', '.a@example.com', 'a..b@example.com', 'a@exam!ple.com', 'a@-example.com', '<a>@example.com', 'a@@b.com', 'a b@example.com', 'a'.repeat(243) + '@example.com']) assert.equal(validEmail(email), false);
   assert.ok(validEmail('a'.repeat(242) + '@example.com'));
-  for (const size of [5, 255]) assert.ok(validAddress('a'.repeat(size)));
-  for (const size of [0, 4, 256]) assert.equal(validAddress('a'.repeat(size)), false);
+  for (const size of [5, 255, 500]) assert.ok(validAddress('a'.repeat(size)));
+  for (const size of [0, 4, 501]) assert.equal(validAddress('a'.repeat(size)), false);
 });
 
 test('fifth failure waits 10 seconds, subsequent failures add 10, success resets', () => {

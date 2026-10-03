@@ -1,3 +1,4 @@
+import { Input } from "./ui/Input";
 import { useId } from 'react';
 import { ArrowRight, Check, LoaderCircle, Mail, RotateCcw } from 'lucide-react';
 import { Button } from './ui/Button';
@@ -21,7 +22,7 @@ export function EmployeeEmailVerification({ email, sent, code, sending, saving, 
           <div aria-hidden="true" className="grid grid-cols-6 gap-2">
             {Array.from({ length: 6 }, (_, index) => <div key={index} className={`flex h-12 items-center justify-center rounded-lg border bg-white font-mono text-xl font-semibold shadow-sm sm:h-14 ${code[index] ? 'border-violet-300 text-violet-700' : 'border-slate-200 text-slate-300'}`}>{code[index] || '–'}</div>)}
           </div>
-          <input id={inputId} aria-describedby={`${inputId}-hint`} aria-label="Six-digit email verification code" required disabled={saving || sending} inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" maxLength={6} value={code} onChange={(event) => onChange(event.target.value.replace(/\D/g, '').slice(0, 6))} className="absolute inset-0 h-full w-full cursor-text rounded-xl opacity-0 disabled:cursor-not-allowed" />
+          <Input id={inputId} aria-describedby={`${inputId}-hint`} aria-label="Six-digit email verification code" required disabled={saving || sending} inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" maxLength={6} value={code} onChange={(event) => onChange(event.target.value.replace(/\D/g, '').slice(0, 6))} className="absolute inset-0 h-full w-full cursor-text rounded-xl opacity-0 disabled:cursor-not-allowed" />
         </div>
         <div className="mt-4 flex flex-wrap items-center justify-between gap-2">
           <p className="flex items-center gap-1.5 text-xs text-slate-500">{code.length === 6 ? <><Check className="h-3.5 w-3.5 text-violet-600" />Code ready to verify on creation</> : 'You can paste the full code.'}</p>

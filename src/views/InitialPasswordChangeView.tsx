@@ -1,4 +1,5 @@
-import { PASSWORD_MIN, PASSWORD_MAX, PASSWORD_RULES, countSpecialCharacters, passwordValidationError } from '../../shared/password-policy.js'
+import { Input } from "../components/ui/Input";
+import { PASSWORD_MIN, PASSWORD_MAX, PASSWORD_RULES, passwordInput, countSpecialCharacters, passwordValidationError } from '../../shared/password-policy.js'
 import { useState, type FormEvent } from 'react'
 import { Check, Eye, EyeOff, KeyRound, LoaderCircle, ShieldCheck } from 'lucide-react'
 import { apiFetch } from '../lib/api'
@@ -57,15 +58,15 @@ export function InitialPasswordChangeView({ onComplete }: InitialPasswordChangeV
           <div>
             <label htmlFor="new-password" className="mb-2 block text-sm font-semibold text-slate-700">New password</label>
             <div className="relative">
-              <input id="new-password" autoComplete="new-password" type={showPassword ? 'text' : 'password'} minLength={PASSWORD_MIN} maxLength={PASSWORD_MAX} required value={newPassword} onChange={(event) => setNewPassword(event.target.value)} className="h-12 w-full rounded-xl border border-slate-300 bg-slate-50 px-4 pr-12 text-sm outline-none transition focus:border-indigo-500 focus:bg-white focus:ring-4 focus:ring-indigo-500/10" placeholder="Enter 8 to 64 characters" />
+              <Input id="new-password" autoComplete="new-password" type={showPassword ? 'text' : 'password'} minLength={PASSWORD_MIN} maxLength={PASSWORD_MAX} required value={newPassword} onChange={(event) => setNewPassword(passwordInput(event.target.value))} className="h-12 w-full rounded-xl border border-slate-300 bg-slate-50 px-4 pr-12 text-sm outline-none transition focus:border-indigo-500 focus:bg-white focus:ring-4 focus:ring-indigo-500/10" placeholder="Enter 8 to 60 characters" />
               <button type="button" onClick={() => setShowPassword((shown) => !shown)} className="absolute right-3 top-1/2 -translate-y-1/2 rounded-lg p-2 text-slate-400 hover:bg-white hover:text-slate-700" aria-label={showPassword ? 'Hide password' : 'Show password'}>{showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}</button>
             </div>
-            <p className={`mt-2 flex items-center gap-1.5 text-xs font-medium ${validPassword ? 'text-emerald-600' : 'text-slate-500'}`}><Check className="h-3.5 w-3.5" />{PASSWORD_RULES} ({newPassword.length}/64 characters; {countSpecialCharacters(newPassword)}/5 special characters)</p>
+            <p className={`mt-2 flex items-center gap-1.5 text-xs font-medium ${validPassword ? 'text-emerald-600' : 'text-slate-500'}`}><Check className="h-3.5 w-3.5" />{PASSWORD_RULES} ({newPassword.length}/{PASSWORD_MAX} characters; {countSpecialCharacters(newPassword)}/5 special characters)</p>
           </div>
 
           <div>
             <label htmlFor="confirm-password" className="mb-2 block text-sm font-semibold text-slate-700">Confirm new password</label>
-            <input id="confirm-password" autoComplete="new-password" type={showPassword ? 'text' : 'password'} minLength={PASSWORD_MIN} maxLength={PASSWORD_MAX} required value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value)} className="h-12 w-full rounded-xl border border-slate-300 bg-slate-50 px-4 text-sm outline-none transition focus:border-indigo-500 focus:bg-white focus:ring-4 focus:ring-indigo-500/10" placeholder="Enter the same password again" />
+            <Input id="confirm-password" autoComplete="new-password" type={showPassword ? 'text' : 'password'} minLength={PASSWORD_MIN} maxLength={PASSWORD_MAX} required value={confirmPassword} onChange={(event) => setConfirmPassword(passwordInput(event.target.value))} className="h-12 w-full rounded-xl border border-slate-300 bg-slate-50 px-4 text-sm outline-none transition focus:border-indigo-500 focus:bg-white focus:ring-4 focus:ring-indigo-500/10" placeholder="Enter the same password again" />
           </div>
 
           {error && <div role="alert" className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-medium text-red-700">{error}</div>}
