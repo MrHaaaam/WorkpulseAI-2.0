@@ -13,7 +13,7 @@ import { activityFilter, auditPresentation } from '../audit-display.js';
 import { loadNotifications } from '../notifications.js';
 import { Router } from 'express';
 import mongoose from 'mongoose';
-import nodemailer from 'nodemailer';
+import { createEmailTransport, emailConfigured } from '../email.js';
 import crypto from 'node:crypto';
 import { BACKUP_COLLECTIONS, serializeBackup } from '../backup-format.js';
 import { attendanceRiskForEmployee, buildAIInsights } from '../ai-insights.js';
@@ -1453,7 +1453,7 @@ router.post('/employees/email-verification', rateLimit({ windowMs: 10 * 60_000, 
     if (!(await getSystemControls(db)).registrationOpen) return res.status(403).json({ error: 'New employee registration is currently restricted in Admin Controls' });
     const email = String(req.body?.email ?? '').trim().toLowerCase();
     if (!validEmail(email)) return res.status(400).json({ error: 'Enter a valid employee email address.' });
-    if (!process.env.SMTP_USER || !process.env.SMTP_APP_PASSWORD) return res.status(503).json({ error: 'Employee email delivery is not configured.' });
+    if (!emailConfigured()) return res.status(503).json({ error: 'Employee email delivery is not configured.' });
     const existing = await Promise.all(['employees', 'employee_accounts', 'admin_accounts'].map((name) => db.collection(name).findOne({ email }, { projection: { _id: 1 }, collation: { locale: 'en', strength: 2 } })));
     if (existing.some(Boolean)) return res.status(409).json({ error: 'This email address is already used by another WORKPULSE MVL account.' });
     const verificationId = crypto.randomUUID();
@@ -1462,7 +1462,7 @@ router.post('/employees/email-verification', rateLimit({ windowMs: 10 * 60_000, 
     await records.createIndex({ expiresAt: 1 }, { expireAfterSeconds: 0 });
     await records.insertOne({ verificationId, email, requestedBy: req.auth.actor.email, codeHash: await hashSecret(code), attempts: 0, expiresAt: new Date(Date.now() + 10 * 60_000) });
     try {
-      const transport = nodemailer.createTransport({ service: 'gmail', auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_APP_PASSWORD } });
+      const transport = createEmailTransport();
       const delivery = await transport.sendMail({
         from: `WORKPULSE MVL <${process.env.SMTP_USER}>`, to: email,
         subject: 'Verify your email for WORKPULSE MVL employee registration',
@@ -1497,7 +1497,7 @@ router.post('/employees', async (req, res) => {
     if (!employee.firstName || !employee.lastName) return res.status(400).json({ error: 'First name and last name are required' });
     if (!employee.email || !employee.phone || !employee.address) return res.status(400).json({ error: 'Email, phone number, and address are required' });
     if (!/^\+639\d{9}$/.test(employee.phone)) return res.status(400).json({ error: 'Phone number must use +639XXXXXXXXX with no spaces' });
-    if (!process.env.SMTP_USER || !process.env.SMTP_APP_PASSWORD) return res.status(503).json({ error: 'Employee email delivery is not configured. Ask the system owner to configure SMTP before creating an account.' });
+    if (!emailConfigured()) return res.status(503).json({ error: 'Employee email delivery is not configured. Ask the system owner to configure email delivery before creating an account.' });
     const db = mongoose.connection.db;
     const verificationId = String(req.body?.emailVerificationId ?? '');
     const code = String(req.body?.emailVerificationCode ?? '').trim();
@@ -1513,11 +1513,11 @@ router.post('/employees', async (req, res) => {
       db.collection('employees').findOne({ email: employee.email }, { projection: { _id: 1 }, collation: { locale: 'en', strength: 2 } }),
     ]);
     if (adminEmail || employeeAccountEmail || employeeRecordEmail) return res.status(409).json({ error: 'This email address is already used by another WORKPULSE MVL account.' });
-    const transport = nodemailer.createTransport({ service: 'gmail', auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_APP_PASSWORD } });
+    const transport = createEmailTransport();
     try { await transport.verify(); }
     catch (emailError) {
       console.error('Employee email service verification failed:', emailError instanceof Error ? emailError.message : emailError);
-      return res.status(503).json({ error: 'The employee email service is unavailable. No account was created. Check the Gmail App Password and restart the backend.' });
+      return res.status(503).json({ error: 'The employee email service is unavailable. No account was created. Check the email provider settings and restart the backend.' });
     }
     const fingerprintSamples = normalizeFingerprintSamples(req.body?.fingerprintSamples, 3);
     const deviceUid = String(req.body?.fingerprintDeviceUid ?? '').trim().slice(0, 200);
@@ -1694,14 +1694,14 @@ router.post('/employees/:id/send-login-email', async (req, res) => {
       if (verification.retryAfterSeconds) res.setHeader('Retry-After', String(verification.retryAfterSeconds));
       return res.status(verification.forbidden ? 403 : verification.retryAfterSeconds ? 429 : 401).json({ error: verification.forbidden ? 'Administrator access required' : verification.retryAfterSeconds ? `Incorrect admin password. Try again in ${verification.retryAfterSeconds} seconds.` : 'Incorrect admin password', ...(verification.retryAfterSeconds ? { retryAfterSeconds: verification.retryAfterSeconds } : {}) });
     }
-    if (!process.env.SMTP_USER || !process.env.SMTP_APP_PASSWORD) return res.status(503).json({ error: 'Employee email delivery is not configured.' });
+    if (!emailConfigured()) return res.status(503).json({ error: 'Employee email delivery is not configured.' });
     const db = mongoose.connection.db;
     const employee = await db.collection('employees').findOne({ id: req.params.id, archived: { $ne: true } });
     const account = await db.collection('employee_accounts').findOne({ employeeId: req.params.id, active: true });
     if (!employee || !account) return res.status(404).json({ error: 'Active employee login account not found.' });
     const generatedPassword = generateTemporaryPassword();
     const passwordHash = await hashSecret(generatedPassword);
-    const transport = nodemailer.createTransport({ service: 'gmail', auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_APP_PASSWORD } });
+    const transport = createEmailTransport();
     try {
       await transport.verify();
       const loginUrl = String(process.env.APP_URL || process.env.FRONTEND_URL || 'http://localhost:5173').replace(/\/$/, '');
@@ -2398,7 +2398,7 @@ router.patch('/payroll-requests/:id/remove-hold', async (req, res) => {
 
 router.post('/payroll-requests/:id/email', async (req, res) => {
   try {
-    if (!process.env.SMTP_USER || !process.env.SMTP_APP_PASSWORD) return res.status(503).json({ error: 'Email delivery is not configured' });
+    if (!emailConfigured()) return res.status(503).json({ error: 'Email delivery is not configured' });
     const db = mongoose.connection.db;
     const payroll = await db.collection('payroll_requests').findOne({ id: req.params.id });
     if (!payroll) return res.status(404).json({ error: 'Payslip not found' });
@@ -2424,7 +2424,7 @@ router.post('/payroll-requests/:id/email', async (req, res) => {
       `Total payroll: ${money(payroll.amount)}`,
       `Status: ${payroll.status === 'paid' ? 'Paid' : payroll.status === 'rejected' ? 'Payment on hold - carries forward' : payroll.status === 'carried_over' ? 'Carried to the next pay period' : 'Ready to pay'}`,
     ].join('\n');
-    const transport = nodemailer.createTransport({ service: 'gmail', auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_APP_PASSWORD } });
+    const transport = createEmailTransport();
     await transport.sendMail({ from: `WORKPULSE MVL <${process.env.SMTP_USER}>`, to: employee.email, subject: `Payslip ${payroll.periodStart} - ${employee.name}`, text });
     res.locals.auditMetadata = { payrollAction: 'payslip-emailed', targetName: employee.name, employeeId: employee.id, periodStart: payroll.periodStart };
     res.json({ message: `Payslip sent to ${employee.email}` });
@@ -2436,7 +2436,7 @@ router.post('/payroll-requests/:id/email', async (req, res) => {
 
 router.post('/payroll/:employeeId/email-summary', async (req, res) => {
   try {
-    if (!process.env.SMTP_USER || !process.env.SMTP_APP_PASSWORD) return res.status(503).json({ error: 'Email delivery is not configured' });
+    if (!emailConfigured()) return res.status(503).json({ error: 'Email delivery is not configured' });
     const employee = await mongoose.connection.db.collection('employees').findOne({ id: req.params.employeeId, archived: { $ne: true } });
     if (!employee) return res.status(404).json({ error: 'Employee not found' });
     if (!employee.email) return res.status(400).json({ error: 'Add an email address to this employee profile first' });
@@ -2464,7 +2464,7 @@ router.post('/payroll/:employeeId/email-summary', async (req, res) => {
     const additionLines = (activePayroll?.additions ?? await recurringPayrollAdditions(db, employee, activePeriodStart)).map((item) => [item.label, item.value]);
     const total = additionLines.reduce((sum, item) => sum + item[1], 0);
     const text = `Payroll Summary (15-day period)\nEmployee: ${employee.name}\nEmployee ID: ${employee.id}${identifierText}\nHours Worked: ${Number(activePayroll?.hoursWorked ?? hoursWorked).toFixed(2)}\nHourly Rate(s): ${rateText}\n\nGross Salary: ${money(displayGross)}\n${additionLines.map(([label, value]) => `${label}: +${money(value)}`).join('\n')}\nTotal Additions: +${money(total)}\nUnpaid Balance Carried Forward: +${money(carryOver)}\nNet Salary: ${money(displayGross + total + carryOver)}`;
-    const transport = nodemailer.createTransport({ service: 'gmail', auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_APP_PASSWORD } });
+    const transport = createEmailTransport();
     await transport.sendMail({ from: `WORKPULSE MVL <${process.env.SMTP_USER}>`, to: employee.email, subject: `Payroll Summary - ${employee.name}`, text });
     res.locals.auditMetadata = { payrollAction: 'summary-emailed', targetName: employee.name, employeeId: employee.id };
     res.json({ message: `Payroll summary sent to ${employee.email}` });
@@ -2897,9 +2897,12 @@ router.post('/attendance/manual', async (req, res) => {
 
 router.post('/attendance/manual/bulk', async (req, res) => {
   try {
-    const { employeeIds, action, date } = req.body ?? {};
-    if (!Array.isArray(employeeIds) || !employeeIds.length || employeeIds.length > 500 || employeeIds.some((id) => typeof id !== 'string' || !id || id.length > 200) || !['time-in', 'time-out'].includes(action)) return res.status(400).json({ error: 'Choose employees and an attendance action.' });
+    const { employeeIds, action, date, employeeActions } = req.body ?? {};
+    if (!Array.isArray(employeeIds) || !employeeIds.length || employeeIds.length > 500 || employeeIds.some((id) => typeof id !== 'string' || !id || id.length > 200) || !['time-in', 'time-out', 'mixed'].includes(action)) return res.status(400).json({ error: 'Choose employees and an attendance action.' });
     const ids = [...new Set(employeeIds)];
+    // Capture explicit intentions from the displayed status. Do not toggle based
+    // on a newer status, which could reverse the intended action after a scan.
+    if (action === 'mixed' && (!Array.isArray(employeeActions) || employeeActions.length !== ids.length || new Set(employeeActions.map(item => item?.employeeId)).size !== ids.length || employeeActions.some(item => !ids.includes(item?.employeeId) || !['time-in', 'time-out'].includes(item?.action)))) return res.status(400).json({ error: 'Choose a clock-in or clock-out action for every selected employee.' });
     const stamp = kioskTimestamp();
     if (date !== stamp.date) return res.status(409).json({ error: 'The day changed. Refresh attendance and try again.' });
     const verification = await verifyAdminPassword(req, req.body?.password);
@@ -2913,7 +2916,8 @@ router.post('/attendance/manual/bulk', async (req, res) => {
     const note = String(req.body?.note ?? '').trim().slice(0, 200);
     const results = [];
     for (const employeeId of ids) {
-      try { results.push({ ok: true, ...await recordManualAttendance(db, { employeeId, action, stamp, settings, actor: req.auth.actor.email, note, firstSessionOnly: action === 'time-in' && req.body?.selectionMode === 'all' }) }); }
+      const employeeAction = action === 'mixed' ? employeeActions.find(item => item.employeeId === employeeId).action : action;
+      try { results.push({ ok: true, ...await recordManualAttendance(db, { employeeId, action: employeeAction, stamp, settings, actor: req.auth.actor.email, note, firstSessionOnly: employeeAction === 'time-in' && req.body?.selectionMode === 'all' }) }); }
       catch (error) { results.push({ ok: false, employeeId, error: error?.status ? error.message : 'Could not record attendance. Review this employee.' }); }
     }
     const recorded = results.filter((result) => result.ok).length;

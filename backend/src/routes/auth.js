@@ -5,7 +5,7 @@ import { Router } from 'express';
 import crypto from 'node:crypto';
 import { promisify } from 'node:util';
 import mongoose from 'mongoose';
-import nodemailer from 'nodemailer';
+import { createEmailTransport, emailConfigured } from '../email.js';
 import { auditEvent, authenticate, clearSessionCookie, createCsrfToken, csrfProtection, getRequestToken, rateLimit, SESSION_LIFETIME_MS, setSessionCookie } from '../security.js';
 import { getSystemControls } from '../system-controls.js';
 
@@ -106,7 +106,7 @@ router.post('/login', async (request, response) => {
       return response.status(503).json({ error: 'WORKPULSE MVL is temporarily available to administrators only while maintenance is in progress.' });
     }
 
-    if (!process.env.SMTP_USER || !process.env.SMTP_APP_PASSWORD) return response.status(503).json({ error: 'Email OTP is not configured on the server' });
+    if (!emailConfigured()) return response.status(503).json({ error: 'Email OTP is not configured on the server' });
     const otp = String(crypto.randomInt(100000, 1_000_000));
     const verificationId = crypto.randomUUID();
     await db.collection('login_otps').insertOne({ verificationId, accountId: account._id, accountType, otpHash: await hashSecret(otp), expiresAt: new Date(Date.now() + 10 * 60_000), attempts: 0 });
@@ -115,7 +115,7 @@ router.post('/login', async (request, response) => {
       console.log(`[DEV] Login verification code for ${account.email}: ${otp}`);
     }
 
-    const transport = nodemailer.createTransport({ service: 'gmail', auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_APP_PASSWORD } });
+    const transport = createEmailTransport();
     await transport.sendMail({ from: `WORKPULSE MVL <${process.env.SMTP_USER}>`, to: account.email, subject: 'Your WORKPULSE MVL login code', text: `Your WORKPULSE MVL verification code is ${otp}. It expires in 10 minutes.` });
     await auditEvent({ req: request, actor: account, action: 'auth.otp_sent', targetType: 'session', outcome: 'success' });
     response.json({ verificationId, message: 'OTP sent to your email' });
@@ -210,7 +210,7 @@ router.post('/forgot-password/request', passwordResetRequestLimit, async (reques
       await auditEvent({ req: request, action: 'auth.password_reset_requested', targetType: 'employee_account', outcome: 'failure', metadata: { reason: 'account_not_found' } });
       return response.json({ verificationId: crypto.randomUUID(), message: genericMessage });
     }
-    if (!process.env.SMTP_USER || !process.env.SMTP_APP_PASSWORD) {
+    if (!emailConfigured()) {
       return response.status(503).json({ error: 'Employee email delivery is not configured. Ask your administrator for help.' });
     }
 
@@ -227,7 +227,7 @@ router.post('/forgot-password/request', passwordResetRequestLimit, async (reques
     });
 
     if (process.env.NODE_ENV !== 'production') console.log(`[DEV] Employee password reset code for ${account.email}: ${code}`);
-    const transport = nodemailer.createTransport({ service: 'gmail', auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_APP_PASSWORD } });
+    const transport = createEmailTransport();
     await transport.sendMail({
       from: `WORKPULSE MVL <${process.env.SMTP_USER}>`,
       to: account.email,

@@ -3,12 +3,15 @@ import dotenv from 'dotenv';
 import express from 'express';
 import mongoose from 'mongoose';
 import crypto from 'node:crypto';
+import { fileURLToPath } from 'node:url';
 import apiRouter, { enforceAutomaticAbsences, enforceAutomaticClockOut, getSettings } from './routes/api.js';
 import authRouter from './routes/auth.js';
 import { securityHeaders } from './security.js';
 import { migrateLegacySalaryAdditions } from './salary-addition-migration.js';
 
-dotenv.config();
+// Resolve local configuration from this file, regardless of the launch folder.
+// Environment variables supplied by the host still take precedence.
+dotenv.config({ path: fileURLToPath(new URL('../.env', import.meta.url)) });
 
 const app = express();
 const port = process.env.PORT || 5000;

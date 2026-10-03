@@ -58,8 +58,13 @@ function useSessionExpiry(expiresAt: string) {
   }, [expiresAt]);
 }
 
+function arrivedThroughHistory() {
+  const navigation = performance.getEntriesByType('navigation')[0] as PerformanceNavigationTiming | undefined;
+  return navigation?.type === 'back_forward';
+}
+
 export default function App() {
-  const [endingSession, setEndingSession] = useState(false);
+  const [endingSession, setEndingSession] = useState(arrivedThroughHistory);
   const [logoutError, setLogoutError] = useState('');
   const logoutPending = useRef(false);
   const endSession = useCallback(async () => {
@@ -84,23 +89,29 @@ export default function App() {
   // If you visit /overview directly, show the admin overview shell.
   const path = typeof window !== 'undefined' ? window.location.pathname : '/';
   useEffect(() => {
-    if (!['/overview', '/kiosk'].includes(path)) return;
+    // Back/Forward can load a new document, including the sign-in page.
+    // Revoke its cookie-backed session before showing any restored workspace.
+    if (arrivedThroughHistory()) void endSession();
     // Keep Back in this document long enough to revoke the server session.
     // The marker prevents duplicate entries on reload and StrictMode setup.
-    if (!window.history.state?.logoutOnBack) {
+    if (['/overview', '/kiosk'].includes(path) && !window.history.state?.logoutOnBack) {
       window.history.pushState({ ...window.history.state, logoutOnBack: true }, '', window.location.href);
     }
-    const handleBack = () => { void endSession(); };
-    window.addEventListener('popstate', handleBack);
-    return () => window.removeEventListener('popstate', handleBack);
+    // popstate fires for both Back and Forward within the current document.
+    const handleHistoryNavigation = () => {
+      if (['/overview', '/kiosk'].includes(path) || sessionStorage.getItem('workpulse_session_expires')) void endSession();
+    };
+    window.addEventListener('popstate', handleHistoryNavigation);
+    return () => window.removeEventListener('popstate', handleHistoryNavigation);
   }, [path, endSession]);
   useEffect(() => {
     const restoreProtectedPage = (event: PageTransitionEvent) => {
-      if (event.persisted && ['/overview', '/kiosk'].includes(window.location.pathname)) window.location.reload();
+      // A browser cache restore skips mounting and retains old UI/session data.
+      if (event.persisted) void endSession();
     };
     window.addEventListener('pageshow', restoreProtectedPage);
     return () => window.removeEventListener('pageshow', restoreProtectedPage);
-  }, []);
+  }, [endSession]);
   if (endingSession) return <div className="flex min-h-screen flex-col items-center justify-center gap-4 bg-slate-50 px-6 text-center text-sm text-slate-600">{logoutError ? <><p role="alert">{logoutError}</p><button type="button" onClick={() => void endSession()} className="rounded-lg bg-violet-600 px-4 py-2 font-semibold text-white">Retry logout</button></> : <p role="status">Ending your session...</p>}</div>;
   if (path === '/kiosk') return <ProtectedKiosk />;
   if (path === '/overview') return <ProtectedDashboard />;
