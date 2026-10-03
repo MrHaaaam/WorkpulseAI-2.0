@@ -2,7 +2,7 @@
   "rewrites": [
     {
       "source": "/api/:path*",
-      "destination": "https://my-backend.onrender.com/api/:path*"
+      "destination": "https://workpulse-backend-c8f1.onrender.com/api/:path*"
     }
   ]
 }
