@@ -26,7 +26,10 @@ async function ensureAuditRetentionIndex(db) {
     try {
       await db.command({ collMod: 'audit_events', index: { name: occurredAtIndex.name, expireAfterSeconds: AUDIT_RETENTION_SECONDS } });
     } catch (error) {
-      if (error?.code !== 13 && error?.codeName !== 'Unauthorized') throw error;
+      // Atlas can report permission failures with a provider-specific error code.
+      const permissionDenied = error?.code === 13 || error?.codeName === 'Unauthorized'
+        || /user is not allowed to do action \[collMod\]/i.test(String(error?.message ?? ''));
+      if (!permissionDenied) throw error;
       console.warn('Audit retention index was not updated: MongoDB user lacks collMod permission. Existing retention remains unchanged; a database administrator must configure the 90-day TTL.');
     }
     return;
