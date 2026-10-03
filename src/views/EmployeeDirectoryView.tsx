@@ -181,6 +181,9 @@ export function EmployeeDirectoryView({ employees: initialEmployees }: Partial<E
       return match ? Math.max(maximum, Number(match[1])) : maximum;
     }, 0) + 1;
     setEditingId(null);
+    setPasswordRetrySeconds(0);
+    setInvalidField("");
+    setFormError("");
     setSavedDraft(null);
     setAdminPassword("");
     setFingerprintRegistering(false);
@@ -293,7 +296,8 @@ export function EmployeeDirectoryView({ employees: initialEmployees }: Partial<E
 
   function saveEmployee(event: React.FormEvent) {
     event.preventDefault();
-    if (saving) return;
+    if (saving || sendingVerification) return;
+    if (fingerprintRegistering) { setFormError("Complete fingerprint enrollment or choose Skip fingerprint for now before saving."); return; }
     const identifierError = identifiersValidationError(draft.identifiers);
     if (identifierError) { const index = draft.identifiers?.findIndex(item => identifiersValidationError([item])) ?? -1; showFieldError(index >= 0 ? `identifier-${index}` : 'identifiers', identifierError); return; }
     if (!validBoundedNumber(draft.salaryAddition?.amount, 0, ADDITION_MAX)) { showFieldError('salaryAddition', 'Enter an amount from 0 to 1,000,000 with up to 2 decimal places.'); return; }
@@ -522,7 +526,7 @@ export function EmployeeDirectoryView({ employees: initialEmployees }: Partial<E
           </FormSection>}
           {formError && !invalidField && !passwordOpen && <p className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-medium text-rose-700">{formError}</p>}
           </div>
-          <div className="flex items-center justify-between border-t border-slate-200 bg-white px-6 py-4"><p className="hidden text-xs text-slate-400 sm:block"><span className="text-rose-500">*</span> Required fields</p><div className="ml-auto flex flex-wrap justify-end gap-2">{editingId && <Button type="button" variant="outline" disabled={sendingLogin} onClick={()=>{setPasswordPurpose('email');setFormError('');setPasswordOpen(true)}}><Mail className="h-4 w-4" />{sendingLogin ? "Sending..." : "Send new login email"}</Button>}{editingId && <Button type="button" variant="outline" onClick={revertChanges}>Revert changes</Button>}<Button type="button" variant="outline" onClick={closeEditor}>Cancel</Button><Button type="submit" disabled={saving || sendingVerification || (!editingId && (!emailVerificationId || emailVerificationCode.length !== 6)) || fingerprintRegistering || passwordRetrySeconds > 0 || (!editingId && fingerprintSamples.length > 0 && fingerprintSamples.length !== REQUIRED_FINGERPRINT_SCANS)}><Fingerprint className="h-4 w-4" /> {saving ? (editingId ? 'Saving...' : 'Creating account and sending email...') : passwordRetrySeconds > 0 ? `Wait ${passwordRetrySeconds}s` : editingId ? "Save changes" : "Create employee"}</Button></div></div>
+          <div className="flex items-center justify-between border-t border-slate-200 bg-white px-6 py-4"><p className="hidden text-xs text-slate-400 sm:block"><span className="text-rose-500">*</span> Required fields</p><div className="ml-auto flex flex-wrap justify-end gap-2">{editingId && <Button type="button" variant="outline" disabled={sendingLogin} onClick={()=>{setPasswordPurpose('email');setFormError('');setPasswordOpen(true)}}><Mail className="h-4 w-4" />{sendingLogin ? "Sending..." : "Send new login email"}</Button>}{editingId && <Button type="button" variant="outline" onClick={revertChanges}>Revert changes</Button>}<Button type="button" variant="outline" onClick={closeEditor}>Cancel</Button><Button type="submit" disabled={saving || sendingVerification || (!!editingId && passwordRetrySeconds > 0)}><Fingerprint className="h-4 w-4" /> {saving ? (editingId ? 'Saving...' : 'Creating account and sending email...') : editingId && passwordRetrySeconds > 0 ? `Wait ${passwordRetrySeconds}s` : editingId ? "Save changes" : "Create employee"}</Button></div></div>
         </form>
       </Dialog>
       <Dialog open={passwordOpen} onClose={()=>!saving&&!sendingLogin&&setPasswordOpen(false)} className="max-w-sm"><DialogHeader><h3 className="text-base font-bold text-slate-900">{passwordPurpose==='save'?'Confirm changes':'Send login email'}</h3><DialogClose onClose={()=>setPasswordOpen(false)} /></DialogHeader><form onSubmit={event=>{event.preventDefault();if(passwordPurpose==='save')void persistEmployee();else void sendNewLoginEmail()}} className="space-y-4 px-6 pb-6 pt-3"><Field label="Administrator password" required><Input type="password" autoFocus autoComplete="current-password" value={adminPassword} disabled={passwordRetrySeconds>0} onChange={event=>{setAdminPassword(event.target.value);setFormError('')}} placeholder="Enter your password" /></Field>{passwordRetrySeconds>0&&<p className="text-xs text-amber-700">Try again in {passwordRetrySeconds} seconds.</p>}{formError&&<p className="rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-700">{formError}</p>}<div className="flex justify-end gap-2"><Button type="button" variant="outline" onClick={()=>setPasswordOpen(false)}>Cancel</Button><Button type="submit" disabled={!adminPassword||saving||sendingLogin||passwordRetrySeconds>0}>{saving||sendingLogin?'Working...':passwordPurpose==='save'?'Save changes':'Send email'}</Button></div></form></Dialog>
