@@ -14,6 +14,9 @@ import { AdminView } from '../views/AdminView';
 import { AttendanceView } from '../views/AttendanceView';
 import { EmployeeCalendar } from '../views/EmployeeCalendar';
 import { apiFetch, clearSession } from '../lib/api';
+import { usePortalNavigation } from '../hooks/usePortalNavigation';
+
+const portalViews: readonly ViewKey[] = ['overview', 'attendance', 'calendar', 'employees', 'leave', 'payroll', 'insights', 'settings', 'admin'];
 
 type OverviewEmployee = { role?: string; status: string; biometricStatus: string; createdAt?: string };
 type OverviewPayroll = { status: string; periodStart?: string };
@@ -222,11 +225,7 @@ function manilaDateToday() {
 }
 
 export function AppRoutes() {
-  const params = typeof window !== 'undefined' ? new URLSearchParams(window.location.search) : new URLSearchParams();
-  const paramView = params.get('view') as ViewKey;
-  const validViews: ViewKey[] = ['overview', 'attendance', 'calendar', 'employees', 'leave', 'payroll', 'insights', 'settings', 'admin'];
-  const initialView: ViewKey = validViews.includes(paramView) ? paramView : 'overview';
-  const [active, setActive] = useState<ViewKey>(initialView);
+  const [active, setActive] = usePortalNavigation(portalViews, 'overview');
   const [mobileNavigationOpen, setMobileNavigationOpen] = useState(false);
   const [accountName, setAccountName] = useState('');
   const [logoutOpen, setLogoutOpen] = useState(false);
@@ -529,20 +528,8 @@ export function AppRoutes() {
     payroll: 'Payroll', insights: 'Insights', settings: 'System Settings', admin: 'Admin Controls',
   };
 
-  // Sync state transitions back to URL queries
-  useEffect(() => {
-    if (typeof window !== 'undefined') {
-      const newParams = new URLSearchParams(window.location.search);
-      newParams.set('view', active);
-      newParams.delete('role');
-      
-      const targetUrl = `${window.location.pathname}?${newParams.toString()}`;
-      window.history.replaceState(window.history.state, '', targetUrl);
-    }
-  }, [active]);
-
   return (
-    <div className="flex min-h-screen w-full bg-slate-100/70">
+    <div className="portal-shell flex min-h-screen w-full bg-slate-100/70">
       <AdminSidebar active={active} onNavigate={setActive} mobileOpen={mobileNavigationOpen} onMobileClose={() => setMobileNavigationOpen(false)} accountName={accountName} onLogout={requestLogout} />
       <div className="min-w-0 flex-1">
         <header className="sticky top-0 z-30 flex h-16 items-center border-b border-slate-200/80 bg-white/90 px-4 backdrop-blur-xl sm:px-6 lg:px-8">

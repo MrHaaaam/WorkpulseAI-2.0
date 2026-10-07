@@ -13,7 +13,9 @@ export function Input({ className, ...props }: React.InputHTMLAttributes<HTMLInp
   const field = (
     <input
       className={cn(
-        "flex h-10 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 transition-colors focus:border-[#8642ED] focus:outline-none focus:ring-2 focus:ring-[#8642ED]/20 disabled:cursor-not-allowed disabled:opacity-50",
+        props.type === "checkbox" || props.type === "radio"
+          ? "h-5 w-5 shrink-0 cursor-pointer border-slate-300 p-0 accent-violet-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+          : "flex h-10 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 transition-colors focus:border-[#8642ED] focus:outline-none focus:ring-2 focus:ring-[#8642ED]/20 disabled:cursor-not-allowed disabled:opacity-50",
         className,
         counter && "pr-16"
       )}

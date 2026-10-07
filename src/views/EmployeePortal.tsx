@@ -6,9 +6,11 @@ import {
   AlertTriangle, Eye, Mail, MapPin, Menu, Pencil, Phone, Printer, RefreshCw, Save, Send, ShieldCheck, UserRound, WalletCards, X,
 } from 'lucide-react'
 import { apiFetch, clearSession } from '../lib/api'
+import { usePortalNavigation } from '../hooks/usePortalNavigation'
 import { useToast } from '../components/ui/Toast'
 import { DateNavigator } from '../components/DateNavigator'
 import { LeaveDatePicker } from '../components/LeaveDatePicker'
+import { MAX_LEAVE_REQUEST_DAYS, leaveRequestDaysError } from '../../shared/leave-policy.js'
 import { Dialog, DialogClose, DialogHeader } from '../components/ui/Dialog'
 import { Button } from '../components/ui/Button'
 import { EmployeeCashAdvancePanel, type CashAdvanceRequest, type CashAdvanceSummary } from './EmployeeCashAdvancePanel'
@@ -27,6 +29,7 @@ type AttendanceFlag = { tier: 'green' | 'orange' | 'red'; absenceDays: number; p
 type WorkSchedule = { workWeekdays: number[]; scheduleOverrides: { date: string; working: boolean; kind?: string }[]; startTime?: string; autoClockOutTime?: string }
 type Workspace = { cashAdvance?: CashAdvanceSummary; cashAdvanceMax?: number; cashAdvanceRequests?: CashAdvanceRequest[]; profile: EmployeeProfile; attendance: Attendance[]; leaveRequests: Leave[]; payroll: Payroll[]; attendanceFlag: AttendanceFlag; workSchedule: WorkSchedule }
 type Section = 'overview' | 'calendar' | 'attendance' | 'leave' | 'payroll' | 'profile'
+const portalSections: readonly Section[] = ['overview', 'calendar', 'attendance', 'leave', 'payroll', 'profile']
 
 const money = (value: number | undefined) => new Intl.NumberFormat('en-PH', { style: 'currency', currency: 'PHP' }).format(Number(value || 0))
 const formatDate = (value?: string) => value ? new Date(`${value.slice(0, 10)}T00:00:00`).toLocaleDateString('en-PH', { month: 'short', day: 'numeric', year: 'numeric' }) : '—'
@@ -55,7 +58,7 @@ const sectionCopy: Record<Section, { eyebrow: string; title: string; description
 
 export function EmployeePortal() {
   const { toast } = useToast()
-  const [section, setSection] = useState<Section>('overview')
+  const [section, setSection] = usePortalNavigation(portalSections, 'overview')
   const [workspace, setWorkspace] = useState<Workspace | null>(null)
   const [loading, setLoading] = useState(true)
   const [submitting, setSubmitting] = useState(false)
@@ -106,6 +109,11 @@ export function EmployeePortal() {
 
   async function submitLeave(event: FormEvent) {
     event.preventDefault()
+    const datesError = leaveRequestDaysError(leaveDraft.requestedDates)
+    if (datesError) {
+      toast({ title: 'Check your leave dates', description: datesError, variant: 'error' })
+      return
+    }
     setSubmitting(true)
     try {
       const response = await apiFetch('/api/employee/me/leave-requests', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(leaveDraft) })
@@ -177,7 +185,7 @@ export function EmployeePortal() {
   const page = sectionCopy[section]
   const selectedAttendance = workspace.attendance.filter((record) => record.date === attendanceDate)
 
-  return <div className="flex min-h-screen w-full bg-slate-100/70 text-slate-900">
+  return <div className="portal-shell flex min-h-screen w-full bg-slate-100/70 text-slate-900">
     <button aria-label="Close navigation" onClick={() => setMobileNavigationOpen(false)} className={`fixed inset-0 z-40 bg-slate-950/40 backdrop-blur-sm transition-opacity lg:hidden ${mobileNavigationOpen ? 'pointer-events-auto opacity-100' : 'pointer-events-none opacity-0'}`} />
     <aside className={`fixed inset-y-0 left-0 z-50 flex w-[min(19rem,86vw)] flex-col border-r border-slate-200/80 bg-white shadow-2xl transition-transform duration-200 lg:sticky lg:top-0 lg:z-20 lg:h-screen lg:w-64 lg:translate-x-0 lg:shadow-none ${mobileNavigationOpen ? 'translate-x-0' : '-translate-x-full'}`}>
       <div className="flex h-16 items-center gap-3 border-b border-slate-200/80 px-4">
@@ -210,7 +218,7 @@ export function EmployeePortal() {
             <div className="absolute -right-20 -top-24 h-64 w-64 rounded-full bg-[#8642ED]/10 blur-3xl" />
             <div className="relative flex flex-col justify-between gap-6 md:flex-row md:items-end"><div><p className="text-sm font-semibold text-[#8642ED]">Welcome back,</p><h2 className="mt-1 break-words text-2xl font-bold tracking-tight text-slate-950 sm:text-3xl">{profile.name}</h2><p className="mt-3 max-w-xl text-sm leading-6 text-slate-600">Your attendance, leave, and pay in one place.</p><div className="mt-5 flex flex-wrap gap-2"><span className="rounded-full bg-violet-100 px-3 py-1 text-xs capitalize text-violet-800 ring-1 ring-violet-200">{profile.role}</span><span className="rounded-full bg-emerald-50 px-3 py-1 text-xs capitalize text-emerald-700 ring-1 ring-emerald-200">{profile.status}</span><span className="rounded-full bg-white px-3 py-1 text-xs text-slate-700 ring-1 ring-violet-200">ID {profile.id}</span></div></div><div className="rounded-2xl border border-violet-200 bg-white/80 p-4 shadow-sm"><p className="text-[10px] font-bold uppercase tracking-wider text-violet-500">Fingerprint attendance</p><div className="mt-2 flex items-center gap-2"><Fingerprint className="h-5 w-5 text-[#8642ED]" /><span className="text-sm font-semibold capitalize text-slate-800">{profile.biometricStatus}</span></div></div></div>
           </section>
-          <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+          <section className="employee-metrics grid gap-3 sm:gap-4 sm:grid-cols-2 xl:grid-cols-3">
             <MetricCard icon={Clock3} label="Attendance records" value={`${attendanceSummary.present}/${attendanceSummary.total}`} note={`${attendanceSummary.sessions} sessions recorded`} tone="violet" />
             <MetricCard icon={CheckCircle2} label="Pending leave" value={String(workspace.leaveRequests.filter((item) => item.status === 'pending').length)} note="Waiting for admin review" tone="amber" />
             <MetricCard icon={WalletCards} label="Latest payroll" value={workspace.payroll[0] ? money(workspace.payroll[0].amount) : 'No record'} note={workspace.payroll[0]?.status ?? 'Nothing prepared yet'} tone="blue" />
@@ -232,7 +240,7 @@ export function EmployeePortal() {
         {section === 'payroll' && <div className="space-y-5"><Panel title="Payroll history" subtitle="Open any pay period to view or print your personal payslip"><DataTable headers={['Pay period', 'Current pay', 'Carried balance', 'Total payout', 'Status', 'Summary']} rows={workspace.payroll.map((item) => [formatDate(item.periodStart), money(item.currentAmount), money(item.carryOverAmount), <strong key={`${item.id}-amount`} className="text-slate-900">{money(item.amount)}</strong>, <Status key={`${item.id}-status`} value={item.status} />, <button key={`${item.id}-view`} type="button" onClick={() => setSelectedPayrollId(item.id)} className="inline-flex h-9 items-center gap-2 whitespace-nowrap rounded-lg border border-violet-200 bg-violet-50 px-3 text-xs font-semibold text-violet-700 hover:bg-violet-100 focus:outline-none focus:ring-4 focus:ring-violet-200"><Eye className="h-4 w-4" />View summary</button>])} empty="No payroll records yet." /></Panel><EmployeeCashAdvancePanel maxAmount={workspace.cashAdvanceMax} payroll={workspace.payroll} summary={workspace.cashAdvance} requests={workspace.cashAdvanceRequests || []} onChanged={loadWorkspace}/></div>}
 
         {section === 'leave' && <div className="grid gap-5 xl:grid-cols-[.82fr_1.18fr]">
-          <Panel title="Request leave" subtitle="Your administrator will review the dates you select"><form onSubmit={submitLeave} className="mt-5 space-y-4"><Field label="Leave type"><select value={leaveDraft.leaveType} onChange={(event) => setLeaveDraft((current) => ({ ...current, leaveType: event.target.value }))} className="input"><option>Annual Leave</option><option>Sick Leave</option><option>Personal Leave</option><option>Maternity Leave</option></select></Field><LeaveDatePicker selected={leaveDraft.requestedDates} workSchedule={workspace.workSchedule} onChange={(requestedDates)=>setLeaveDraft(current=>({...current,requestedDates}))}/><Field label="Reason"><Textarea required minLength={5} maxLength={500} rows={4} value={leaveDraft.reason} onChange={(event) => setLeaveDraft((current) => ({ ...current, reason: event.target.value }))} className="input h-auto py-3" placeholder="Briefly explain your request" /></Field><button disabled={submitting||leaveDraft.requestedDates.length===0} className="flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-[#8642ED] text-sm font-semibold text-white shadow-lg shadow-violet-600/15 hover:bg-violet-700 disabled:opacity-60"><Send className="h-4 w-4" />{submitting ? 'Submitting...' : `Submit ${leaveDraft.requestedDates.length} ${leaveDraft.requestedDates.length===1?'date':'dates'}`}</button></form></Panel>
+          <Panel title="Request leave" subtitle="Your administrator will review the dates you select"><form onSubmit={submitLeave} className="mt-5 space-y-4"><Field label="Leave type"><select value={leaveDraft.leaveType} onChange={(event) => setLeaveDraft((current) => ({ ...current, leaveType: event.target.value }))} className="input"><option>Annual Leave</option><option>Sick Leave</option><option>Personal Leave</option><option>Maternity Leave</option></select></Field><LeaveDatePicker maxDates={MAX_LEAVE_REQUEST_DAYS} selected={leaveDraft.requestedDates} workSchedule={workspace.workSchedule} onChange={(requestedDates)=>setLeaveDraft(current=>({...current,requestedDates}))}/><Field label="Reason"><Textarea required minLength={5} maxLength={500} rows={4} value={leaveDraft.reason} onChange={(event) => setLeaveDraft((current) => ({ ...current, reason: event.target.value }))} className="input h-auto py-3" placeholder="Briefly explain your request" /></Field><button disabled={submitting||leaveDraft.requestedDates.length===0||leaveDraft.requestedDates.length>MAX_LEAVE_REQUEST_DAYS} className="flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-[#8642ED] text-sm font-semibold text-white shadow-lg shadow-violet-600/15 hover:bg-violet-700 disabled:opacity-60"><Send className="h-4 w-4" />{submitting ? 'Submitting...' : `Submit ${leaveDraft.requestedDates.length} ${leaveDraft.requestedDates.length===1?'date':'dates'}`}</button></form></Panel>
           <Panel title="Request history" subtitle="Updates and decisions from your administrator"><DataTable headers={['Leave type', 'Dates', 'Days', 'Status']} rows={workspace.leaveRequests.map((item) => [item.leaveType, (item.approvedDates?.length?item.approvedDates:item.requestedDates)?.map(formatDate).join(', ')||`${formatDate(item.startDate)} – ${formatDate(item.endDate)}`, String(item.totalDays), <div key={item.id} className="flex flex-wrap items-center gap-2"><Status value={item.status} />{item.status==='pending'&&<button type="button" onClick={()=>setCancelLeaveTarget(item)} className="rounded-lg border border-rose-200 px-2 py-1 text-xs font-semibold text-rose-700 hover:bg-rose-50 focus:outline-none focus:ring-2 focus:ring-rose-300">Cancel</button>}</div>])} empty="No leave requests yet." /></Panel>
         </div>}
 
@@ -309,7 +317,7 @@ function Panel({ title, subtitle, children }: { title: string; subtitle: string;
 
 function MetricCard({ icon: Icon, label, value, note, tone }: { icon: typeof Clock3; label: string; value: string; note: string; tone: 'violet' | 'emerald' | 'amber' | 'blue' }) {
   const colors = { violet: 'bg-violet-50 text-[#8642ED]', emerald: 'bg-emerald-50 text-emerald-600', amber: 'bg-amber-50 text-amber-600', blue: 'bg-sky-50 text-sky-600' }[tone]
-  return <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm"><div className={`grid h-10 w-10 place-items-center rounded-xl ${colors}`}><Icon className="h-5 w-5" /></div><p className="mt-4 text-xs font-semibold uppercase tracking-wider text-slate-400">{label}</p><p className="mt-1 truncate text-2xl font-bold text-slate-950">{value}</p><p className="mt-1 text-xs capitalize text-slate-500">{note}</p></div>
+  return <div className="employee-metric min-w-0 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm"><div className={`grid h-10 w-10 place-items-center rounded-xl ${colors}`}><Icon className="h-5 w-5" /></div><p className="mt-4 text-xs font-semibold uppercase tracking-wider text-slate-400">{label}</p><p className="mt-1 break-words text-2xl font-bold text-slate-950">{value}</p><p className="mt-1 text-xs capitalize text-slate-500">{note}</p></div>
 }
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
@@ -324,7 +332,7 @@ function Status({ value }: { value: string }) {
 }
 
 function DataTable({ headers, rows, empty }: { headers: string[]; rows: React.ReactNode[][]; empty: string }) {
-  return <div className="overflow-x-auto"><table className="w-full min-w-[620px] text-left text-sm"><thead><tr className="border-b border-slate-200 bg-slate-50/70">{headers.map((header) => <th key={header} className="px-4 py-3 text-[11px] font-bold uppercase tracking-wider text-slate-400">{header}</th>)}</tr></thead><tbody>{rows.map((row, index) => <tr key={index} className="border-b border-slate-100 transition last:border-0 hover:bg-slate-50/70">{row.map((cell, cellIndex) => <td key={cellIndex} className="px-4 py-4 text-slate-600">{cell}</td>)}</tr>)}</tbody></table>{!rows.length && <EmptyState icon={WalletCards} text={empty} />}</div>
+  return <div className="overflow-x-auto"><table className="employee-record-table w-full min-w-[620px] text-left text-sm"><thead><tr className="border-b border-slate-200 bg-slate-50/70">{headers.map((header) => <th key={header} scope="col" className="px-4 py-3 text-[11px] font-bold uppercase tracking-wider text-slate-400">{header}</th>)}</tr></thead><tbody>{rows.map((row, index) => <tr key={index} className="border-b border-slate-100 transition last:border-0 hover:bg-slate-50/70">{row.map((cell, cellIndex) => <td key={cellIndex} data-label={headers[cellIndex]} className="px-4 py-4 text-slate-600">{cell}</td>)}</tr>)}</tbody></table>{!rows.length && <EmptyState icon={WalletCards} text={empty} />}</div>
 }
 
 function EmptyState({ icon: Icon, text }: { icon: typeof Clock3; text: string }) {

@@ -117,7 +117,7 @@ export async function authenticate(req, res, next) {
     const accountId = session.accountId ?? session.adminId;
     const collection = accountType === 'employee' ? 'employee_accounts' : 'admin_accounts';
     const actor = await db.collection(collection).findOne({ _id: accountId, active: true });
-    if (!actor) return res.status(401).json({ error: 'Account is unavailable' });
+    if (!actor || (actor.demo && !(process.env.DEMO_DEPLOYMENT === 'true' && process.env.DEMO_LOGIN_ENABLED === 'true'))) return res.status(401).json({ error: 'Account is unavailable' });
     if (accountType === 'employee') {
       const employee = await db.collection('employees').findOne({ id: actor.employeeId, archived: { $ne: true }, banned: { $ne: true }, status: { $ne: 'inactive' } }, { projection: { _id: 1 } });
       if (!employee) return res.status(401).json({ error: 'Employee access is unavailable' });

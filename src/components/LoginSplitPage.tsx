@@ -24,6 +24,12 @@ function solveCaptcha(challenge: string) {
 export default function LoginSplitPage() {
   const { toast } = useToast()
   const [loading, setLoading] = useState(false)
+  const [demoEnabled, setDemoEnabled] = useState(false)
+  useEffect(() => {
+    const controller = new AbortController()
+    void apiFetch(`${API_URL}/demo-config`, { signal: controller.signal }).then(response => response.ok ? response.json() : null).then(data => { if (data) setDemoEnabled(data.enabled === true) }).catch(() => {})
+    return () => controller.abort()
+  }, [])
   const [retryUntil, setRetryUntil] = useState(() => Number(sessionStorage.getItem('loginRetryUntil') || 0))
   const [retrySeconds, setRetrySeconds] = useState(() => Math.max(0, Math.ceil((Number(sessionStorage.getItem('loginRetryUntil') || 0) - Date.now()) / 1000)))
   useEffect(() => {
@@ -78,7 +84,7 @@ export default function LoginSplitPage() {
       toast({ title: 'Complete the required fields', description: 'Enter your email, password, and CAPTCHA answer.', variant: 'error' })
       return
     }
-    if (!validEmail(email) || /\s/.test(password)) {
+    if ((!validEmail(email) && !(demoEnabled && ['admin', 'employee'].includes(email.trim().toLowerCase()))) || /\s/.test(password)) {
       toast({ title: 'Check your login details', description: 'Enter a valid email address and a password without spaces.', variant: 'error' })
       return
     }
@@ -96,6 +102,12 @@ export default function LoginSplitPage() {
       sessionStorage.removeItem('loginRetryUntil')
       setRetryUntil(0)
       setRetrySeconds(0)
+      if (data.authenticated && data.demo) {
+        storeSession(data)
+        window.history.replaceState(null, '', '/')
+        window.location.assign('/overview?view=overview')
+        return
+      }
       setVerificationId(data.verificationId)
       toast({ title: 'Verification code sent', description: 'Check your registered email for the 6-digit code.', variant: 'success', duration: 6000 })
     } catch (reason) {
@@ -118,7 +130,11 @@ export default function LoginSplitPage() {
       storeSession(data)
       toast({ title: 'Welcome back', description: 'Your identity was verified successfully.', variant: 'success', duration: 1800 })
       const destination = window.location.pathname === '/kiosk' ? '/kiosk' : '/overview?view=overview'
-      window.setTimeout(() => { window.location.replace(destination) }, 450)
+      window.setTimeout(() => {
+        // Preserve a sign-in entry behind the first authenticated page.
+        window.history.replaceState(null, '', '/')
+        window.location.assign(destination)
+      }, 450)
     } catch (reason) {
       toast({ title: 'Verification failed', description: reason instanceof Error ? reason.message : 'Please try again.', variant: 'error' })
     } finally { setLoading(false) }
@@ -244,7 +260,7 @@ export default function LoginSplitPage() {
                 <div><label htmlFor="otp" className="mb-2 block text-sm font-semibold text-slate-700">Verification code</label><Input ref={otpRef} id="otp" autoComplete="one-time-code" inputMode="numeric" maxLength={6} className="h-14 w-full rounded-xl border border-slate-300 bg-slate-100 px-4 text-center text-xl font-semibold tracking-[.45em] outline-none transition hover:border-slate-400 focus:border-indigo-500 focus:bg-white focus:ring-4 focus:ring-indigo-500/10" placeholder="000000" value={otp} onChange={(event) => setOtp(event.target.value.replace(/\D/g, ''))} /></div>
               ) : (
                 <>
-                  <div><label htmlFor="email" className="mb-2 block text-sm font-semibold text-slate-800">Organization email <span className="text-red-600" aria-hidden="true">*</span></label><Input id="email" autoComplete="username" type="email" onKeyDown={event => { if (event.key === " ") event.preventDefault() }} maxLength={254} required autoFocus aria-required="true" className="h-12 w-full rounded-xl border border-slate-400 bg-white px-4 text-sm outline-none transition placeholder:text-slate-500 hover:border-slate-500 focus:border-indigo-600 focus:ring-4 focus:ring-indigo-500/20" placeholder="you@company.com" value={email} onChange={(event) => setEmail(emailInput(event.target.value))} /><p className="mt-1 text-xs text-slate-500">Use a valid email address. No spaces. {email.length}/254 characters</p></div>
+                  <div><label htmlFor="email" className="mb-2 block text-sm font-semibold text-slate-800">{demoEnabled ? "Email or demo username" : "Organization email"} <span className="text-red-600" aria-hidden="true">*</span></label><Input id="email" autoComplete="username" type={demoEnabled ? "text" : "email"} onKeyDown={event => { if (event.key === " ") event.preventDefault() }} maxLength={254} required autoFocus aria-required="true" className="h-12 w-full rounded-xl border border-slate-400 bg-white px-4 text-sm outline-none transition placeholder:text-slate-500 hover:border-slate-500 focus:border-indigo-600 focus:ring-4 focus:ring-indigo-500/20" placeholder="you@company.com" value={email} onChange={(event) => setEmail(emailInput(event.target.value))} /><p className="mt-1 text-xs text-slate-500">{demoEnabled ? "Demo login: admin or employee. Complete CAPTCHA; OTP is skipped." : "Use a valid email address. No spaces."} {email.length}/254 characters</p></div>
                   <div><div className="mb-2 flex items-center justify-between"><label htmlFor="password" className="text-sm font-semibold text-slate-800">Password <span className="text-red-600" aria-hidden="true">*</span></label><span className="text-xs text-slate-500">{password.length}/{LOGIN_PASSWORD_MAX}</span></div><div className="relative"><Input id="password" maxLength={LOGIN_PASSWORD_MAX} autoComplete="current-password" required aria-required="true" type={showPassword ? 'text' : 'password'} className="h-12 w-full rounded-xl border border-slate-400 bg-white px-4 pr-12 text-sm outline-none transition placeholder:text-slate-500 hover:border-slate-500 focus:border-indigo-600 focus:ring-4 focus:ring-indigo-500/20" placeholder="Enter your password (no spaces)" value={password} onChange={(event) => setPassword(passwordInput(event.target.value))} /><button type="button" onClick={() => setShowPassword((current) => !current)} className="absolute right-2 top-1/2 grid h-10 w-10 -translate-y-1/2 place-items-center rounded-lg text-slate-600 hover:bg-slate-100 hover:text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-600" aria-label={showPassword ? 'Hide password' : 'Show password'} aria-pressed={showPassword}>{showPassword ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}</button></div><button type="button" onClick={() => { setRecoveryEmail(email); setRecoveryStep('email') }} className="mt-2 text-sm font-semibold text-indigo-700 hover:text-indigo-900 focus:outline-none focus:underline">Forgot your employee password?</button></div>
                   <div>
                     <label htmlFor="captcha" className="mb-2 block text-sm font-semibold text-slate-800">Security check <span className="font-normal text-slate-600">— solve the math question</span></label>

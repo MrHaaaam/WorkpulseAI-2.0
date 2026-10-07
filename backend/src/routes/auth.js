@@ -8,6 +8,7 @@ import mongoose from 'mongoose';
 import { createEmailTransport, emailConfigured } from '../email.js';
 import { auditEvent, authenticate, clearSessionCookie, createCsrfToken, csrfProtection, getRequestToken, rateLimit, SESSION_LIFETIME_MS, setSessionCookie } from '../security.js';
 import { getSystemControls } from '../system-controls.js';
+import { demoLoginEnabled, demoAccessAllowed } from '../demo.js';
 
 const router = Router();
 const scrypt = promisify(crypto.scrypt);
@@ -20,6 +21,8 @@ const passwordResetRequestLimit = rateLimit({ windowMs: 15 * 60_000, max: 5, key
 const passwordResetVerifyLimit = rateLimit({ windowMs: 10 * 60_000, max: 10, keyPrefix: 'password-reset-verify' });
 const passwordResetCompleteLimit = rateLimit({ windowMs: 15 * 60_000, max: 5, keyPrefix: 'password-reset-complete' });
 const passwordCooldowns = new Map();
+
+router.get('/demo-config', (_req, res) => res.json({ demoDeployment: process.env.DEMO_DEPLOYMENT === 'true', enabled: demoLoginEnabled() }));
 
 export async function hashSecret(secret) {
   const salt = crypto.randomBytes(16).toString('hex');
@@ -81,7 +84,8 @@ router.post('/login', async (request, response) => {
     if (!email || !password || !captchaId || captchaAnswer === undefined) return response.status(400).json({ error: 'Complete all login fields' });
     if (String(email).length > 254 || String(password).length > LOGIN_PASSWORD_MAX || !validPasswordCharacters(password) || String(captchaAnswer).length > 20) return response.status(400).json({ error: 'Invalid login input' });
     if (typeof password !== 'string' || /\s/.test(password)) return response.status(400).json({ error: 'Passwords cannot contain spaces.' });
-    if (!validEmail(email)) return response.status(400).json({ error: 'Enter a valid email address.' });
+    const demoUsername = demoLoginEnabled() && ['admin', 'employee'].includes(String(email).trim().toLowerCase());
+    if (!demoUsername && !validEmail(email)) return response.status(400).json({ error: 'Enter a valid email address.' });
     const cooldownKey = `${request.ip}:${String(email).trim().toLowerCase()}`;
     const lockedSeconds = loginCooldown.remaining(cooldownKey);
     if (lockedSeconds) { response.setHeader('Retry-After', String(lockedSeconds)); return response.status(429).json({ error: `Try again in ${lockedSeconds} seconds.`, retryAfterSeconds: lockedSeconds }); }
@@ -94,7 +98,7 @@ router.post('/login', async (request, response) => {
     const captcha = await db.collection('login_captchas').findOneAndDelete({ captchaId });
     if (!captcha || captcha.expiresAt < new Date() || !(await verifySecret(String(captchaAnswer).trim(), captcha.answerHash))) { await auditEvent({ req: request, action: 'auth.login', targetType: 'session', outcome: 'failure', metadata: { reason: 'captcha', attemptedEmail: email } }); return failedLogin(400, 'Invalid or expired CAPTCHA'); }
 
-    const normalizedEmail = String(email).trim().toLowerCase();
+    const normalizedEmail = String(email).trim().toLowerCase() + (demoUsername ? '@demo.invalid' : '');
     let account = await db.collection('admin_accounts').findOne({ email: normalizedEmail, active: true });
     let accountType = 'admin';
     if (!account) { account = await db.collection('employee_accounts').findOne({ email: normalizedEmail, active: true }); accountType = 'employee'; }
@@ -106,6 +110,17 @@ router.post('/login', async (request, response) => {
       return response.status(503).json({ error: 'WORKPULSE MVL is temporarily available to administrators only while maintenance is in progress.' });
     }
 
+    if (!demoAccessAllowed(account)) return failedLogin(401, 'Demo login is disabled');
+    if (account.demo && demoLoginEnabled()) {
+      const token = crypto.randomBytes(32).toString('hex');
+      const csrf = createCsrfToken();
+      const createdAt = new Date();
+      const expiresAt = new Date(createdAt.getTime() + SESSION_LIFETIME_MS);
+      await db.collection('admin_sessions').insertOne({ tokenDigest: crypto.createHash('sha256').update(token).digest('hex'), csrfDigest: csrf.tokenDigest, accountId: account._id, accountType, demo: true, createdAt, expiresAt });
+      setSessionCookie(response, token);
+      await auditEvent({ req: request, actor: account, action: 'auth.login', targetType: 'session', outcome: 'success', metadata: { demo: true } });
+      return response.json({ authenticated: true, demo: true, csrfToken: csrf.token, role: account.role, accountType, mustChangePassword: false, expiresAt: expiresAt.toISOString() });
+    }
     if (!emailConfigured()) return response.status(503).json({ error: 'Email OTP is not configured on the server' });
     const otp = String(crypto.randomInt(100000, 1_000_000));
     const verificationId = crypto.randomUUID();
@@ -140,7 +155,7 @@ router.post('/verify-otp', otpLimit, async (request, response) => {
   const accountId = record.accountId ?? record.adminId;
   const accountType = record.accountType ?? 'admin';
   const account = await db.collection(accountType === 'employee' ? 'employee_accounts' : 'admin_accounts').findOne({ _id: accountId, active: true });
-  if (!account || (accountType === 'employee' && (!(await db.collection('employees').findOne({ id: account.employeeId, archived: { $ne: true }, banned: { $ne: true }, status: { $ne: 'inactive' } }, { projection: { _id: 1 } })) || (await getSystemControls(db)).maintenanceMode))) return response.status(401).json({ error: 'Account access is unavailable' });
+  if (!account || !demoAccessAllowed(account) || (accountType === 'employee' && (!(await db.collection('employees').findOne({ id: account.employeeId, archived: { $ne: true }, banned: { $ne: true }, status: { $ne: 'inactive' } }, { projection: { _id: 1 } })) || (await getSystemControls(db)).maintenanceMode))) return response.status(401).json({ error: 'Account access is unavailable' });
   const token = crypto.randomBytes(32).toString('hex');
   const tokenDigest = crypto.createHash('sha256').update(token).digest('hex');
   const csrf = createCsrfToken();
@@ -182,7 +197,7 @@ router.get('/session', async (request, response) => {
   const accountId = session.accountId ?? session.adminId;
   const accountType = session.accountType ?? 'admin';
   const account = await mongoose.connection.db.collection(accountType === 'employee' ? 'employee_accounts' : 'admin_accounts').findOne({ _id: accountId, active: true });
-  if (!account) return response.status(401).json({ authenticated: false });
+  if (!account || !demoAccessAllowed(account)) { clearSessionCookie(response); return response.status(401).json({ authenticated: false }); }
   if (accountType === 'employee' && !(await mongoose.connection.db.collection('employees').findOne({ id: account.employeeId, archived: { $ne: true }, banned: { $ne: true }, status: { $ne: 'inactive' } }, { projection: { _id: 1 } }))) return response.status(401).json({ authenticated: false });
   if (accountType === 'employee' && (await getSystemControls(mongoose.connection.db)).maintenanceMode) {
     return response.status(503).json({ authenticated: false, error: 'WORKPULSE MVL is temporarily available to administrators only while maintenance is in progress.' });

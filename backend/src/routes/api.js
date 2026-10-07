@@ -1,11 +1,13 @@
 import { validPhone } from '../../../shared/input-format.js';
 import { payrollTransaction } from '../payroll-transaction.js';
+import { decideLeaveRequest, leaveApprovalPreview } from '../leave-approval.js';
 import { cashAdvanceSummary, proposedAdvanceDeduction } from '../cash-advances.js';
 import { additionFrequency, validQuarter, quarterForDate, nextQuarter, scheduleSalaryAddition, combinedSalaryAddition } from '../../../shared/quarterly-additions.js';
 import { workHourOrderError } from '../../../shared/work-hours.js';
 import { previewQuarterlyAdditions, includeQuarterlyAdditions, removeQuarterlyAdditions, quarterlySelectionError, recurringPayrollAdditions, automaticQuarterlyAdditions, undoPaymentValidationError } from '../quarterly-additions.js';
 import { ADDITION_MAX, validBoundedNumber, identifiersValidationError, settingsNumbersValidationError } from '../../../shared/field-limits.js';
 import { passwordValidationError } from '../../../shared/password-policy.js';
+import { leaveRequestDaysError } from '../../../shared/leave-policy.js';
 import { normalizeName, validEmail, validAddress, employeeValidationError } from '../input-validation.js';
 import { checkoutIsChronological } from '../attendance-validation.js';
 import { approvedLeaveCoversDate, manualAttendanceProblem } from '../manual-attendance.js';
@@ -354,7 +356,8 @@ router.post('/employee/me/leave-requests', requireRole('regular', 'extra', 'mana
     const requestedDates = Array.isArray(req.body?.requestedDates) ? [...new Set(req.body.requestedDates.map((date) => String(date)).filter((date) => /^\d{4}-\d{2}-\d{2}$/.test(date)))].sort() : [];
     const reason = String(req.body?.reason ?? '').trim();
     if (!['Annual Leave', 'Sick Leave', 'Personal Leave', 'Maternity Leave'].includes(leaveType)) return res.status(400).json({ error: 'Select a valid leave type' });
-    if (!requestedDates.length || requestedDates.length > 366) return res.status(400).json({ error: 'Select between 1 and 366 leave dates.' });
+    const datesError = leaveRequestDaysError(requestedDates);
+    if (datesError) return res.status(400).json({ error: datesError });
     const startDate = requestedDates[0];
     const endDate = requestedDates.at(-1);
     const totalDays = requestedDates.length;
@@ -1829,7 +1832,7 @@ router.get('/payroll/employees', async (req, res) => {
 const REPORT_FIELDS = {
   employees: ['id', 'name', 'role', 'status', 'email', 'phone', 'archived', 'createdAt'],
   attendance: ['employeeId', 'name', 'date', 'checkIn', 'checkOut', 'status'],
-  leave_requests: ['id', 'employeeId', 'employeeName', 'startDate', 'endDate', 'totalDays', 'status', 'createdAt'],
+  leave_requests: ['id', 'employeeId', 'employeeName', 'requestedDates', 'approvedDates', 'startDate', 'endDate', 'totalDays', 'status', 'createdAt', 'approvalUndoneAt'],
   payroll_requests: ['id', 'employeeId', 'periodStart', 'periodEnd', 'hoursWorked', 'grossAmount', 'amount', 'status', 'paidAt'],
 };
 
@@ -2565,83 +2568,67 @@ router.post('/payroll/audit-export', async (req, res) => {
   res.status(204).end();
 });
 
+router.get('/leave-requests/:id/approval-preview', async (req, res) => {
+  try {
+    const db = mongoose.connection.db;
+    await expirePassedLeaveRequests(db);
+    const employeeIds = await visibleEmployeeIds(db);
+    const request = await db.collection('leave_requests').findOne({ id: req.params.id, employeeId: { $in: employeeIds }, status: { $in: ['pending', 'passed'] } });
+    if (!request) return res.status(409).json({ error: 'This request is no longer available for review. Refresh leave requests.' });
+    const settings = await getSettings(db);
+    const preview = await leaveApprovalPreview(db, request, { today: kioskTimestamp().date, isWorkday: date => scheduledWorkStatus(settings, date) });
+    if (!preview.dates.length) return res.status(409).json({ error: 'Exact requested dates are missing from this older request. Create a new request with the correct dates before approving.' });
+    res.json({ today: preview.today, dates: preview.dates, requestStatus: request.status });
+  } catch { res.status(500).json({ error: 'Attendance and payroll could not be checked. Approval is unavailable until the checks succeed.' }); }
+});
+
+function leaveDecisionError(error) {
+  if (error?.code === 20 || /Transaction numbers are only allowed|replica set/i.test(error?.message ?? '')) {
+    return { status: 503, error: 'Leave approval needs MongoDB transaction support. Configure a replica set before approving; no partial changes were saved.' };
+  }
+  return { status: error?.status ?? 500, error: error?.status ? error.message : 'Leave decision could not be saved safely. Refresh before trying again.' };
+}
+
 router.patch('/leave-requests/bulk-status', async (req, res) => {
   try {
-    await expirePassedLeaveRequests(mongoose.connection.db);
+    const db = mongoose.connection.db;
+    await expirePassedLeaveRequests(db);
     const status = req.body?.status;
     const ids = [...new Set(Array.isArray(req.body?.ids) ? req.body.ids.map(String) : [])].slice(0, 100);
     if (!['approved', 'rejected'].includes(status) || !ids.length) return res.status(400).json({ error: 'Select pending requests and a valid decision.' });
     const verification = await verifyAdminPassword(req, req.body?.password);
     if (!verification.valid) return res.status(verification.retryAfterSeconds ? 429 : 401).json({ error: verification.retryAfterSeconds ? `Incorrect admin password. Try again in ${verification.retryAfterSeconds} seconds.` : 'Incorrect administrator password.' });
-    const db = mongoose.connection.db;
-    const visibleIds = await visibleEmployeeIds(db);
-    const results = [];
+    const employeeIds = await visibleEmployeeIds(db);
+    const settings = await getSettings(db);
+    const successful = [], failed = [];
     for (const id of ids) {
       try {
-        const pending = await db.collection('leave_requests').findOne({ id, employeeId: { $in: visibleIds }, status: 'pending' });
-        if (!pending) throw new Error('Request is no longer pending.');
-        const requestedDates = Array.isArray(pending.requestedDates) ? [...new Set(pending.requestedDates.map(String))].sort() : [];
-        if (status === 'approved') {
-          if (!requestedDates.length) throw new Error('No valid requested dates are available.');
-          const settings = await getSettings(db);
-          const nonWorking = requestedDates.find((date) => scheduledWorkStatus(settings, date) === false);
-          if (nonWorking) throw new Error(`${nonWorking} is a holiday or rest day.`);
-          const attendanceConflict = await db.collection('attendance').findOne({ employeeId: pending.employeeId, date: { $in: requestedDates }, $or: [{ checkIn: { $nin: [null, ''] } }, { sessions: { $elemMatch: { checkIn: { $nin: [null, ''] } } } }] });
-          if (attendanceConflict) throw new Error(`Attendance already exists on ${attendanceConflict.date}.`);
-        }
-        const approvedDates = status === 'approved' ? requestedDates : [];
-        const updated = await db.collection('leave_requests').findOneAndUpdate({ _id: pending._id, status: 'pending' }, { $set: { status, approvedDates, totalDays: status === 'approved' ? approvedDates.length : pending.totalDays, reviewedAt: new Date(), reviewedBy: req.auth.actor.email } }, { returnDocument: 'after' });
-        if (!updated) throw new Error('Request changed while it was being processed.');
-        if (status === 'approved') await Promise.all(approvedDates.map((date) => db.collection('attendance').updateOne(
-          { employeeId: updated.employeeId, date, $or: [{ checkIn: { $exists: false } }, { checkIn: null }, { checkIn: '' }] },
-          { $set: { name: updated.employeeName, role: updated.role, status: 'On Leave', leaveRequestId: updated.id, updatedAt: new Date() }, $unset: { idleDay: '', idleDayBy: '', idleDayAt: '' }, $setOnInsert: { employeeId: updated.employeeId, date, checkIn: null, checkOut: null, sessions: [], createdAt: new Date() } }, { upsert: true },
-        )));
-        results.push({ id, employeeName: updated.employeeName, ok: true, request: { ...updated, _id: undefined } });
-      } catch (error) { results.push({ id, ok: false, error: error instanceof Error ? error.message : 'Unable to process request.' }); }
+        const result = await decideLeaveRequest(db, { id, employeeIds, status, actor: req.auth.actor.email, today: kioskTimestamp().date, isWorkday: date => scheduledWorkStatus(settings, date), bulk: true });
+        successful.push({ id, employeeName: result.request.employeeName, request: { ...result.request, _id: undefined }, decision: result.decision });
+      } catch (error) { failed.push({ id, error: leaveDecisionError(error).error }); }
     }
-    const successful = results.filter((item) => item.ok);
-    res.locals.auditMetadata = { leaveAction: `bulk-${status}`, requestedStatus: status, recordCount: successful.length, failedCount: results.length - successful.length, requestIds: ids };
-    res.json({ status, successful, failed: results.filter((item) => !item.ok) });
-  } catch (error) {
-    console.error('Bulk leave decision failed:', error instanceof Error ? error.message : error);
-    res.status(500).json({ error: 'Unable to process the selected leave requests.' });
-  }
+    res.locals.auditMetadata = { leaveAction: `bulk-${status}`, requestedStatus: status, recordCount: successful.length, failedCount: failed.length, requestIds: ids, decisions: successful.map(item => ({ id: item.id, ...item.decision })) };
+    res.json({ status, successful, failed });
+  } catch { res.status(500).json({ error: 'Unable to process the selected leave requests.' }); }
 });
 
 router.patch('/leave-requests/:id/status', async (req, res) => {
   try {
-    await expirePassedLeaveRequests(mongoose.connection.db);
+    const db = mongoose.connection.db;
+    await expirePassedLeaveRequests(db);
     const status = req.body?.status;
     if (!['approved', 'rejected'].includes(status)) return res.status(400).json({ error: 'Status must be approved or rejected' });
-    const db = mongoose.connection.db;
     const employeeIds = await visibleEmployeeIds(db);
-    const pendingRequest = await db.collection('leave_requests').findOne({ id: req.params.id, employeeId: { $in: employeeIds }, status: 'pending' });
-    if (!pendingRequest) return res.status(404).json({ error: 'Pending leave request not found' });
-    res.locals.auditMetadata = { targetName: pendingRequest.employeeName, employeeId: pendingRequest.employeeId, requestedStatus: status, leaveAction: status };
-    const requestedDates = Array.isArray(pendingRequest.requestedDates) && pendingRequest.requestedDates.length ? pendingRequest.requestedDates : [];
-    const approvedDates = status === 'approved' ? [...new Set((Array.isArray(req.body?.approvedDates) ? req.body.approvedDates : requestedDates).map(String))].sort() : [];
-    if (status === 'approved' && (!approvedDates.length || approvedDates.some((date) => !requestedDates.includes(date)))) return res.status(400).json({ error: 'Select at least one date from the employee request.' });
-    if (status === 'approved' && pendingRequest.employeeId) {
-      const settings = await getSettings(db);
-      const nonWorkingDates = approvedDates.filter((date) => scheduledWorkStatus(settings, date) === false);
-      if (nonWorkingDates.length) return res.status(409).json({ error: `${nonWorkingDates[0]} is now a holiday or rest day and cannot be approved for leave.` });
-      const attendanceConflict = await db.collection('attendance').findOne({ employeeId: pendingRequest.employeeId, date: { $in: approvedDates }, $or: [{ checkIn: { $nin: [null, ''] } }, { sessions: { $elemMatch: { checkIn: { $nin: [null, ''] } } } }] });
-      if (attendanceConflict) return res.status(409).json({ error: `Attendance already exists on ${attendanceConflict.date}. Remove that date from the approval or resolve its attendance first.` });
-
-    }
-    const request = await db.collection('leave_requests').findOneAndUpdate({ id: req.params.id, status: 'pending' }, { $set: { status, approvedDates, totalDays: status === 'approved' ? approvedDates.length : pendingRequest.totalDays, reviewedAt: new Date(), reviewedBy: req.auth.actor.email } }, { returnDocument: 'after' });
-    if (!request) return res.status(404).json({ error: 'Pending leave request not found' });
-    if (status === 'approved' && request.employeeId) {
-      await Promise.all(approvedDates.map((date) => db.collection('attendance').updateOne(
-        { employeeId: request.employeeId, date, $or: [{ checkIn: { $exists: false } }, { checkIn: null }, { checkIn: '' }] },
-        { $set: { name: request.employeeName, role: request.role, status: 'On Leave', leaveRequestId: request.id, updatedAt: new Date() }, $unset: { idleDay: '', idleDayBy: '', idleDayAt: '' }, $setOnInsert: { employeeId: request.employeeId, date, checkIn: null, checkOut: null, sessions: [], createdAt: new Date() } },
-        { upsert: true },
-      )));
-    }
+    const settings = await getSettings(db);
+    const { request, decision } = await decideLeaveRequest(db, {
+      id: req.params.id, employeeIds, status, approvedDates: req.body?.approvedDates,
+      correctionReason: req.body?.correctionReason, confirmPastCorrection: req.body?.confirmPastCorrection === true,
+      actor: req.auth.actor.email, today: kioskTimestamp().date, isWorkday: date => scheduledWorkStatus(settings, date),
+    });
+    res.locals.auditMetadata = { targetName: request.employeeName, employeeId: request.employeeId, requestedStatus: status, leaveAction: status, ...decision };
     res.json({ ...request, _id: undefined });
-  } catch { res.status(500).json({ error: 'Failed to update leave request' }); }
+  } catch (error) { const failure = leaveDecisionError(error); res.status(failure.status).json({ error: failure.error }); }
 });
-
 router.patch('/leave-requests/:id/undo-approval', async (req, res) => {
   try {
     const db = mongoose.connection.db;

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import Login from './pages/Login';
+import { DemoBanner } from './components/DemoBanner';
 import AdminOverviewRedirect from './pages/AdminOverviewRedirect';
 import { apiFetch, clearSession, restoreSession, storeSession } from './lib/api';
 import { EmployeePortal } from './views/EmployeePortal';
@@ -64,7 +65,9 @@ function arrivedThroughHistory() {
 }
 
 export default function App() {
-  const [endingSession, setEndingSession] = useState(arrivedThroughHistory);
+  const path = window.location.pathname;
+  const isLoginPage = !['/overview', '/kiosk'].includes(path);
+  const [endingSession, setEndingSession] = useState(() => isLoginPage && Boolean(sessionStorage.getItem('workpulse_session_expires')));
   const [logoutError, setLogoutError] = useState('');
   const logoutPending = useRef(false);
   const endSession = useCallback(async () => {
@@ -87,35 +90,29 @@ export default function App() {
   }, []);
   // Temporary routing without adding third-party dependencies.
   // If you visit /overview directly, show the admin overview shell.
-  const path = typeof window !== 'undefined' ? window.location.pathname : '/';
   useEffect(() => {
-    // Back/Forward can load a new document, including the sign-in page.
-    // Revoke its cookie-backed session before showing any restored workspace.
-    if (arrivedThroughHistory()) void endSession();
-    // Keep Back in this document long enough to revoke the server session.
-    // The marker prevents duplicate entries on reload and StrictMode setup.
-    if (['/overview', '/kiosk'].includes(path) && !window.history.state?.logoutOnBack) {
-      window.history.pushState({ ...window.history.state, logoutOnBack: true }, '', window.location.href);
-    }
-    // popstate fires for both Back and Forward within the current document.
-    const handleHistoryNavigation = () => {
-      if (['/overview', '/kiosk'].includes(path) || sessionStorage.getItem('workpulse_session_expires')) void endSession();
-    };
-    window.addEventListener('popstate', handleHistoryNavigation);
-    return () => window.removeEventListener('popstate', handleHistoryNavigation);
-  }, [path, endSession]);
+    // Only crossing back to sign-in ends the session. Sidebar history stays
+    // authenticated and is handled by each portal's navigation hook.
+    if (!isLoginPage || (!arrivedThroughHistory() && !sessionStorage.getItem('workpulse_session_expires'))) return;
+    let cancelled = false;
+    queueMicrotask(() => { if (!cancelled) void endSession(); });
+    return () => { cancelled = true; };
+  }, [isLoginPage, endSession]);
   useEffect(() => {
     const restoreProtectedPage = (event: PageTransitionEvent) => {
-      // A browser cache restore skips mounting and retains old UI/session data.
-      if (event.persisted) void endSession();
+      if (!event.persisted) return;
+      if (isLoginPage) void endSession();
+      // Forward may restore a cached workspace after logout. Reload it so the
+      // server session check runs before any protected content is shown again.
+      else window.location.reload();
     };
     window.addEventListener('pageshow', restoreProtectedPage);
     return () => window.removeEventListener('pageshow', restoreProtectedPage);
-  }, [endSession]);
+  }, [isLoginPage, endSession]);
   if (endingSession) return <div className="flex min-h-screen flex-col items-center justify-center gap-4 bg-slate-50 px-6 text-center text-sm text-slate-600">{logoutError ? <><p role="alert">{logoutError}</p><button type="button" onClick={() => void endSession()} className="rounded-lg bg-violet-600 px-4 py-2 font-semibold text-white">Retry logout</button></> : <p role="status">Ending your session...</p>}</div>;
-  if (path === '/kiosk') return <ProtectedKiosk />;
-  if (path === '/overview') return <ProtectedDashboard />;
-  return <Login />;
+  if (path === '/kiosk') return <><DemoBanner /><ProtectedKiosk /></>;
+  if (path === '/overview') return <><DemoBanner /><ProtectedDashboard /></>;
+  return <><DemoBanner /><Login /></>;
 }
 
 

@@ -244,7 +244,7 @@ export function AdminOverviewView({
           </div>
         </CardHeader>
         <CardContent>
-          <div aria-live="polite" className="grid grid-cols-1 gap-5 sm:grid-cols-2 xl:grid-cols-4">
+          <div aria-live="polite" className="workforce-metrics grid grid-cols-1 gap-3 sm:gap-5 sm:grid-cols-2 xl:grid-cols-4">
         {adminMetrics.map((m) => {
           const Icon = m.icon;
           const safeProgress = Math.max(0, Math.min(100, m.progress));

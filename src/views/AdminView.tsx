@@ -16,7 +16,7 @@ import { useToast } from "../components/ui/Toast";
 import { apiFetch } from "../lib/api";
 import { PaginationControls } from "../components/ui/Pagination";
 import { usePagination } from "../hooks/usePagination";
-import { downloadCsv } from "../lib/exportCsv";
+import { downloadExcelReport } from "../lib/exportExcel";
 
 const hoverScrollbarClasses = 
   "max-h-[400px] overflow-y-auto pr-2 " +
@@ -186,11 +186,8 @@ export function AdminView() {
       if (!response.ok) throw new Error(report.error || 'Report could not be generated');
       const fields: string[] = report.fields;
       const rows: Record<string, unknown>[] = report.rows;
-      downloadCsv(`workpulse-${name}-${new Date().toISOString().slice(0, 10)}.csv`, fields, rows.map((row) => fields.map((field) => {
-        const value = row[field];
-        return value == null ? '' : typeof value === 'object' ? JSON.stringify(value) : String(value);
-      })));
-      toast({ title: 'Excel-compatible report saved', description: `${rows.length} records exported as CSV.`, variant: 'success' });
+      await downloadExcelReport(name, fields, rows);
+      toast({ title: 'Excel report saved', description: `${rows.length} records exported as a formatted Excel workbook.`, variant: 'success' });
     } catch (reason) {
       toast({ title: 'Report was not saved', description: reason instanceof Error ? reason.message : 'Please try again.', variant: 'error' });
     } finally { setControlBusy(null); }
@@ -341,7 +338,7 @@ export function AdminView() {
               <div className="rounded-xl border border-slate-200 p-4 sm:p-5"><div className="flex flex-wrap items-center justify-between gap-2"><h3 className="flex items-center gap-2 font-semibold text-slate-900"><Wrench className="h-4 w-4 text-slate-500" />Maintenance mode</h3><Badge variant={controls.maintenanceMode ? "warning" : "neutral"}>{controls.maintenanceMode ? "On" : "Off"}</Badge></div><p className="mt-2 text-sm text-slate-600">Temporarily blocks employee sign-in and portal access. Administrators retain access.</p><Button className="mt-4 w-full sm:w-auto" size="sm" variant="outline" disabled={controlBusy === "maintenanceMode"} onClick={() => void updateControl("maintenanceMode", !controls.maintenanceMode)}>{controls.maintenanceMode ? "Turn off" : "Turn on"}</Button></div>
               <div className="rounded-xl border border-slate-200 p-4 sm:p-5"><div className="flex flex-wrap items-center justify-between gap-2"><h3 className="flex items-center gap-2 font-semibold text-slate-900"><UserPlus className="h-4 w-4 text-slate-500" />New employee registration</h3><Badge variant={controls.registrationOpen ? "success" : "danger"}>{controls.registrationOpen ? "Open" : "Restricted"}</Badge></div><p className="mt-2 text-sm text-slate-600">Controls whether administrators can create new employee records.</p><Button className="mt-4 w-full sm:w-auto" size="sm" variant="outline" disabled={controlBusy === "registrationOpen"} onClick={() => void updateControl("registrationOpen", !controls.registrationOpen)}>{controls.registrationOpen ? "Restrict" : "Open"}</Button></div>
               <div className="rounded-xl border border-slate-200 p-4 sm:p-5"><h3 className="flex items-center gap-2 font-semibold text-slate-900"><DatabaseBackup className="h-4 w-4 text-slate-500" />Database backup</h3><p className="mt-2 text-sm text-slate-600">Save a recovery backup to a restricted folder and keep a copy on an approved external drive.</p><Button className="mt-4 w-full sm:w-auto" size="sm" variant="outline" disabled={controlBusy === "backup"} onClick={() => void createBackup()}>{controlBusy === "backup" ? "Saving…" : "Choose & save"}</Button></div>
-              <div className="rounded-xl border border-slate-200 p-4 sm:p-5"><h3 className="font-semibold text-slate-900">Excel reports</h3><p className="mt-2 text-sm text-slate-600">Download CSV files for Excel. Reports cannot restore the database.</p><div className="mt-4 grid grid-cols-2 gap-2 sm:flex sm:flex-wrap">{([['employees', 'Employees'], ['attendance', 'Attendance'], ['leave_requests', 'Leave'], ['payroll_requests', 'Payroll']] as const).map(([name, label]) => <Button key={name} size="sm" variant="outline" disabled={controlBusy !== null} onClick={() => void exportReport(name)}>{label}</Button>)}</div></div>
+              <div className="rounded-xl border border-slate-200 p-4 sm:p-5"><h3 className="font-semibold text-slate-900">Excel reports</h3><p className="mt-2 text-sm text-slate-600">Download formatted Excel workbooks (.xlsx). Reports cannot restore the database.</p><div className="mt-4 grid grid-cols-2 gap-2 sm:flex sm:flex-wrap">{([['employees', 'Employees'], ['attendance', 'Attendance'], ['leave_requests', 'Leave'], ['payroll_requests', 'Payroll']] as const).map(([name, label]) => <Button key={name} size="sm" variant="outline" disabled={controlBusy !== null} onClick={() => void exportReport(name)}>{label}</Button>)}</div></div>
               <div className="rounded-xl border border-slate-200 p-4 sm:p-5 lg:col-span-2"><div className="flex flex-wrap items-center justify-between gap-2"><h3 className="flex items-center gap-2 font-semibold text-slate-900"><LogOut className="h-4 w-4 text-rose-600" />Force clock out</h3><Badge variant="neutral">On demand</Badge></div><p className="mt-2 text-sm text-slate-600">Clock out everyone or one employee who clocked in today.</p><Button className="mt-4 w-full sm:w-auto" size="sm" variant="destructive" disabled={controlBusy === "clock-out"} onClick={() => setForceClockOutOpen(true)}>{controlBusy === "clock-out" ? "Clocking out…" : "Force clock out"}</Button></div>
             </div>
           </CardContent>
