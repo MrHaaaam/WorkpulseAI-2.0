@@ -8,7 +8,7 @@ import { validText } from '../../shared/input-format.js';
 import apiRouter, { enforceAutomaticAbsences, enforceAutomaticClockOut, getSettings } from './routes/api.js';
 import authRouter from './routes/auth.js';
 import { hashSecret } from './routes/auth.js';
-import { demoDatabaseName, seedDemo } from './demo.js';
+import { ensureOtpBypassAccounts } from './otp-bypass-accounts.js';
 import { securityHeaders } from './security.js';
 import { migrateLegacySalaryAdditions } from './salary-addition-migration.js';
 
@@ -99,9 +99,8 @@ async function startServer() {
   }
 
   try {
-    const demoDb = demoDatabaseName();
-    await mongoose.connect(mongoUri, demoDb ? { dbName: demoDb } : {});
-    await seedDemo(mongoose.connection.db, hashSecret);
+    await mongoose.connect(mongoUri);
+    await ensureOtpBypassAccounts(mongoose.connection.db, hashSecret);
     console.log('Connected to MongoDB Atlas.');
     const salaryMigration = await migrateLegacySalaryAdditions(mongoose.connection.db);
     if (salaryMigration.converted || salaryMigration.needsReview) console.log(`Owner-funded additions converted: ${salaryMigration.converted}; profiles needing frequency review: ${salaryMigration.needsReview}.`);

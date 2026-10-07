@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import Login from './pages/Login';
-import { DemoBanner } from './components/DemoBanner';
 import AdminOverviewRedirect from './pages/AdminOverviewRedirect';
 import { apiFetch, clearSession, restoreSession, storeSession } from './lib/api';
 import { EmployeePortal } from './views/EmployeePortal';
@@ -110,9 +109,9 @@ export default function App() {
     return () => window.removeEventListener('pageshow', restoreProtectedPage);
   }, [isLoginPage, endSession]);
   if (endingSession) return <div className="flex min-h-screen flex-col items-center justify-center gap-4 bg-slate-50 px-6 text-center text-sm text-slate-600">{logoutError ? <><p role="alert">{logoutError}</p><button type="button" onClick={() => void endSession()} className="rounded-lg bg-violet-600 px-4 py-2 font-semibold text-white">Retry logout</button></> : <p role="status">Ending your session...</p>}</div>;
-  if (path === '/kiosk') return <><DemoBanner /><ProtectedKiosk /></>;
-  if (path === '/overview') return <><DemoBanner /><ProtectedDashboard /></>;
-  return <><DemoBanner /><Login /></>;
+  if (path === '/kiosk') return <ProtectedKiosk />;
+  if (path === '/overview') return <ProtectedDashboard />;
+  return <Login />;
 }
 
 

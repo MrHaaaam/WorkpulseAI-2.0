@@ -3,11 +3,11 @@ import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite' // 👈 Import the modern plugin
 
 // https://vite.dev/config/
-export default defineConfig(({ mode }) => ({
+export default defineConfig({
   server: {
     proxy: {
       '/api': {
-        target: mode === 'demo' ? 'http://localhost:5001' : 'http://localhost:5000',
+        target: 'http://localhost:5000',
         changeOrigin: true,
       },
     },
@@ -16,4 +16,4 @@ export default defineConfig(({ mode }) => ({
     react(),
     tailwindcss(), // 👈 Activate Tailwind here
   ],
-}))
+})
