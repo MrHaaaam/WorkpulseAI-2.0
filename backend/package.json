@@ -5,6 +5,7 @@
   "type": "module",
   "main": "src/server.js",
   "scripts": {
+    "dev:demo": "node --watch src/demo-server.js",
     "dev": "node --watch src/server.js",
     "start": "node src/server.js",
     "seed:employees": "node seed.js",

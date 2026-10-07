@@ -1,5 +1,11 @@
 # Deployed demo accounts
 
+## Local testing
+
+Run `npm.cmd run dev:demo` in `backend`, then `npm.cmd run dev:demo` in the project root in a second terminal. Open `http://localhost:5174` (not port 5173). The demo backend uses port 5001 and `workpulse_demo_local`, while the regular app on ports 5000/5173 remains unchanged. The MongoDB URI is read from the existing backend configuration without changing that file. The MongoDB user must be able to create/access this demo database.
+
+## Hosting
+
 Use a **separate Render backend service and Vercel frontend project** for this demo. Point the demo frontend's existing `/api` proxy at the demo Render service. Leave the company deployment unchanged.
 
 In the demo frontend checkout, change only the `/api/:path*` destination in `vercel.json` from the company Render URL to `https://<demo-render-service>.onrender.com/api/:path*`. Deploy that checkout to the separate Vercel project; do not merge that destination into the company deployment configuration.
