@@ -8,6 +8,7 @@ import { previewQuarterlyAdditions, includeQuarterlyAdditions, removeQuarterlyAd
 import { ADDITION_MAX, validBoundedNumber, identifiersValidationError, settingsNumbersValidationError } from '../../../shared/field-limits.js';
 import { passwordValidationError } from '../../../shared/password-policy.js';
 import { leaveRequestDaysError } from '../../../shared/leave-policy.js';
+import { recentAttendanceEvents } from '../recent-attendance.js';
 import { normalizeName, validEmail, validAddress, employeeValidationError } from '../input-validation.js';
 import { checkoutIsChronological } from '../attendance-validation.js';
 import { approvedLeaveCoversDate, manualAttendanceProblem } from '../manual-attendance.js';
@@ -2920,6 +2921,20 @@ router.post('/attendance/manual/bulk', async (req, res) => {
     res.status(500).json({ error: 'Unable to record attendance. Refresh before retrying.' });
   }
 });
+router.get('/attendance/kiosk/recent', async (_req, res) => {
+  try {
+    const db = mongoose.connection.db;
+    const today = kioskTimestamp().date;
+    const employeeIds = await visibleEmployeeIds(db);
+    const records = await db.collection('attendance').find({ date: today, employeeId: { $in: employeeIds } }, {
+      projection: { employeeId: 1, name: 1, date: 1, checkIn: 1, checkOut: 1, checkInAt: 1, checkOutAt: 1, autoClockedOut: 1,
+        'sessions.checkIn': 1, 'sessions.checkOut': 1, 'sessions.checkInAt': 1, 'sessions.checkOutAt': 1, 'sessions.autoClockedOut': 1 },
+    }).toArray();
+    res.setHeader('Cache-Control', 'no-store');
+    res.json({ date: today, records: recentAttendanceEvents(records, { today }) });
+  } catch { res.status(500).json({ error: 'Unable to load recent attendance' }); }
+});
+
 router.post('/attendance/kiosk', async (req, res) => {
   if ((await getSystemControls(mongoose.connection.db)).maintenanceMode) return res.status(503).json({ error: 'Employee clock-in is unavailable during maintenance.' });
   res.locals.auditMetadata = { kioskAction: 'fingerprint scan', attendanceRecorded: false };
