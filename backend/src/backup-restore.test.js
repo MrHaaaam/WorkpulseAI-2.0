@@ -17,11 +17,30 @@ test('backup preserves MongoDB IDs and dates', () => {
   assert.ok(record.createdAt instanceof Date);
 });
 
+test('backups include employee notifications and accept older version 2 backups without them', () => {
+  const backup = parseBackup(sample());
+  backup.collections.employee_notifications = [{ id: 'N-1', createdAt: new Date('2026-10-01T00:00:00Z'), read: false }];
+  assert.equal(parseBackup(serializeBackup(backup)).collections.employee_notifications[0].id, 'N-1');
+  delete backup.collections.employee_notifications;
+  assert.deepEqual(parseBackup(serializeBackup(backup)).collections.employee_notifications, []);
+});
+
 test('restore rejects incomplete and legacy backups', () => {
   assert.throws(() => parseBackup(JSON.stringify({ format: 'workpulse-json-backup', version: 1, collections: {} })), /version 2/);
   const incomplete = JSON.parse(sample());
   delete incomplete.collections.attendance;
   assert.throws(() => parseBackup(JSON.stringify(incomplete)), /collections/);
+});
+
+test('offline operation receipts survive backup and older backups receive an empty receipt collection', () => {
+  const backup = parseBackup(sample());
+  backup.collections.offline_operations = [{ _id: 'employee:E1:offline-000001', kind: 'leave', result: { id: 'L1' }, createdAt: new Date() }];
+  assert.equal(parseBackup(serializeBackup(backup)).collections.offline_operations[0].result.id, 'L1');
+  delete backup.collections.offline_operations;
+  delete backup.collections.employee_notifications;
+  const legacy = parseBackup(serializeBackup(backup));
+  assert.deepEqual(legacy.collections.offline_operations, []);
+  assert.deepEqual(legacy.collections.employee_notifications, []);
 });
 
 test('restore previews and refuses a populated destination', async () => {

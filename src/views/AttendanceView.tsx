@@ -1,6 +1,7 @@
+import { employeeRoleLabel } from '../../shared/employee-roles.js';
 import { AdminPageHeader } from "../components/AdminPageHeader";
 import { useEffect, useMemo, useState } from "react";
-import { CalendarOff, Check, Clock, Download, Search, ShieldCheck, X } from "lucide-react";
+import { CalendarOff, Check, Clock, Download, Pencil, Search, ShieldCheck, X } from "lucide-react";
 
 import { Card, CardContent } from "../components/ui/Card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../components/ui/Table";
@@ -13,6 +14,7 @@ import { downloadCsv } from "../lib/exportCsv";
 import { Input } from "../components/ui/Input";
 import { ManualAttendanceDialog } from "../components/ManualAttendanceDialog";
 import { IdleDayDialog } from "../components/IdleDayDialog";
+import { AttendanceCorrectionDialog } from "../components/AttendanceCorrectionDialog";
 
 export interface AttendanceRecord {
   employeeId: string;
@@ -24,6 +26,7 @@ export interface AttendanceRecord {
   sessions?: { checkIn: string; checkOut?: string | null }[];
   sessionCount?: number;
   manualRecorded?: boolean;
+  editedByAdmin?: boolean;
   status: "Present" | "Absent" | "On Leave" | "Idle";
 }
 
@@ -69,6 +72,7 @@ export function AttendanceView(props: {
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<"all" | AttendanceRecord["status"]>("all");
   const [manualOpen, setManualOpen] = useState(false);
+  const [correction, setCorrection] = useState<{ employeeId?: string; date: string } | null>(null);
   const [idleOpen, setIdleOpen] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
   const [idleDays, setIdleDays] = useState<IdleDayReport[]>([]);
@@ -90,7 +94,7 @@ export function AttendanceView(props: {
   const loadedRecords = records.length ? records : localRecords;
   const filteredRecords = useMemo(() => {
     const query = search.trim().toLowerCase();
-    return loadedRecords.filter((record) => (statusFilter === "all" || record.status === statusFilter) && (!query || `${record.name} ${record.employeeId} ${record.role}`.toLowerCase().includes(query)));
+    return loadedRecords.filter((record) => (statusFilter === "all" || record.status === statusFilter) && (!query || `${record.name} ${record.employeeId} ${employeeRoleLabel(record.role)}`.toLowerCase().includes(query)));
   }, [loadedRecords, search, statusFilter]);
   const attendancePage = usePagination(filteredRecords, `${range.from}|${range.to}|${search}|${statusFilter}`);
 
@@ -136,7 +140,7 @@ export function AttendanceView(props: {
     const headers = ["Employee ID", "Employee Name", "Role", "Date", "Status", "Session Count", "Session 1 In", "Session 1 Out", "Session 2 In", "Session 2 Out", "Session 3 In", "Session 3 Out"];
     const rows = filteredRecords.map((record) => {
       const sessions = attendanceSessions(record).slice(0, 3);
-      return [record.employeeId, record.name, record.role, record.date, record.status, sessions.length, ...Array.from({ length: 3 }, (_, index) => [sessions[index]?.checkIn, sessions[index]?.checkOut]).flat()];
+      return [record.employeeId, record.name, employeeRoleLabel(record.role), record.date, record.status, sessions.length, ...Array.from({ length: 3 }, (_, index) => [sessions[index]?.checkIn, sessions[index]?.checkOut]).flat()];
     });
     void apiFetch("/api/attendance/audit-export", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ format: "csv", from: range.from, to: range.to, recordCount: rows.length }) }).catch(() => undefined);
     downloadCsv(`attendance-${range.from}-to-${range.to}.csv`, headers, rows);
@@ -174,6 +178,8 @@ export function AttendanceView(props: {
       <AdminPageHeader title="Attendance" description="Review daily attendance and up to three sessions per employee." icon={Clock} actions={<>{rangeMode === "day" && <DateNavigator label="Workforce date" value={selectedDate} onChange={setSelectedDate} />}{props.role === "admin" && <button type="button" aria-label="Record attendance" onClick={() => setManualOpen(true)} className="inline-flex h-10 items-center gap-2 rounded-lg bg-violet-600 px-4 text-sm font-semibold text-white shadow-sm hover:bg-violet-700"><ShieldCheck className="h-4 w-4" /><span className="header-button-label">Record attendance</span></button>}{props.role === "admin" && <button type="button" aria-label="Idle day" onClick={() => setIdleOpen(true)} className="inline-flex h-10 items-center gap-2 rounded-lg border border-violet-200 bg-white px-4 text-sm font-semibold text-violet-700 shadow-sm hover:bg-violet-50"><CalendarOff className="h-4 w-4" /><span className="header-button-label">Idle day</span></button>}<button type="button" aria-label="Export CSV" disabled={loading || filteredRecords.length === 0} onClick={() => void exportAttendance()} className="inline-flex h-10 items-center gap-2 rounded-lg border border-violet-200 bg-white px-4 text-sm font-semibold text-violet-700 shadow-sm hover:bg-violet-50 disabled:cursor-not-allowed disabled:opacity-50"><Download className="h-4 w-4" /><span className="header-button-label">Export CSV</span></button></>} />
       {manualOpen && <ManualAttendanceDialog onClose={() => setManualOpen(false)} onSaved={() => setRefreshKey(key => key + 1)} />}
       {idleOpen && <IdleDayDialog onClose={() => setIdleOpen(false)} onSaved={() => setRefreshKey(key => key + 1)} />}
+      {props.role === "admin" && <button type="button" onClick={() => setCorrection({ date: selectedDate })} className="inline-flex items-center gap-2 rounded-lg border border-violet-200 bg-white px-4 py-2 text-sm font-semibold text-violet-700 hover:bg-violet-50"><Pencil className="h-4 w-4" />Edit attendance</button>}
+      {correction && <AttendanceCorrectionDialog initialEmployeeId={correction.employeeId} initialDate={correction.date} onClose={() => setCorrection(null)} onSaved={() => setRefreshKey(key => key + 1)} />}
       <div className="rounded-2xl border border-slate-200 bg-white p-4"><div className="flex flex-wrap gap-2">{([['day','One Day'],['current','Current 15 Days'],['previous','Previous 15 Days'],['custom','Custom Range']] as const).map(([value,label])=><button key={value} type="button" onClick={()=>setRangeMode(value)} className={`rounded-lg px-3 py-2 text-xs font-semibold ${rangeMode===value?'bg-violet-600 text-white':'border border-slate-200 text-slate-600'}`}>{label}</button>)}</div>{rangeMode==='custom'&&<div className="mt-4 flex flex-wrap gap-3"><label className="text-xs font-semibold text-slate-600">From<Input type="date" value={customFrom} onChange={e=>setCustomFrom(e.target.value)} className="ml-2 rounded-lg border border-slate-300 px-3 py-2"/></label><label className="text-xs font-semibold text-slate-600">To<Input type="date" value={customTo} onChange={e=>setCustomTo(e.target.value)} className="ml-2 rounded-lg border border-slate-300 px-3 py-2"/></label></div>}<p className="mt-3 text-xs text-slate-500">Showing {displayWorkforceDate(range.from)}{range.from!==range.to?` to ${displayWorkforceDate(range.to)}`:''}</p></div>
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">{Object.entries(totals).map(([label,value])=><div key={label} className="rounded-xl border border-slate-200 bg-white p-3"><p className="text-xs capitalize text-slate-500">{label==='leave'?'On leave':label==='idle'?'Upcoming idle days':label}</p><p className="mt-1 text-2xl font-bold text-slate-900">{value}</p><p className="mt-1 text-[11px] text-slate-500">{label === 'idle' ? 'Saved dates in the next 30 days' : 'Employees in current view'}</p></div>)}</div>
 
@@ -216,8 +222,10 @@ export function AttendanceView(props: {
                     <TableRow key={`${record.employeeId}-${record.date}`}>
                       <TableCell>
                         <div className="font-medium text-slate-900">{record.name}</div>
-                        <div className="text-xs text-slate-400">{record.role}</div>
+                        <div className="text-xs text-slate-400">{employeeRoleLabel(record.role)}</div>
+                        {props.role === "admin" && <button type="button" onClick={() => setCorrection({ employeeId: record.employeeId, date: record.date })} className="mt-2 inline-flex items-center gap-1 text-xs font-semibold text-violet-700 hover:underline"><Pencil className="h-3 w-3" />Edit times</button>}
                         {record.manualRecorded && <span className="mt-1 inline-flex items-center gap-1 rounded-full bg-violet-100 px-2 py-0.5 text-[11px] font-semibold text-violet-700"><ShieldCheck className="h-3 w-3" />Recorded by admin</span>}
+                        {record.editedByAdmin && <span className="ml-1 mt-1 inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-semibold text-amber-700"><Pencil className="h-3 w-3" />Edited by admin</span>}
                       </TableCell>
                       <TableCell className="whitespace-nowrap text-slate-600">{displayWorkforceDate(record.date)}</TableCell>
                       <TableCell>

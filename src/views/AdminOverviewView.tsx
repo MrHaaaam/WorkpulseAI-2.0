@@ -1,3 +1,4 @@
+import { employeeRole } from '../../shared/employee-roles.js';
 import { Input } from "../components/ui/Input";
 import { AdminPageHeader } from "../components/AdminPageHeader";
 import { useState } from "react";
@@ -40,6 +41,7 @@ import { Button } from "../components/ui/Button";
 import { DateNavigator } from "../components/DateNavigator";
 import { PaginationControls } from "../components/ui/Pagination";
 import { usePagination } from "../hooks/usePagination";
+import { leaveDateProgress } from '../../shared/calendar-leave.js';
 
 type ViewMode = "daily" | "weekly" | "monthly";
 
@@ -101,7 +103,7 @@ interface AdminOverviewProps {
   performanceDate: string;
   onPerformanceDateChange: (value: string) => void;
   employees: { createdAt?: string; role?: string; status?: string }[];
-  leaveRequests: { id: string; employeeId?: string; startDate: string; endDate: string; approvedDates?: string[]; totalDays: number; status: string }[];
+  leaveRequests: { id: string; employeeId?: string; startDate: string; endDate: string; requestedDates?: string[]; approvedDates?: string[]; totalDays: number; status: string }[];
   attendanceRecords: { employeeId?: string; date?: string; status: string; worked?: boolean }[];
   onNavigate?: (view: "attendance" | "employees" | "leave" | "payroll" | "settings" | "admin" | "insights") => void;
   auditLoading?: boolean;
@@ -165,9 +167,12 @@ export function AdminOverviewView({
     if (bucket) bucket.count += 1;
   });
   const hiringSummary = hiringData.map((item) => `${item.key}: ${item.count} registered`).join("; ");
-  const leavesInRange = leaveRequests.filter((leave) => leave.startDate <= performanceDate && leave.endDate >= chartRangeStart);
+  const leaveToday = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Manila', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
+  const leavesInRange = leaveRequests.filter((leave) => leave.startDate <= performanceDate && leave.endDate >= chartRangeStart).map(leave => ({ ...leave, ...leaveDateProgress(leave, leaveToday) }));
   const leaveStatusData = [
-    { label: "Pending", count: leavesInRange.filter((leave) => leave.status.toLowerCase() === "pending").length, fill: "#f59e0b" },
+    { label: "Pending", count: leavesInRange.filter((leave) => leave.status === 'pending' && !leave.passedDates.length).length, fill: "#f59e0b" },
+    { label: "Pending + passed dates", count: leavesInRange.filter((leave) => leave.status === 'pending' && leave.passedDates.length > 0).length, fill: "#a78bfa" },
+    { label: "Passed", count: leavesInRange.filter((leave) => leave.status === 'passed').length, fill: "#94a3b8" },
     { label: "Approved", count: leavesInRange.filter((leave) => leave.status.toLowerCase() === "approved").length, fill: "#10b981" },
     { label: "Rejected", count: leavesInRange.filter((leave) => leave.status.toLowerCase() === "rejected").length, fill: "#ef4444" },
   ];
@@ -209,11 +214,10 @@ export function AdminOverviewView({
     return `${value("year")}-${value("month")}-${value("day")}` === performanceDate;
   }).length;
   const roleCounts = ([
-    { key: "supervisor", label: "Supervisors", color: "bg-slate-700" },
-    { key: "manager", label: "Managers", color: "bg-violet-600" },
+    { key: "manager", label: "Managers / Supervisors", color: "bg-violet-600" },
     { key: "regular", label: "Regular", color: "bg-sky-600" },
     { key: "extra", label: "Extra", color: "bg-teal-600" },
-  ] as const).map((role) => ({ ...role, count: employees.filter((employee) => employee.role?.toLowerCase() === role.key && employee.status !== "inactive").length }));
+  ] as const).map((role) => ({ ...role, count: employees.filter((employee) => employeeRole(employee.role) === role.key && employee.status !== "inactive").length }));
   const roleTotal = roleCounts.reduce((total, role) => total + role.count, 0);
   const failedAuditEvents = auditTrail.filter((event) => event.status === "Failed").length;
   const performanceMetrics = [
@@ -350,7 +354,7 @@ export function AdminOverviewView({
         <Card data-guide="today-breakdown">
           <CardHeader>
             <CardTitle>Employees by Role</CardTitle>
-            <CardDescription>Active workforce across the four employee roles</CardDescription>
+            <CardDescription>Active workforce across the three employee roles</CardDescription>
           </CardHeader>
           <CardContent>
             <div className="mb-6 flex items-end justify-between border-b border-slate-200 pb-5">
@@ -498,7 +502,7 @@ export function AdminOverviewView({
                     <td className="px-4 py-3">
                       <span className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${
                         activity.role === 'Admin' ? 'bg-violet-100 text-violet-700' :
-                        activity.role === 'Manager' ? 'bg-blue-100 text-blue-700' :
+                        activity.role === 'Manager / Supervisor' ? 'bg-blue-100 text-blue-700' :
                         'bg-slate-100 text-slate-700'
                       }`}>{activity.role}</span>
                     </td>
@@ -753,7 +757,7 @@ export function OverviewView({
                       <td className="px-4 py-3">
                         <span className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${
                           activity.role === 'Admin' ? 'bg-violet-100 text-violet-700' :
-                          activity.role === 'Manager' ? 'bg-blue-100 text-blue-700' :
+                          activity.role === 'Manager / Supervisor' ? 'bg-blue-100 text-blue-700' :
                           'bg-slate-100 text-slate-700'
                         }`}>{activity.role}</span>
                       </td>

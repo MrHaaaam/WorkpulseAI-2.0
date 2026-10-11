@@ -1,0 +1,296 @@
+PAGE 1
+WORKPULSE  |  CHAPTER 3 – DISCUSSION OF FINDINGS
+WorkPulse | Revised Chapter 3 | Evidence pending verification
+CHAPTER 3
+DISCUSSION OF FINDINGS
+This chapter discusses the findings, identified workforce-management challenges, implemented 
+WorkPulse modules, respondent evaluations, and the technical evidence required to substantiate 
+system performance. Survey results describe respondents’ perceptions; functional, security, 
+reliability, offline, and biometric claims require separately documented technical tests.
+Challenges and Issues of the Current System
+The existing workforce processes were reported to involve partly manual or fragmented 
+attendance, employee information, leave, and payroll records. The frequencies below are retained 
+from the submitted Chapter 3 and use the study population of 30 respondents.
+Challenge Frequency Percentage
+Inaccurate attendance 
+recording
+27 90.00%
+Risk of unauthorized or proxy 
+attendance
+28 93.33%
+Inefficient monitoring of 
+work hours
+21 70.00%
+Payroll processing difficulties 27 90.00%
+Limited employee access to 
+records
+28 93.33%
+The most frequently identified concerns were proxy attendance and limited employee access to 
+records (28 of 30 respondents each). Attendance inaccuracy and payroll difficulties were each 
+identified by 27 respondents, while 21 reported difficulties monitoring work hours. These 
+findings describe the respondents’ reported challenges rather than independently measured error 
+rates.
+Implemented Features of WorkPulse
+The following descriptions reflect the revised system scope. The final deployed version and its 
+screenshots must be checked before each feature is described as verified by testing.
+Employee Information Management
+Authorized administrators manage centralized employee records. The employee classifications 
+are Regular, Extra, and Manager / Supervisor. These classifications describe workforce categories 
+and do not create separate application access groups. Any older screenshot showing Manager and 
+Supervisor as separate options must be replaced with the verified combined classification.
+Figure 3. Employee Information Management (original manuscript image; replace if outdated).
+PAGE 2
+WORKPULSE  |  CHAPTER 3 – DISCUSSION OF FINDINGS
+WorkPulse | Revised Chapter 3 | Evidence pending verification
+Fingerprint-Based Attendance
+The attendance kiosk supports fingerprint-based time-in and time-out through a configured local 
+scanner workstation, reader drivers/WebSDK, and local fingerprint capture and matching 
+components. The hosted Render backend does not directly access a USB scanner attached to a 
+user’s computer. Fingerprint operation requires the supported workstation environment, scanner 
+software, and connectivity to the relevant online attendance services. The exact tested operating 
+system, device model, matching-software version, network conditions, and trial results must be 
+recorded in the biometric evaluation subsection.
+Figure 4. Fingerprint-Based Attendance (original manuscript image; replace if outdated).
+Attendance Monitoring and Corrections
+Administrators can view daily attendance and filter by date range. Authorized administrators can 
+manually record attendance or correct eligible records, with a required reason, actor and 
+timestamp history, and an employee notification. Attendance displays distinguish recorded and 
+edited entries and identify their source. Attendance records included in settled payroll must not be 
+silently edited; the system should reject prohibited changes and preserve the audit trail. These 
+behaviors require final deployment verification.
+Figure 5. Attendance Monitoring (original manuscript image; replace if outdated).
+PAGE 3
+WORKPULSE  |  CHAPTER 3 – DISCUSSION OF FINDINGS
+WorkPulse | Revised Chapter 3 | Evidence pending verification
+Employee Self-Service Portal
+Employees can view authorized personal records, attendance, leave, payroll and payslip 
+information, and the status of cash advance requests. The notification bell surfaces relevant 
+attendance corrections and other employee notices. Attendance entries indicate whether they were 
+fingerprint-recorded or manually recorded/edited. Limited offline operation permits selected 
+previously cached views and queues eligible actions, with clear warnings that cached information 
+may be outdated. Authorized administrators, rather than a separate HR role, manage the relevant 
+approvals and corrections.
+Figure 6. Employee Self-Service Portal (original manuscript image; replace if outdated).
+Leave Management
+Employees submit leave requests and view their status. Authorized administrators review and act 
+on requests. Eligible requests may be saved to a local offline queue and submitted after 
+reconnection; an offline queue entry is not an approval.
+Figure 7. Leave Management (original manuscript image; replace if outdated).
+PAGE 4
+WORKPULSE  |  CHAPTER 3 – DISCUSSION OF FINDINGS
+WorkPulse | Revised Chapter 3 | Evidence pending verification
+Payroll Management and Payslip Summary
+The payroll workflow distinguishes Ready to Pay, Carried to Next Period, and Paid. Ready to Pay 
+identifies an amount prepared for disbursement; Carried to Next Period tracks unpaid or unsettled 
+amounts transferred forward; Paid denotes confirmed settlement. Payroll and payslip summaries 
+present the relevant gross components, deductions, cash advance repayments, carried balances, 
+and net amount. A proposed repayment is not a recorded repayment until the appropriate 
+payroll/payment event is confirmed and posted. Outstanding cash advance balances are reduced 
+only by confirmed repayments.
+Figure 8. Payroll Management (original manuscript image; replace if outdated).
+Figure 9. Payroll Summary / Payslip (original manuscript image; replace if outdated).
+PAGE 5
+WORKPULSE  |  CHAPTER 3 – DISCUSSION OF FINDINGS
+WorkPulse | Revised Chapter 3 | Evidence pending verification
+Cash Advance Management
+Employees may submit cash advance requests. Authorized administrators review and approve or 
+reject requests; approval is distinct from confirmation that cash was actually given. Once 
+disbursement is confirmed, the system tracks the outstanding amount, repayment entries, and 
+remaining balance. Payroll summaries distinguish scheduled or projected deductions from 
+repayments that have actually been posted.
+[INSERT VERIFIED SCREENSHOTS: employee request, administrator decision, disbursement 
+confirmation, balance/repayment history.]
+Workforce Analytics Dashboard
+Descriptive reporting presents historical counts, rates, tables, and charts. Analytical forecasting, 
+where deployed and evaluated, is a separate function and must be identified by its actual model 
+status. Statistical fallback results must not be described as predictions from a trained AI model. 
+Only implemented and evaluated forecasting functions should be claimed.
+Figure 10. Workforce Analytics Dashboard (original manuscript image; replace if outdated).
+Role-Based Access Control
+WorkPulse uses Administrator and Employee access groups. Regular, Extra, and Manager / 
+Supervisor are employee classifications, not separate application roles. Server-side authorization 
+PAGE 6
+WORKPULSE  |  CHAPTER 3 – DISCUSSION OF FINDINGS
+WorkPulse | Revised Chapter 3 | Evidence pending verification
+and record-ownership checks govern access, regardless of which controls are displayed in the 
+browser.
+Figure 11. Role-Based Access Control (original manuscript image; replace if outdated).
+Secure Authentication and Audit Logging
+Authentication includes password and configured email verification. Audit logs record relevant 
+sensitive actions, including attendance corrections, payroll changes and approvals, with sufficient 
+context for accountability.
+Figure 12. Secure Authentication (original manuscript image; replace if outdated).
+Figure 13. Audit Logging (original manuscript image; replace if outdated).
+Data Validation, Security and Cloud Storage
+The backend validates requests and enforces role restrictions and record ownership. MongoDB 
+Atlas stores authorized workforce records; browser-local IndexedDB holds limited queued 
+actions and cached views for supported offline behavior, not a complete offline replica of the 
+cloud database.
+Figure 14. Data Validation and Security (original manuscript image; replace if outdated).
+
+PAGE 7
+WORKPULSE  |  CHAPTER 3 – DISCUSSION OF FINDINGS
+WorkPulse | Revised Chapter 3 | Evidence pending verification
+Figure 15. Cloud-Based Data Storage (original manuscript image; replace if outdated).
+Company and System Settings
+Authorized administrators manage applicable company preferences and the three employee rate 
+classifications: Regular, Extra, and Manager / Supervisor. The final screenshot must show a 
+single combined Manager / Supervisor rate setting.
+Figure 16. Company and System Settings (original manuscript image; replace if outdated).
+Offline Saving and Synchronization
+The limited offline design may queue supported manual attendance/corrections, leave requests, 
+and cash advance requests, and display previously cached information. The interface should 
+distinguish Pending (saved locally but not accepted by the server), Needs Review (server 
+PAGE 8
+WORKPULSE  |  CHAPTER 3 – DISCUSSION OF FINDINGS
+WorkPulse | Revised Chapter 3 | Evidence pending verification
+validation/conflict requires attention), and Synced (accepted by the server). Upon reconnection, 
+the server revalidates identity, authorization, dates, payroll settlement restrictions, and duplicates 
+before accepting each operation. Duplicate-submission prevention and account-specific local 
+storage are required. Fingerprint scanning, payment/disbursement confirmation, approvals, fresh 
+login and uncached data retrieval require connectivity. Network interruptions and local-storage 
+failure must produce understandable errors without falsely reporting success.
+[INSERT VERIFIED SCREENSHOTS: Pending, Needs Review, Synced, stale-cache notice, and 
+storage/network error toast.]
+Technical Evaluation of Implemented Functions
+The following matrix is an evidence checklist, not fabricated test results. Enter the observed 
+outcome, execution date, test ID, and screenshot/log reference from the final deployed system 
+before reporting a test as passed.
+Test case Expected outcome Observed outcome / evidence
+Future attendance time Reject or flag future-dated 
+attendance
+TO VERIFY — add test ID 
+and result
+Overlapping sessions Prevent invalid overlapping 
+sessions
+TO VERIFY — add test ID 
+and result
+Settled payroll attendance 
+edit
+Reject direct modification 
+and preserve history
+TO VERIFY — add test ID 
+and result
+Unauthorized record access Deny access to another 
+employee’s private records
+TO VERIFY — add test ID 
+and result
+Offline queue and 
+reconnection
+Queue eligible action; 
+revalidate and synchronize
+TO VERIFY — add test ID 
+and result
+Duplicate synchronization Accept a queued operation at 
+most once
+TO VERIFY — add test ID 
+and result
+Network interruption Preserve pending operation 
+and report connection issue
+TO VERIFY — add test ID 
+and result
+Local storage failure Display error; do not claim 
+local save succeeded
+TO VERIFY — add test ID 
+and result
+Payroll carried balance Carry unsettled amount to 
+next period accurately
+TO VERIFY — add test ID 
+and result
+Cash advance repayment Post repayment only upon 
+confirmed transaction
+TO VERIFY — add test ID 
+and result
+Biometric Evaluation Results
+A separate biometric testing record is required. Document participant count, enrollment and 
+consent, number of enrolled templates, genuine identification trials, unrecognized/impostor trials 
+using fingers or individuals not enrolled in the evaluation database, failed captures, workstation 
+and scanner conditions, and response-time measurements. For one-to-many identification, an 
+enrolled participant presenting an enrolled finger is a genuine trial, not an impostor trial. Report 
+PAGE 9
+WORKPULSE  |  CHAPTER 3 – DISCUSSION OF FINDINGS
+WorkPulse | Revised Chapter 3 | Evidence pending verification
+false acceptances and false rejections with denominators based on valid comparisons, and list 
+failed captures separately. No numeric biometric accuracy or speed results were supplied in the 
+uploaded chapter, so none are invented here.
+Biometric metric Result Evidence
+Genuine valid trials TO VERIFY Trial log
+Unrecognized valid trials TO VERIFY Trial log
+False rejections / genuine 
+valid trials
+TO VERIFY Trial log
+False acceptances / 
+unrecognized valid trials
+TO VERIFY Trial log
+Failed captures TO VERIFY Capture log
+Mean/median verification 
+time
+TO VERIFY Timestamp measurements
+Usability and Respondent Evaluation
+Profile of the Respondents
+The respondent classifications were corrected to match the confirmed distribution without 
+changing the total sample size.
+Classification Frequency Percentage
+Owner 2 6.67%
+Supervisor / Manager 2 6.67%
+Regular Employees 10 33.33%
+Extra Employees 16 53.33%
+Total 30 100%
+Extra employees comprise the largest respondent group (53.33%), followed by regular employees 
+(33.33%). Owners and supervisors/managers each represent 6.67% of the sample.
+System Usability Scale (SUS)
+The original manuscript reports a SUS score of 80.83, rated Good and Acceptable. This value is 
+retained as a reported result, pending reconciliation with all 30 individual questionnaires and the 
+item-level calculation sheets. Standard SUS scoring converts responses to 0–4 contributions (odd 
+items: response minus 1; even items: 5 minus response), sums contributions and multiplies by 2.5 
+for each respondent; the overall SUS score is the mean of respondent scores. Include the 
+instrument, individual scoring and summary worksheet in the appendices.
+Measure Reported value
+SUS Score 80.83 (requires source scoring sheets)
+Adjective Rating Good (as reported)
+PAGE 10
+WORKPULSE  |  CHAPTER 3 – DISCUSSION OF FINDINGS
+WorkPulse | Revised Chapter 3 | Evidence pending verification
+Acceptability Acceptable (as reported)
+Likert Scale and Computation of Results
+The original five-point interpretation intervals are retained: 1.00–1.80 Strongly Disagree; 1.81–
+2.60 Disagree; 2.61–3.40 Undecided; 3.41–4.20 Agree; 4.21–5.00 Strongly Agree. The interval 
+width is (5 − 1) / 5 = 0.80.
+For one item, the frequency-weighted response mean is M = Σ(fᵢ × xᵢ) / N, where fᵢ is the number 
+of respondents choosing response value xᵢ, N is the number of valid responses, and Σ denotes 
+summation across response categories. For a criterion with k equally weighted items, the average 
+of item means is WM = (Σ M ) / k, where M  is the mean for item j. These quantities coincide onlyⱼ ⱼ  
+under the applicable weighting and response-completeness assumptions; the final manuscript 
+should state which computation was actually used.
+Reported Quality Evaluation Results
+Criterion Reported mean Interpretation
+Security 4.90 Strongly Agree
+Performance efficiency 4.69 Strongly Agree
+Reliability 4.88 Strongly Agree
+Overall 4.82 Strongly Agree
+Respondents strongly agreed with statements about security (4.90), performance efficiency 
+(4.69), and reliability (4.88). The overall reported mean is 4.82. These are perception-based 
+survey ratings; they do not independently prove absence of vulnerabilities, fast response times, or 
+error-free operation. Technical claims must be supported by test records and measurements. 
+Functional suitability was included in the Chapter 1 evaluation scope but lacks a separate reported 
+respondent score here; attach actual functional-suitability evidence or align the scope and 
+evaluation criteria across chapters.
+[FIGURE 17 — replace the original weighted-mean screenshot with the verified final item-level 
+table and recalculated criterion means. The source figure should not be treated as a validated 
+calculation sheet.]
+Appendices and Evidence Required Before Final Submission
+• Final screenshots replacing outdated Figures 3–17; renumber any newly inserted figures and 
+update in-text references.
+• Original SUS questionnaire, anonymized response-level scoring sheet, item totals, and overall 
+calculation.
+• Likert instrument, per-item frequency tables, response totals, means and category aggregation 
+worksheet.
+• Biometric enrollment/trial log, valid and failed captures, timing measurements, and FAR/FRR 
+calculation.
+PAGE 11
+WORKPULSE  |  CHAPTER 3 – DISCUSSION OF FINDINGS
+WorkPulse | Revised Chapter 3 | Evidence pending verification
+• Functional, security, payroll, offline, synchronization and duplicate-prevention test logs with 
+observed outcomes.
+• Deployment screenshots and configuration evidence for supported features and company rate 
+classifications.

@@ -1,0 +1,261 @@
+PAGE 1
+WORKPULSE  |  CHAPTER 2 – METHODOLOGY
+Chapter 2
+METHODOLOGY
+This chapter presents the methodology used in the design, development, testing, and evaluation 
+of WorkPulse: Employee Attendance and Work Analytics Information System for MVL. It 
+describes the development model, Scrum activities, deployed system architecture, tools and 
+technologies, respondent population, data gathering, treatment of data, biometric evaluation 
+procedures, data security, and ethical considerations.
+WorkPulse centralizes employee, attendance, leave, payroll, cash advance, account, settings, 
+biometric, and audit records. The system provides administrator and employee access groups; 
+employee classifications include Regular, Extra, and Manager / Supervisor. Descriptive reports 
+summarize recorded data, while predictive functions, where implemented and evaluated, 
+provide separate analytical insights for administrative review.
+Development Methodology
+Software Development Model. The study adopts the Agile Software Development Model using 
+Scrum. Requirements, reported defects, and recommended improvements are prioritized in a 
+product backlog and addressed through iterative sprints. At the start of each sprint, the 
+researchers identify deliverables and acceptance criteria; implemented functions are reviewed 
+and tested, and unfinished tasks return to the backlog.
+Figure 1. Phases of Scrum. [Retain the original Scrum figure from the submitted manuscript 
+when integrating this revised text into the final layout.]
+Scrum Development Phases
+Planning. The researchers identify existing employee-information, attendance, leave, cash 
+advance, payroll, and reporting problems and translate them into functional, security, usability, 
+and deployment requirements. Planning includes fingerprint attendance, administrator manual 
+attendance and corrections, correction history, employee notifications, limited offline saving, 
+payroll settlement protections, authentication, role-based access, and audit logging. Daily and 
+date-range attendance filtering are included in the final-version verification checklist; their 
+completion must be confirmed against the deployed application before being reported as tested.
+PAGE 2
+WORKPULSE  |  CHAPTER 2 – METHODOLOGY
+Design. The researchers design the database collections, user interfaces, authorization 
+boundaries, fingerprint enrollment and attendance procedures, leave and cash advance requests, 
+payroll workflows, offline queue, synchronization process, and analytical reporting. The 
+employee-management module maintains employee profiles, classifications, assignments, and 
+other authorized employment records. The payroll module manages authorized pay inputs, 
+payroll computation and review, cash advance deductions, carried balances, settlement, and 
+employee payslip summaries. Payroll settlement prevents unauthorized retroactive attendance 
+changes affecting finalized payroll.
+Development. The React frontend implements the administrator workspace, employee portal, 
+and attendance kiosk. The Node.js and Express.js backend implements protected APIs, 
+business rules, validation, attendance processing, leave and cash advance workflows, payroll 
+processing, analytics, notifications, and audit logging. MongoDB Atlas stores authorized cloud 
+records. IndexedDB and service worker caching support specifically designated offline actions 
+and previously cached content.
+Testing. Functional tests cover login, account ownership, employee management, fingerprint 
+enrollment and attendance, manual attendance and corrections, leave, cash advances, payroll, 
+reports, notifications, offline queue, and synchronization. Boundary and negative tests cover 
+future-dated attendance times, overlapping attendance sessions, attempts to edit attendance 
+already included in settled payroll, unauthorized access, stale cached records, duplicate 
+synchronization submissions, network interruptions, and local-storage failures. For each test, 
+the researchers record the input, expected result, actual result, and disposition; the manuscript 
+must not imply a test passed unless evidence exists.
+Deployment. The frontend is hosted on Vercel and accessed through a web browser. The 
+frontend sends authenticated HTTPS requests to the Node.js/Express.js backend hosted on 
+Render. The Render backend enforces server-side authorization and business rules and reads or 
+writes cloud records in MongoDB Atlas. A configured local fingerprint workstation hosts the 
+compatible scanner, reader interface, and any locally required template extraction or matching 
+components. Scanner access is local to that workstation; a remote Render service cannot 
+directly read USB scanner hardware or execute software installed only on the workstation.
+Limited Offline Operation. IndexedDB stores permitted queued actions and selected cached 
+records in the browser; service worker caching supports designated application resources. 
+PAGE 3
+WORKPULSE  |  CHAPTER 2 – METHODOLOGY
+Subject to final implementation verification, offline users may queue authorized manual 
+attendance/corrections, leave requests, and cash advance requests and view previously cached 
+information. Cached records may be outdated. When connectivity returns, queued items are 
+synchronized to the server, revalidated against current permissions and rules, and marked 
+Synced or Needs Review. Fingerprint scanning, payments, approvals, fresh login, and 
+operations requiring live server verification are not available offline. WorkPulse is not a fully 
+offline system.
+System Architecture Overview
+WorkPulse uses a multi-layered architecture connecting browser-based presentation, server-
+side application services, cloud data storage, and locally operated fingerprint components. 
+Fingerprint capture and verification replace the unrelated facial-recognition description in the 
+earlier manuscript.
+Presentation Tier. React 19, TypeScript, Vite, Tailwind CSS, and Recharts provide 
+administrator, employee, and kiosk interfaces. IndexedDB supports browser-local queued 
+records, and a service worker caches eligible application assets. User interface visibility is not a 
+substitute for backend authorization.
+Application Tier. Node.js and Express.js on Render provide authenticated REST endpoints, 
+enforce role-based access and record ownership, validate requests, prevent duplicate 
+synchronization, protect settled payroll, and handle payroll, attendance, leave, cash advance, 
+notification, and audit workflows.
+Data Tier. MongoDB Atlas stores authorized employee, account, attendance, leave, cash 
+advance, payroll, settings, biometric-related, session, and audit records. Browser-local data is 
+temporary and must be reconciled with authoritative server records.
+Local Biometric Tier. The configured fingerprint workstation connects to the DigitalPersona 
+reader through locally installed reader components and the applicable WebSDK or bridge. 
+FingerJet template extraction or matching runs only where the required native runtime and files 
+are actually installed and accessible. If FingerJet is installed only on the local workstation, the 
+local workstation performs that step and communicates the resulting permitted data or decision 
+securely to the backend. The exact deployed processing location and trust boundary must be 
+checked against the working source code and workstation setup.
+PAGE 4
+WORKPULSE  |  CHAPTER 2 – METHODOLOGY
+Email Integration. The backend may support SMTP through Nodemailer or Brevo HTTPS 
+delivery. The final manuscript must identify the provider and delivery method actually 
+configured in the deployed environment; support for both methods in code does not prove that 
+both were used in production.
+Figure 2. Revised WorkPulse Deployment and Data Flow
+Web browser (Administrator / Employee / Kiosk) — React frontend hosted on Vercel
+   IndexedDB offline queue + service worker cache (browser-local)↳
+  ↕ HTTPS authenticated API requests / synchronization
+Node.js + Express.js backend hosted on Render
+  ↕ authorized database operations
+MongoDB Atlas (authoritative cloud records)
+   configured email delivery (SMTP/Nodemailer or Brevo HTTPS)↘
+Local fingerprint workstation → DigitalPersona reader / local capture components → locally 
+configured FingerJet processing → protected application workflow
+Figure note: The local fingerprint workstation is not a USB device attached to Render. This 
+schematic should be reconciled with the final deployment and substituted for the original 
+Figure 2 in the typeset manuscript.
+Tools and Technologies
+React 19, TypeScript, Vite, Tailwind CSS, and Recharts. Provide the responsive web 
+interfaces, typed frontend development, bundling, styling, and graphical reporting.
+Node.js and Express.js. Provide the backend runtime, protected REST API routes, application 
+services, and server-side validation. Node.js native scrypt with randomly generated salts is used 
+for password derivation where implemented.
+MongoDB Atlas and Mongoose/MongoDB operations. Provide cloud-hosted record storage 
+and database access.
+IndexedDB. Stores permitted browser-local cached records and pending offline submissions, 
+subject to browser storage limitations and account separation.
+PAGE 5
+WORKPULSE  |  CHAPTER 2 – METHODOLOGY
+Service Worker. Caches selected application assets to support limited offline use; it does not 
+replace a server or make every feature available without connectivity.
+Vercel. Hosts and delivers the deployed React frontend.
+Render. Hosts the deployed Node.js and Express.js backend.
+DigitalPersona fingerprint library/WebSDK and compatible scanner. Support fingerprint 
+capture at the configured local workstation.
+HID FingerJet. Supports fingerprint-template processing and comparison in the runtime 
+environment where it is actually installed.
+Email services. Nodemailer/SMTP and Brevo HTTPS are supported delivery options; the 
+actually configured production provider requires confirmation.
+Dotenv, Git, and GitHub. Support configuration and, where actually used, source-code version 
+control and collaboration. Any claim of biometric template encryption or a specific 
+cryptographic algorithm should be retained only if verified in the final code and configuration.
+Population and Locale of the Study
+The study uses total enumeration of the 30 identified MVL respondents: two owners, two 
+supervisors/managers, ten regular employees, and sixteen extra employees. These are 
+organizational respondent categories rather than four separate WorkPulse login roles. The 
+system uses administrator and employee access groups; Manager / Supervisor, Regular, and 
+Extra are employee classifications. The two owners are counted as respondents and may 
+perform administrator tasks according to their assigned access. The study does not add 
+respondents when describing access groups.
+The study locale is the MVL workplace in Salay Riles, Mangaldan, Pangasinan, Region I. 
+Authorized actual records and suitable simulated records may be used during testing to limit 
+exposure of personal information.
+Table 1. Respondents of the Study
+Respondent Classification Number of Respondents
+Owner 2
+Supervisor / Manager 2
+PAGE 6
+WORKPULSE  |  CHAPTER 2 – METHODOLOGY
+Regular Employees 10
+Extra Employees 16
+Total 30
+Data Gathering Techniques
+Interviews. Semi-structured interviews with authorized MVL owners and supervisors/managers 
+identify actual attendance, employee-information, leave, cash advance, payroll, policy, 
+reporting, and operational requirements. A supervisor or manager participating as an employee 
+uses the Manager / Supervisor classification rather than being described as a regular employee.
+Survey Questionnaires. Eligible respondents answer the applicable evaluation questionnaire 
+after performing authorized WorkPulse tasks. The questionnaire addresses selected software-
+quality criteria such as functional suitability, usability, performance efficiency, reliability, and 
+perceived security. Claims that three experts validated the instrument, a separate pilot test was 
+conducted, or Cronbach’s alpha was computed require actual supporting documents and data. 
+Without such evidence, these activities must be described as planned or omitted; no coefficient 
+is asserted here.
+Observation. Researchers document the existing MVL processes for attendance capture, 
+attendance correction, employee records, leave, cash advances, payroll, and payslip 
+distribution. Observations are used to identify bottlenecks and compare the implemented 
+workflows with actual workplace practices.
+Sources of Data
+Primary data are obtained from the 2 owners, 2 supervisors/managers, 10 regular employees, 
+and 16 extra employees who participate in interviews, observations, task-based testing, or 
+questionnaires as applicable. Owners and supervisors/managers provide policy and approval 
+requirements; regular and extra employees provide information on attendance and employee 
+self-service experiences.
+The researchers observe MVL workplace recordkeeping, attendance logging, leave processing, 
+cash advance handling, payroll preparation, and report generation, subject to permission and 
+privacy safeguards. These observations replace the unrelated school tracing and alumni 
+PAGE 7
+WORKPULSE  |  CHAPTER 2 – METHODOLOGY
+information discussion. Secondary data may include relevant technical references, system 
+documentation, and research literature.
+Biometric Evaluation Procedures
+Participants and Consent. Invite authorized consenting participants who meet the study 
+eligibility criteria. Record the actual number of enrolled participants and scan trials in the 
+evaluation log; do not invent sample sizes. Explain the purpose of fingerprint testing, privacy 
+measures, and the approved alternative attendance procedure.
+Enrollment. At the configured workstation, enroll the designated fingerprint according to the 
+reader and matching-software procedure. Record successful enrollments, capture failures, 
+repeated attempts, and any exclusions. Separate failed captures from valid comparisons.
+Genuine Identification Trials. An enrolled participant presents the finger enrolled in the 
+evaluation database. The system searches enrolled templates. A correct identification is a 
+genuine success; a failure to identify the enrolled participant is a false rejection when a valid 
+comparison occurred.
+Unrecognized / Impostor Trials. A person or finger not enrolled in the evaluation database is 
+presented for one-to-many identification. The expected result is no match. Any match to an 
+enrolled employee is a false acceptance. An enrolled participant presenting their enrolled finger 
+is not an impostor trial.
+Conditions and Timing. Document the scanner and software versions, workstation setup, 
+connection status, finger condition where relevant, trial sequence, capture time, template 
+processing time, matching time, and total response time. Report actual measurements and 
+capture failures separately.
+Outcome Calculation. For valid impostor comparisons, False Acceptance Rate (FAR) = false 
+acceptances ÷ valid impostor comparisons × 100%. For valid genuine comparisons, False 
+Rejection Rate (FRR) = false rejections ÷ valid genuine comparisons × 100%. Report the count 
+of failed captures separately and state the denominator used. Actual values belong in the results 
+chapter after testing.
+PAGE 8
+WORKPULSE  |  CHAPTER 2 – METHODOLOGY
+Treatment of Data
+Data Collection and Processing. Interview notes, survey responses, observation records, and 
+testing logs are checked for completeness. Authorized datasets are organized consistently, with 
+date and time formats standardized and duplicates identified without changing participants’ 
+original responses.
+Data Analysis. Descriptive summaries, frequencies, percentages, weighted means, and, where 
+applicable, usability scores describe respondents’ evaluation and workforce records. 
+Descriptive dashboards summarize historical information; predictive outputs are a separate 
+function and should be reported only for models actually implemented and evaluated. Any 
+trained model must be distinguished from statistical fallback outputs.
+Data Storage and Backup. MongoDB Atlas stores authoritative cloud records subject to 
+authentication, authorization, ownership restrictions, and server-side validation. IndexedDB 
+temporarily stores permitted account-separated browser data and queued actions. Pending 
+entries await submission, Synced entries have been accepted by the server, and Needs Review 
+entries require user or administrator action after validation or conflict detection. 
+Synchronization must recheck current access, attendance rules, payroll settlement, and record 
+versions and prevent duplicate processing through unique operation identifiers or equivalent 
+idempotency controls. Cached information may be stale, and browser storage can be cleared or 
+fail. Backup and restoration claims must reflect the configured deployment and actual tests; 
+cloud storage alone does not establish that a recovery test occurred.
+Ethical Considerations
+Security and Privacy of Data. WorkPulse handles employee records, attendance, leave, cash 
+advances, payroll, and fingerprint biometric data/templates. Data processing should follow 
+Republic Act No. 10173 and principles of transparency, legitimate purpose, proportionality, 
+accountability, and reasonable safeguards. Only authorized processes should access biometric 
+templates and sensitive workforce records.
+Fair and Inclusive Design. Fingerprint attendance verifies identity; it is not a direct measure of 
+employee performance. Employees who cannot complete fingerprint capture may use verified 
+administrator manual attendance under an approved policy. The administrator records the 
+reason, affected employee, time, and correction history, and the employee receives a 
+notification when supported. Attendance included in settled payroll must not be silently edited; 
+PAGE 9
+WORKPULSE  |  CHAPTER 2 – METHODOLOGY
+changes require the designated review or adjustment process. If the local workstation is 
+unavailable, a controlled paper attendance log provides a fallback for later authorized entry and 
+reconciliation.
+Transparency and Consent. Participants are informed of the data collected, the purpose of 
+fingerprint enrollment and verification, who may review records, and how testing data are 
+handled. Participation in research evaluation is voluntary, and the study must not imply that 
+choosing a proposed biometric option constitutes enrollment or organizational approval. 
+Analytical outputs support human review rather than automatic disciplinary or employment 
+decisions.
+Editorial verification note (remove before submission): Confirm final date-range filtering, exact 
+FingerJet execution location, deployed email provider, browser offline behavior, biometric 
+encryption implementation, questionnaire validation/pilot records, biometric trial logs, and 
+backup restoration evidence. No unverified results have been invented in this revision.

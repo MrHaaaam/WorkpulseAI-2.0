@@ -1,3 +1,4 @@
+import { employeeRoleLabel, employeeRole } from '../../shared/employee-roles.js';
 import { Textarea } from "../components/ui/Input";
 import { BoundedNumberInput } from "../components/ui/BoundedNumberInput";
 import { ADDITION_MAX, HOURLY_RATE_MAX, identifierInput, identifierLengths, identifiersValidationError, validBoundedNumber } from "../../shared/field-limits.js";
@@ -167,9 +168,9 @@ export function EmployeeDirectoryView({ employees: initialEmployees }: Partial<E
 
   const filtered = useMemo(() => employees.filter((employee) => {
     const query = search.toLowerCase();
-    const matchesSearch = [employee.name, employee.id, employee.role, employee.sssNumber, employee.address, ...(employee.identifiers ?? []).flatMap((item) => [item.type, item.value])]
+    const matchesSearch = [employee.name, employee.id, employeeRoleLabel(employee.role), employee.sssNumber, employee.address, ...(employee.identifiers ?? []).flatMap((item) => [item.type, item.value])]
       .some((value) => value?.toLowerCase().includes(query));
-    return matchesSearch && (statusFilter === "All" || employee.status === statusFilter) && (roleFilter === "All" || employee.role === roleFilter);
+    return matchesSearch && (statusFilter === "All" || employee.status === statusFilter) && (roleFilter === "All" || employeeRole(employee.role) === roleFilter);
   }), [employees, search, statusFilter, roleFilter]);
   const employeePage = usePagination(filtered, `${search}|${statusFilter}|${roleFilter}`);
 
@@ -213,7 +214,7 @@ export function EmployeeDirectoryView({ employees: initialEmployees }: Partial<E
       employee.pagIbigNumber && { type: "Pag-IBIG", value: employee.pagIbigNumber },
       employee.tinNumber && { type: "TIN", value: employee.tinNumber },
     ].filter(Boolean).map((identifier) => ({ ...identifier, amount: 0 })) as { type: string; value: string; amount: number; frequency?: "quarterly" | "per-payroll"; eligibleFromQuarter?: string; frequencyHistory?: { fromQuarter: string; frequency: "quarterly" | "per-payroll" }[] }[];
-    const normalizedRole = ["regular", "extra", "manager", "supervisor"].includes(employee.role) ? employee.role : "regular";
+    const normalizedRole = ["regular", "extra", "manager"].includes(employeeRole(employee.role)) ? employeeRole(employee.role) : "regular";
     const hourlyRate = normalizedRole === "extra" ? 40 : 50;
     const nameParts = employee.name.trim().split(/\s+/);
     const identifiers = employee.identifiers ?? legacyIdentifiers;
@@ -279,7 +280,7 @@ export function EmployeeDirectoryView({ employees: initialEmployees }: Partial<E
     } finally { setSendingVerification(false); }
   }
 
-  function updateRole(role: "regular" | "extra" | "manager" | "supervisor") {
+  function updateRole(role: "regular" | "extra" | "manager") {
     const hourlyRate = role === "extra" ? 40 : 50;
     setDraft((current) => ({ ...current, role, hourlyRate }));
   }
@@ -416,7 +417,7 @@ export function EmployeeDirectoryView({ employees: initialEmployees }: Partial<E
           <Input id="employee-directory-search" type="search" placeholder="Search employees..." value={search} onChange={(e) => setSearch(e.target.value)} className="pl-10" />
         </div>
         <label htmlFor="employee-role-filter" className="sr-only">Filter by employee role</label><select id="employee-role-filter" aria-label="Filter by employee role" value={roleFilter} onChange={(e) => setRoleFilter(e.target.value as typeof roleFilter)} className="h-10 w-full rounded-lg border border-slate-300 bg-white px-3 text-sm text-slate-700 focus:border-violet-500 focus:outline-none focus:ring-4 focus:ring-violet-200 sm:w-auto">
-          <option value="All">All roles</option><option value="regular">Regular</option><option value="extra">Extra</option><option value="manager">Manager</option><option value="supervisor">Supervisor</option>
+          <option value="All">All roles</option><option value="regular">Regular</option><option value="extra">Extra</option><option value="manager">Manager / Supervisor</option>
         </select>
         <label htmlFor="employee-status-filter" className="sr-only">Filter by employment status</label><select id="employee-status-filter" aria-label="Filter by employment status" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value as typeof statusFilter)} className="h-10 w-full rounded-lg border border-slate-300 bg-white px-3 text-sm text-slate-700 focus:border-violet-500 focus:outline-none focus:ring-4 focus:ring-violet-200 sm:w-auto">
           <option value="All">All statuses</option><option value="active">Active</option><option value="on-leave">On Leave</option><option value="inactive">Inactive</option>
@@ -434,7 +435,7 @@ export function EmployeeDirectoryView({ employees: initialEmployees }: Partial<E
           <TableHeader><TableRow className="bg-slate-50/50"><TableHead>Employee</TableHead><TableHead>Role</TableHead><TableHead>Government ID</TableHead><TableHead>Status</TableHead><TableHead className="text-right">Actions</TableHead></TableRow></TableHeader>
           <TableBody>{employeePage.pageItems.map((employee) => <TableRow key={employee.id}>
             <TableCell><div className="flex items-center gap-3"><div className="flex h-9 w-9 items-center justify-center rounded-full bg-violet-100 text-xs font-bold text-[#8642ED]">{initials(employee.name)}</div><div><p className="font-medium text-slate-900">{employee.name}</p><p className="text-xs text-slate-400">{employee.id}</p></div></div></TableCell>
-            <TableCell className="capitalize text-slate-600">{employee.role}</TableCell>
+            <TableCell className="capitalize text-slate-600">{employeeRoleLabel(employee.role)}</TableCell>
             <TableCell className="text-slate-600">{primaryGovernmentId(employee)}</TableCell>
             <TableCell><StatusBadge status={employee.status} /></TableCell>
             <TableCell><div className="flex justify-end gap-2"><Button size="sm" variant="outline" aria-label={`Edit details for ${employee.name}`} onClick={() => openEdit(employee)}><Pencil className="h-3.5 w-3.5" /> Edit details</Button><Button size="sm" variant="outline" aria-label={`Archive ${employee.name}`} className="text-rose-600 hover:bg-rose-50" onClick={() => { setArchiveTarget(employee); setArchivePassword(""); setArchiveError(""); }}><Archive className="h-3.5 w-3.5" /> Archive</Button></div></TableCell>
@@ -443,7 +444,7 @@ export function EmployeeDirectoryView({ employees: initialEmployees }: Partial<E
       ) : (
         <div><div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">{employeePage.pageItems.map((employee) => (
           <Card key={employee.id}><CardContent className="p-5 !pt-5">
-            <div className="flex min-w-0 items-start justify-between gap-2"><div className="flex min-w-0 items-center gap-3"><div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-violet-100 font-bold text-[#8642ED]">{initials(employee.name)}</div><div className="min-w-0"><h3 className="truncate font-semibold text-slate-900">{employee.name}</h3><p className="truncate text-xs text-slate-500">{employee.id} · {employee.role}</p></div></div><div className="shrink-0"><StatusBadge status={employee.status} /></div></div>
+            <div className="flex min-w-0 items-start justify-between gap-2"><div className="flex min-w-0 items-center gap-3"><div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-violet-100 font-bold text-[#8642ED]">{initials(employee.name)}</div><div className="min-w-0"><h3 className="truncate font-semibold text-slate-900">{employee.name}</h3><p className="truncate text-xs text-slate-500">{employee.id} · {employeeRoleLabel(employee.role)}</p></div></div><div className="shrink-0"><StatusBadge status={employee.status} /></div></div>
             <div className="mt-5 space-y-2 border-t border-slate-100 pt-4 text-sm"><div className="flex justify-between gap-3"><span className="text-slate-500">Government ID</span><span className="text-right text-slate-700">{primaryGovernmentId(employee)}</span></div><div className="flex justify-between gap-3"><span className="text-slate-500">Address</span><span className="max-w-[65%] truncate text-slate-700">{employee.address || "Not added"}</span></div><div className="flex justify-between"><span className="text-slate-500">Fingerprint</span><BiometricBadge status={employee.biometricStatus} /></div></div>
             <div className="mt-5 grid grid-cols-2 gap-2"><Button variant="outline" onClick={() => openEdit(employee)}><Pencil className="h-4 w-4" /> Edit</Button><Button variant="outline" className="text-rose-600 hover:bg-rose-50" onClick={() => { setArchiveTarget(employee); setArchivePassword(""); setArchiveError(""); }}><Archive className="h-4 w-4" /> Archive</Button></div>
           </CardContent></Card>
@@ -470,7 +471,7 @@ export function EmployeeDirectoryView({ employees: initialEmployees }: Partial<E
           </FormSection>
           <FormSection icon={<BriefcaseBusiness className="h-4 w-4" />} title="Employment details" description="Role, compensation, and current employment state.">
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-              <Field label="Employee role"><select value={draft.role} onChange={(e) => updateRole(e.target.value as "regular" | "extra" | "manager" | "supervisor")} className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-[#8642ED] focus:ring-2 focus:ring-[#8642ED]/20"><option value="regular">Regular</option><option value="extra">Extra</option><option value="manager">Manager</option><option value="supervisor">Supervisor</option></select></Field>
+              <Field label="Employee role"><select value={draft.role} onChange={(e) => updateRole(e.target.value as "regular" | "extra" | "manager")} className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-[#8642ED] focus:ring-2 focus:ring-[#8642ED]/20"><option value="regular">Regular</option><option value="extra">Extra</option><option value="manager">Manager / Supervisor</option></select></Field>
               <Field label="Hourly rate" error={invalidField==="hourlyRateOverride"?formError:undefined} hint="Blank uses the role default"><BoundedNumberInput data-employee-field="hourlyRateOverride" aria-invalid={invalidField==='hourlyRateOverride'} className={invalidField==='hourlyRateOverride'?'border-rose-500 ring-2 ring-rose-200':''} min="1" max={HOURLY_RATE_MAX} value={draft.hourlyRateOverride ?? ""} onChange={(event) => update("hourlyRateOverride", event.target.value === "" ? null : Number(event.target.value))} placeholder="Use System Settings rate" aria-label="Employee hourly rate override" /></Field>
               <div className="sm:col-span-2"><label htmlFor="employee-employment-status" className="mb-1 block text-sm font-medium text-slate-600">Employment status</label><select id="employee-employment-status" value={draft.status === "inactive" ? "inactive" : "active"} onChange={(e) => update("status", e.target.value as "active" | "inactive")} className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none focus:border-[#8642ED] focus:ring-2 focus:ring-[#8642ED]/20"><option value="active">Active</option><option value="inactive">Inactive</option></select><p className="mt-1 text-xs text-slate-500">Inactive stops new clock-ins and absences. Past records stay.</p></div>
             </div>

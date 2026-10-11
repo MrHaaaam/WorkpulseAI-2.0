@@ -1,7 +1,11 @@
+import { employeeRole, employeeRoleLabel, managementHourlyRate } from '../../../shared/employee-roles.js';
 import { validPhone } from '../../../shared/input-format.js';
+import { registerEmployeeUpdates } from './employee-updates.js';
+import { syncOfflineOperation } from '../offline-operations.js';
+import { employeeNotificationMiddleware } from '../employee-notifications.js';
 import { payrollTransaction } from '../payroll-transaction.js';
 import { decideLeaveRequest, leaveApprovalPreview } from '../leave-approval.js';
-import { cashAdvanceSummary, proposedAdvanceDeduction } from '../cash-advances.js';
+import { cashAdvanceSummary, payrollAdvanceProposal } from '../cash-advances.js';
 import { additionFrequency, validQuarter, quarterForDate, nextQuarter, scheduleSalaryAddition, combinedSalaryAddition } from '../../../shared/quarterly-additions.js';
 import { workHourOrderError } from '../../../shared/work-hours.js';
 import { previewQuarterlyAdditions, includeQuarterlyAdditions, removeQuarterlyAdditions, quarterlySelectionError, recurringPayrollAdditions, automaticQuarterlyAdditions, undoPaymentValidationError } from '../quarterly-additions.js';
@@ -168,10 +172,11 @@ export async function reconcileIdleDaysWithSchedule(db, settings, today) {
 }
 
 router.use(authenticate, csrfProtection);
+router.use(employeeNotificationMiddleware);
 router.use((req, res, next) => {
   if (!['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method)) return next();
   res.on('finish', () => {
-    if (res.locals.skipAudit === true || req.path === '/admin/notifications/read') return;
+    if (res.locals.skipAudit === true || ['/admin/notifications/read', '/employee/me/notifications/read'].includes(req.path)) return;
     const body = req.body ?? {};
     const changedFields = Object.keys(body).filter((key) => !['adminPassword', 'password', 'fingerprintSamples', 'template', 'captchaAnswer'].includes(key)).slice(0, 30);
     const targetName = String(body.employeeName || body.name || [body.firstName, body.lastName].filter(Boolean).join(' ') || '').trim().slice(0, 120) || null;
@@ -234,14 +239,14 @@ router.get('/employee/me', requireRole('regular', 'extra', 'manager', 'superviso
     if (!activePayroll || ['processing', 'rejected'].includes(activePayroll.status)) {
       await preparePayrollRecord(db, employee, activePeriod, settings);
     }
-    const payroll = await db.collection('payroll_requests').find({ employeeId }).sort({ createdAt: -1, _id: -1 }).limit(12).toArray();
+    const payroll = await db.collection('payroll_requests').find({ employeeId }).sort({ periodStart: -1, createdAt: -1, _id: -1 }).limit(12).toArray();
     const today = kioskTimestamp().date;
     const onLeaveToday = leaveRequests.some((leave) => leave.status === 'approved' && (Array.isArray(leave.approvedDates) && leave.approvedDates.length ? leave.approvedDates.includes(today) : leave.startDate <= today && leave.endDate >= today));
     const attendanceFlag = attendanceRiskForEmployee(attendance, employeeId, leaveRequests, today);
     const cashAdvance = await cashAdvanceSummary(db, employeeId);
     const cashAdvanceRequests = await db.collection('cash_advance_requests').find({ employeeId }).sort({ requestedAt: -1 }).limit(25).toArray();
     res.json({
-      profile: { id: employee.id, name: employee.name, email: employee.email, phone: employee.phone, address: employee.address, role: employee.role, status: employee.status === 'inactive' ? 'inactive' : onLeaveToday ? 'on-leave' : 'active', biometricStatus: biometricTemplate ? 'enrolled' : 'none', hourlyRate: configuredHourlyRate(employee, settings), grossSalary: employee.grossSalary, createdAt: employee.createdAt },
+      profile: { id: employee.id, name: employee.name, email: employee.email, phone: employee.phone, address: employee.address, role: employeeRole(employee.role), status: employee.status === 'inactive' ? 'inactive' : onLeaveToday ? 'on-leave' : 'active', biometricStatus: biometricTemplate ? 'enrolled' : 'none', hourlyRate: configuredHourlyRate(employee, settings), grossSalary: employee.grossSalary, createdAt: employee.createdAt },
       attendance: attendance.map(({ _id, ...record }) => ({ ...record, status: attendanceArrivalStatus(record, settings) })),
       leaveRequests: leaveRequests.map(({ _id, ...record }) => record),
       attendanceFlag,
@@ -254,6 +259,7 @@ router.get('/employee/me', requireRole('regular', 'extra', 'manager', 'superviso
         amount: Number(record.amount || 0),
         grossAmount: Number(record.grossAmount || 0),
         advanceDeduction: Number(record.advanceDeduction || 0),
+        advanceDeductionPeriods: record.advanceDeductionPeriods || [],
         currentAmount: Number(record.currentAmount || 0),
         carryOverAmount: Number(record.carryOverAmount || 0),
         additions: Array.isArray(record.additions) ? record.additions.map((item) => ({ label: String(item.label || 'Addition').slice(0, 80), value: Number(item.value || 0) })) : [],
@@ -437,6 +443,33 @@ router.patch('/employee/me/cash-advance-requests/:id/cancel', requireRole('regul
     if (!result) return res.status(409).json({ error: 'This request can no longer be cancelled.' });
     res.json({ id: result.id, status: result.status });
   } catch { res.status(500).json({ error: 'Unable to cancel the request.' }); }
+});
+
+registerEmployeeUpdates(router, { getSettings, configuredHourlyRate, preparePayrollRecord, payrollPeriodKey, enforceAutomaticClockOut,
+  invalidateInsights: () => { aiInsightsCache = { expiresAt: 0, value: null }; },
+});
+
+router.post('/offline/sync', async (req, res) => {
+  try {
+    const operation = req.body?.operation;
+    if (operation?.kind === 'attendance') {
+      const verification = await verifyAdminPassword(req, req.body?.password);
+      if (!verification.valid) {
+        if (verification.retryAfterSeconds) res.setHeader('Retry-After', String(verification.retryAfterSeconds));
+        return res.status(verification.forbidden ? 403 : verification.retryAfterSeconds ? 429 : 401).json({ error: verification.forbidden ? 'Administrator access required.' : verification.retryAfterSeconds ? `Incorrect admin password. Try again in ${verification.retryAfterSeconds} seconds.` : 'Incorrect admin password.' });
+      }
+    }
+    const result = await syncOfflineOperation(mongoose.connection.db, { actor: req.auth.actor, operation, getSettings, scheduledWorkStatus, payrollPeriodKey,
+      getSessionDefaults: async (tx, employee) => { const settings = await getSettings(tx); return { hourlyRate: configuredHourlyRate(employee, settings), workStartTime: settings.shift.startTime, workStopTime: settings.shift.workStopTime, overtimeStopTime: settings.shift.autoClockOutTime }; },
+      refreshPayroll: async (tx, employee, date) => preparePayrollRecord(tx, employee, payrollPeriodKey(new Date(`${date}T12:00:00+08:00`)), await getSettings(tx)),
+    });
+    invalidateInsights();
+    res.locals.auditMetadata = { offlineAction: operation.kind, employeeId: result.employeeId, date: result.date, operationId: operation.id };
+    res.json(result);
+  } catch (error) {
+    console.error('Offline sync failed:', error.message);
+    res.status(error.status || (error.code === 11000 ? 409 : 500)).json({ error: error.status ? error.message : error.code === 11000 ? 'A conflicting record already exists. Review before retrying.' : 'Synchronization failed. The local record is retained; retry when the service is available.' });
+  }
 });
 
 router.use(requireRole('admin'));
@@ -758,6 +791,7 @@ router.post('/admin/force-clock-out', async (req, res) => {
   if (date !== stamp.date) return res.status(409).json({ error: 'The day has changed. Refresh the list before clocking out.' });
   let clockedOut = 0;
   const names = [];
+  const notifiedEmployeeIds = [];
   const failedIds = [];
   try {
     const db = mongoose.connection.db;
@@ -768,15 +802,15 @@ router.post('/admin/force-clock-out', async (req, res) => {
       if (!operation) continue;
       try {
         const result = await db.collection('attendance').updateOne(operation.filter, operation.update);
-        if (result.modifiedCount) { clockedOut += 1; names.push(record.name || record.employeeId); }
+        if (result.modifiedCount) { clockedOut += 1; names.push(record.name || record.employeeId); notifiedEmployeeIds.push(record.employeeId); }
       } catch { failedIds.push(record.employeeId); }
     }
     const skipped = ids.length - clockedOut - failedIds.length;
-    res.locals.auditMetadata = { adminAction: 'force-clock-out', scope, recordCount: clockedOut, skippedCount: skipped, failedCount: failedIds.length, targetName: scope === 'individual' ? records[0]?.name : null, eventTime: stamp.time };
+    res.locals.auditMetadata = { adminAction: 'force-clock-out', scope, recordCount: clockedOut, skippedCount: skipped, failedCount: failedIds.length, targetName: scope === 'individual' ? records[0]?.name : null, eventTime: stamp.time, date: stamp.date, employeeNotificationIds: notifiedEmployeeIds };
     if (failedIds.length) res.locals.auditOutcome = 'failure';
     res.json({ clockedOut, skipped, failed: failedIds.length, names, time: stamp.time, date: stamp.date });
   } catch (error) {
-    res.locals.auditMetadata = { adminAction: 'force-clock-out', scope, recordCount: clockedOut, eventTime: stamp.time };
+    res.locals.auditMetadata = { adminAction: 'force-clock-out', scope, recordCount: clockedOut, eventTime: stamp.time, date: stamp.date, employeeNotificationIds: notifiedEmployeeIds, employeeNotificationPartial: true };
     console.error('Force clock out failed:', error instanceof Error ? error.message : error);
     res.status(500).json({ error: 'Unable to complete force clock out. Refresh attendance before retrying.' });
   }
@@ -890,7 +924,7 @@ router.post('/biometric-evaluation-trials', async (req, res) => {
 });
 
 const employeeFields = ['id', 'firstName', 'lastName', 'name', 'role', 'status', 'grossSalary', 'hoursWorked', 'hourlyRate', 'hourlyRateOverride', 'email', 'phone', 'address', 'identifiers', 'salaryAddition'];
-const employeeRoleLabel = (role) => ({ regular: 'Regular', extra: 'Extra', manager: 'Manager', supervisor: 'Supervisor' })[role] ?? 'Regular';
+
 
 function serializedAuditEvent(event) {
   return {
@@ -912,6 +946,7 @@ router.get('/overview', requireRole('admin', 'manager'), async (req, res) => {
   try {
     const db = mongoose.connection?.db;
     if (!db) return res.status(503).json({ error: 'Database is unavailable' });
+    await expirePassedLeaveRequests(db);
     const datePattern = /^\d{4}-\d{2}-\d{2}$/;
     const today = kioskTimestamp().date;
     const performanceDate = datePattern.test(String(req.query.performanceDate || '')) ? String(req.query.performanceDate) : today;
@@ -951,14 +986,14 @@ router.get('/overview', requireRole('admin', 'manager'), async (req, res) => {
     const onLeaveToday = new Set(leaveRequests.filter((leave) => leave.status === 'approved' && (Array.isArray(leave.approvedDates) && leave.approvedDates.length ? leave.approvedDates.includes(today) : leave.startDate <= today && leave.endDate >= today)).map((leave) => leave.employeeId));
     res.json({
       employees: employees.map((employee) => ({
-        role: employee.role,
+        role: employeeRole(employee.role),
         status: employee.status === 'inactive' ? 'inactive' : onLeaveToday.has(employee.id) ? 'on-leave' : 'active',
         biometricStatus: enrolledIds.has(employee.id) ? 'enrolled' : 'none',
         createdAt: employee.createdAt,
       })),
       payroll,
       attendance: attendance.map((record) => ({
-        employeeId: record.employeeId, name: record.name, role: record.role, date: record.date,
+        employeeId: record.employeeId, name: record.name, role: employeeRoleLabel(record.role), date: record.date,
         checkIn: record.checkIn, checkOut: record.checkOut, worked: attendanceSessions(record).length > 0, status: attendanceArrivalStatus(record, settings),
       })),
       leaveRequests,
@@ -998,7 +1033,7 @@ function normalizedEmployee(input) {
   employee.firstName = normalizeName(employee.firstName);
   employee.lastName = normalizeName(employee.lastName);
   employee.name = `${employee.firstName} ${employee.lastName}`.trim() || String(employee.name ?? '').trim().slice(0, 120);
-  employee.role = ['regular', 'extra', 'manager', 'supervisor'].includes(employee.role) ? employee.role : 'regular';
+  employee.role = ['regular', 'extra', 'manager'].includes(employeeRole(employee.role)) ? employeeRole(employee.role) : 'regular';
   employee.status = employee.status === 'inactive' ? 'inactive' : 'active';
   if (employee.email != null) employee.email = String(employee.email).trim().toLowerCase();
   if (employee.phone != null) employee.phone = String(employee.phone).trim().slice(0, 30);
@@ -1049,7 +1084,7 @@ function duplicateEmployeeMessage(error) {
 
 const defaultSettings = {
   shift: { enabled: true, startTime: '06:00', workStopTime: '18:00', autoClockOutTime: '21:00', workDays: 7, workWeekdays: [0, 1, 2, 3, 4, 5, 6], scheduleOverrides: [] },
-  payroll: { hourlyRates: { regular: 50, extra: 40, manager: 50, supervisor: 50 }, cashAdvanceMax: 1000 },
+  payroll: { hourlyRates: { regular: 50, extra: 40, manager: 50 }, cashAdvanceMax: 1000 },
 };
 
 function configuredHourlyRate(employee, settings) {
@@ -1057,7 +1092,7 @@ function configuredHourlyRate(employee, settings) {
   const role = String(employee?.role ?? '').toLowerCase();
   const rates = settings?.payroll?.hourlyRates;
   if (role === 'extra') return Number(rates?.extra ?? defaultSettings.payroll.hourlyRates.extra);
-  if (role === 'manager' || role === 'supervisor') return Number(rates?.[role] ?? rates?.regular ?? defaultSettings.payroll.hourlyRates.regular);
+  if (role === 'manager' || role === 'supervisor') return managementHourlyRate(rates, defaultSettings.payroll.hourlyRates.manager);
   return Number(rates?.regular ?? defaultSettings.payroll.hourlyRates.regular);
 }
 
@@ -1204,8 +1239,7 @@ export async function getSettings(db) {
       hourlyRates: {
         regular: Number(stored?.payroll?.hourlyRates?.regular ?? defaultSettings.payroll.hourlyRates.regular),
         extra: Number(stored?.payroll?.hourlyRates?.extra ?? defaultSettings.payroll.hourlyRates.extra),
-        manager: Number(stored?.payroll?.hourlyRates?.manager ?? stored?.payroll?.hourlyRates?.regular ?? defaultSettings.payroll.hourlyRates.manager),
-        supervisor: Number(stored?.payroll?.hourlyRates?.supervisor ?? stored?.payroll?.hourlyRates?.regular ?? defaultSettings.payroll.hourlyRates.supervisor),
+        manager: managementHourlyRate(stored?.payroll?.hourlyRates, defaultSettings.payroll.hourlyRates.manager),
       },
     },
   };
@@ -1292,7 +1326,6 @@ router.put('/settings', async (req, res) => {
           regular: numberInRange(incoming.payroll?.hourlyRates?.regular, defaultSettings.payroll.hourlyRates.regular, 1, 10000),
           extra: numberInRange(incoming.payroll?.hourlyRates?.extra, defaultSettings.payroll.hourlyRates.extra, 1, 10000),
           manager: numberInRange(incoming.payroll?.hourlyRates?.manager, defaultSettings.payroll.hourlyRates.manager, 1, 10000),
-          supervisor: numberInRange(incoming.payroll?.hourlyRates?.supervisor, defaultSettings.payroll.hourlyRates.supervisor, 1, 10000),
         },
       },
     };
@@ -1313,6 +1346,7 @@ router.put('/settings', async (req, res) => {
       const employees = await mongoose.connection.db.collection('employees').find({ id: { $in: recalculablePayroll.map((record) => record.employeeId) }, archived: { $ne: true } }).toArray();
       for (const employee of employees) await preparePayrollRecord(mongoose.connection.db, employee, currentPeriod, normalized);
     }
+    res.locals.auditMetadata = { employeeNotificationIds: rateEmployees.map(employee => employee.id) };
     res.json({ ...normalized, clearedIdleDays });
   } catch { res.status(500).json({ error: 'Failed to save settings' }); }
 });
@@ -1353,7 +1387,7 @@ router.get('/employees', async (req, res) => {
         firstName: e.firstName,
         lastName: e.lastName,
         name: e.name,
-        role: e.role,
+        role: employeeRole(e.role),
         grossSalary: records.length ? calculatedGross : Number(e.grossSalary ?? 0),
         hoursWorked: records.length ? Math.round(hoursWorked * 100) / 100 : Math.round(Number(e.hoursWorked || 0) * 100) / 100,
         hourlyRate,
@@ -1543,7 +1577,7 @@ router.post('/employees', async (req, res) => {
         await db.collection('employees').insertOne({ ...employee, biometricStatus, createdAt, updatedAt: createdAt }, { session });
         await db.collection('employee_accounts').insertOne({
           employeeId: employee.id, email: employee.email, passwordHash,
-          role: employee.role, active: true, mustChangePassword: true, emailVerifiedAt: createdAt, createdAt, updatedAt: createdAt,
+          role: employeeRole(employee.role), active: true, mustChangePassword: true, emailVerifiedAt: createdAt, createdAt, updatedAt: createdAt,
         }, { session });
         if (enrollment) await db.collection('biometric_templates').insertOne({
           employeeId: employee.id,
@@ -1651,7 +1685,7 @@ router.put('/employees/:id', async (req, res) => {
     }
     const result = await db.collection('employees').updateOne({ id: req.params.id }, { $set: { ...employee, updatedAt: new Date() } });
     if (!result.matchedCount) return res.status(404).json({ error: 'Employee not found' });
-    await db.collection('employee_accounts').updateOne({ employeeId: employee.id }, { $set: { email: employee.email, role: employee.role, updatedAt: new Date() } });
+    await db.collection('employee_accounts').updateOne({ employeeId: employee.id }, { $set: { email: employee.email, role: employeeRole(employee.role), updatedAt: new Date() } });
     res.json({ ...employee, createdAt: existing.createdAt });
   } catch (error) {
     if (error?.code === 11000) return res.status(409).json({ error: 'This email address is already used by another WORKPULSE MVL account.' });
@@ -1792,6 +1826,7 @@ router.delete('/employees/:id/permanent', async (req, res) => {
     try {
       await session.withTransaction(async () => {
         deleted.attendance = (await db.collection('attendance').deleteMany({ employeeId: employee.id }, { session })).deletedCount;
+        deleted.employeeNotifications = (await db.collection('employee_notifications').deleteMany({ employeeId: employee.id }, { session })).deletedCount;
         deleted.leaveRequests = (await db.collection('leave_requests').deleteMany({ employeeId: employee.id }, { session })).deletedCount;
         deleted.payrollRequests = (await db.collection('payroll_requests').deleteMany({ employeeId: employee.id }, { session })).deletedCount;
         deleted.cashAdvances = (await db.collection('cash_advances').deleteMany({ employeeId: employee.id }, { session })).deletedCount;
@@ -1870,6 +1905,7 @@ router.get('/payroll-requests', async (req, res) => {
         periodStart: payrollPeriodKeyForRecord(p),
         grossAmount: p.grossAmount,
         advanceDeduction: Number(p.advanceDeduction || 0),
+        advanceDeductionPeriods: p.advanceDeductionPeriods || [],
         rateBreakdown: p.rateBreakdown ?? [],
         additions: p.additions,
         quarterlyAdditions: p.quarterlyAdditions ?? [],
@@ -2005,17 +2041,18 @@ async function calculatePayrollRecord(db, employee, periodStart, settings) {
     const newQuarterly = await automaticQuarterlyAdditions(db, employee, periodStart, existing);
     const quarterlyAdditions = [...(existing.quarterlyAdditions || []), ...newQuarterly];
     const additions = [...await recurringPayrollAdditions(db, employee, periodStart), ...quarterlyAdditions, ...(bonusAmount > 0 ? [{ label: 'Bonus', value: bonusAmount }] : [])];
-    const advanceDeduction = existing.status === 'carried_over'
-      ? Number(existing.advanceDeduction || 0)
-      : proposedAdvanceDeduction((await cashAdvanceSummary(db, employee.id, periodStart)).eligibleBalance, grossAmount);
-    const currentAmount = grossAmount + additions.reduce((sum, item) => sum + item.value, 0) - advanceDeduction;
     const newlyOutstanding = existing.calculationResetAt ? [] : await db.collection('payroll_requests').find({
       employeeId: employee.id,
-      status: { $in: ['processing', 'rejected'] }, amount: { $gt: 0 },
+      status: { $in: ['processing', 'rejected'] }, amount: { $gte: 0 },
       rolledInto: { $exists: false },
       periodStart: { $lt: periodStart },
     }).toArray();
     const carriedQuarterlyAdditions = [...(existing.carriedQuarterlyAdditions || []), ...carriedQuarterlyDetails(newlyOutstanding)];
+    const proposal = existing.status === 'carried_over'
+      ? { amount: Number(existing.advanceDeduction || 0), breakdown: existing.advanceDeductionPeriods || [] }
+      : await payrollAdvanceProposal(db, employee.id, { ...existing, periodStart, grossAmount }, newlyOutstanding);
+    const advanceDeduction = proposal.amount;
+    const currentAmount = grossAmount + additions.reduce((sum, item) => sum + item.value, 0) - advanceDeduction;
     const addedCarry = newlyOutstanding.reduce((sum, payroll) => sum + Number(payroll.amount || 0) + Number(payroll.advanceDeduction || 0), 0);
     const carryOverAmount = Number(existing.carryOverAmount || 0) + addedCarry;
     const amount = currentAmount + carryOverAmount;
@@ -2026,7 +2063,7 @@ async function calculatePayrollRecord(db, employee, periodStart, settings) {
     const previousAmount = Number(existing.amount || 0);
     const updated = await db.collection('payroll_requests').findOneAndUpdate(
       { _id: existing._id, status: existing.status, additions: existing.additions ?? { $exists: false }, updatedAt: existing.updatedAt ?? { $exists: false }, calculationResetAt: existing.calculationResetAt ?? { $exists: false } },
-      { $set: { grossAmount, rateBreakdown, additions, quarterlyAdditions, quarterlyKeys: [...new Set([...(existing.quarterlyKeys || []), ...quarterlyAdditions.map(item => item.quarter).filter(Boolean)])], carriedQuarterlyAdditions, bonusAmount, hoursWorked, regularHours, overtimeHours, hourlyRate, advanceDeduction, currentAmount, carryOverAmount, amount, warnings, updatedAt: new Date() } },
+      { $set: { grossAmount, rateBreakdown, additions, quarterlyAdditions, quarterlyKeys: [...new Set([...(existing.quarterlyKeys || []), ...quarterlyAdditions.map(item => item.quarter).filter(Boolean)])], carriedQuarterlyAdditions, bonusAmount, hoursWorked, regularHours, overtimeHours, hourlyRate, advanceDeduction, advanceDeductionPeriods: proposal.breakdown, currentAmount, carryOverAmount, amount, warnings, updatedAt: new Date() } },
       { returnDocument: 'after' },
     );
     if (!updated) {
@@ -2050,20 +2087,21 @@ async function calculatePayrollRecord(db, employee, periodStart, settings) {
   const { hoursWorked, regularHours, overtimeHours, grossAmount, rateBreakdown } = attendancePaySummary(attendance, hourlyRate);
   const quarterlyAdditions = await automaticQuarterlyAdditions(db, employee, periodStart);
   const additions = [...await recurringPayrollAdditions(db, employee, periodStart), ...quarterlyAdditions];
-  const advanceDeduction = proposedAdvanceDeduction((await cashAdvanceSummary(db, employee.id, periodStart)).eligibleBalance, grossAmount);
-  const currentAmount = grossAmount + additions.reduce((sum, item) => sum + item.value, 0) - advanceDeduction;
   const outstanding = await db.collection('payroll_requests').find({
-    employeeId: employee.id, status: { $in: ['processing', 'rejected'] }, amount: { $gt: 0 }, rolledInto: { $exists: false },
+    employeeId: employee.id, status: { $in: ['processing', 'rejected'] }, amount: { $gte: 0 }, rolledInto: { $exists: false },
     $or: [{ periodStart: { $lt: periodStart } }, { periodStart: { $exists: false } }],
   }).toArray();
   const carriedQuarterlyAdditions = carriedQuarterlyDetails(outstanding);
+  const proposal = await payrollAdvanceProposal(db, employee.id, { periodStart, grossAmount }, outstanding);
+  const advanceDeduction = proposal.amount;
+  const currentAmount = grossAmount + additions.reduce((sum, item) => sum + item.value, 0) - advanceDeduction;
   const carryOverAmount = outstanding.reduce((sum, payroll) => sum + Number(payroll.amount || 0) + Number(payroll.advanceDeduction || 0), 0);
   const warnings = [
     ...(hoursWorked <= 0 ? ['No completed attendance hours'] : []),
     ...(incompleteAttendance ? ['Incomplete attendance session'] : []),
   ];
   const id = `PR-${Date.now()}-${crypto.randomBytes(3).toString('hex')}-${employee.id}`;
-  const record = { id, employeeId: employee.id, employeeName: employee.name, employeeEmail: employee.email, grossAmount, rateBreakdown, additions, quarterlyAdditions, quarterlyKeys: quarterlyAdditions.length ? [quarterForDate(periodStart)] : [], carriedQuarterlyAdditions, hoursWorked, regularHours, overtimeHours, hourlyRate, advanceDeduction, currentAmount, carryOverAmount, amount: currentAmount + carryOverAmount, periodStart, periodDays: 15, status: 'processing', warnings, createdAt: new Date() };
+  const record = { id, employeeId: employee.id, employeeName: employee.name, employeeEmail: employee.email, grossAmount, rateBreakdown, additions, quarterlyAdditions, quarterlyKeys: quarterlyAdditions.length ? [quarterForDate(periodStart)] : [], carriedQuarterlyAdditions, hoursWorked, regularHours, overtimeHours, hourlyRate, advanceDeduction, advanceDeductionPeriods: proposal.breakdown, currentAmount, carryOverAmount, amount: currentAmount + carryOverAmount, periodStart, periodDays: 15, status: 'processing', warnings, createdAt: new Date() };
   try {
     await db.collection('payroll_requests').insertOne(record);
   } catch (error) {
@@ -2194,10 +2232,17 @@ router.patch('/payroll-requests/bonus', async (req, res) => {
       const additions = [...(Array.isArray(record.additions) ? record.additions.filter((item) => item?.label !== 'Bonus') : []), { label: 'Bonus', value: bonusAmount }];
       return { updateOne: { filter: { _id: record._id, status: { $in: ['processing', 'rejected'] }, additions: record.additions ?? { $exists: false }, updatedAt: record.updatedAt ?? { $exists: false } }, update: { $set: { bonusAmount, additions, currentAmount: Math.round((Number(record.currentAmount || 0) + amount) * 100) / 100, amount: Math.round((Number(record.amount || 0) + amount) * 100) / 100, bonusUpdatedAt: new Date(), bonusUpdatedBy: req.auth.actor.email } } } };
     });
-    const result = await db.collection('payroll_requests').bulkWrite(operations);
-    res.locals.auditMetadata = { payrollAction: 'bonus-added', scope, amount, recordCount: result.modifiedCount, targetName: scope === 'individual' ? records[0]?.employeeName : null, periodStart };
-    if (!result.modifiedCount) return res.status(409).json({ error: 'Payroll changed while adding the bonus. Refresh and try again.' });
-    res.json({ updated: result.modifiedCount, amount, scope });
+    const notificationIds = [];
+    res.locals.auditMetadata = { payrollAction: 'bonus-added', scope, amount, targetName: scope === 'individual' ? records[0]?.employeeName : null, periodStart, employeeNotificationIds: notificationIds, employeeNotificationPartial: true };
+    const results = await mapWithConcurrency(operations.map((operation, index) => ({ operation, employeeId: records[index].employeeId })), 8, async ({ operation, employeeId }) => {
+      const result = await db.collection('payroll_requests').updateOne(operation.updateOne.filter, operation.updateOne.update);
+      if (result.modifiedCount) notificationIds.push(employeeId);
+      return result;
+    });
+    const modifiedCount = results.reduce((sum, result) => sum + result.modifiedCount, 0);
+    res.locals.auditMetadata.recordCount = modifiedCount;
+    if (!modifiedCount) return res.status(409).json({ error: 'Payroll changed while adding the bonus. Refresh and try again.' });
+    res.json({ updated: modifiedCount, amount, scope });
   } catch (error) {
     console.error('Payroll bonus update failed:', error instanceof Error ? error.message : error);
     res.status(500).json({ error: 'Unable to add the payroll bonus.' });
@@ -2233,7 +2278,7 @@ router.patch('/payroll-requests/pay-bulk', async (req, res) => {
       }
       for (const record of selected) {
         await requireQuarterlyAdditionsBeforePayment(transactionDb, record);
-        const expected = proposedAdvanceDeduction((await cashAdvanceSummary(transactionDb, record.employeeId, record.periodStart)).eligibleBalance, record.grossAmount);
+        const expected = (await payrollAdvanceProposal(transactionDb, record.employeeId, record)).amount;
         if (expected !== Number(record.advanceDeduction || 0)) throw new Error('STALE_PAYROLL');
       }
       const changed = await transactionDb.collection('payroll_requests').updateMany(
@@ -2247,7 +2292,7 @@ router.patch('/payroll-requests/pay-bulk', async (req, res) => {
       return selected;
     });
     const total = ready.reduce((sum, item) => sum + Number(item.amount || 0), 0);
-    res.locals.auditMetadata = { payrollAction: ready.length === 1 ? 'individual-paid' : 'bulk-paid', recordCount: ready.length, targetName: ready.length === 1 ? ready[0].employeeName : null, total, periodStart };
+    res.locals.auditMetadata = { payrollAction: ready.length === 1 ? 'individual-paid' : 'bulk-paid', recordCount: ready.length, targetName: ready.length === 1 ? ready[0].employeeName : null, total, periodStart, employeeNotificationIds: ready.map(item => item.employeeId) };
     res.json({ paid: ready.length, skipped: ids.length - ready.length, total, ids: ready.map((item) => item.id), paidAt });
   } catch (error) {
     if (error?.message === 'QUARTERLY_MISSING') return res.status(409).json({ error: 'A quarterly allowance is missing. Click Refresh payroll, review the new amounts, then pay.' });
@@ -2315,7 +2360,7 @@ router.patch('/payroll-requests/undo-last-payment', async (req, res) => {
       console.error('Payroll recalculation after undo failed:', error);
       warning = 'Payment was undone, but payroll could not be recalculated. Refresh payroll before paying it again.';
     }
-    res.locals.auditMetadata = { payrollAction: 'payment-undone', undoReason, recordCount: directRecords.length, targetName: directRecords.length === 1 ? directRecords[0].employeeName : null, total, periodStart };
+    res.locals.auditMetadata = { payrollAction: 'payment-undone', undoReason, recordCount: directRecords.length, targetName: directRecords.length === 1 ? directRecords[0].employeeName : null, total, periodStart, employeeNotificationIds: directRecords.map(item => item.employeeId) };
     res.json({ undone: directRecords.length, ids: directIds, total, ...(warning ? { warning } : {}) });
   } catch (error) {
     if (error?.message === 'STALE_PAYROLL') return res.status(409).json({ error: 'Payment changed. Refresh and try again.' });
@@ -2349,7 +2394,7 @@ router.patch('/payroll-requests/:id/confirm-payment', async (req, res) => {
       if (!pending || !(Number(pending.amount || 0) > 0 || Number(pending.advanceDeduction || 0) > 0)) throw new Error('STALE_PAYROLL');
       await transactionDb.collection('employees').updateOne({ id: pending.employeeId }, { $inc: { payrollPolicyRevision: 1 } });
       await requireQuarterlyAdditionsBeforePayment(transactionDb, pending);
-      const expected = proposedAdvanceDeduction((await cashAdvanceSummary(transactionDb, pending.employeeId, pending.periodStart)).eligibleBalance, pending.grossAmount);
+      const expected = (await payrollAdvanceProposal(transactionDb, pending.employeeId, pending)).amount;
       if (expected !== Number(pending.advanceDeduction || 0)) throw new Error('STALE_PAYROLL');
       const paid = await transactionDb.collection('payroll_requests').findOneAndUpdate(
         { id: req.params.id, status: 'processing', amount: pending.amount, advanceDeduction: pending.advanceDeduction ?? { $exists: false }, rolledInto: { $exists: false } },
@@ -2496,7 +2541,7 @@ router.get('/leave-requests', async (req, res) => {
         id: r.id,
         employeeId: r.employeeId,
         employeeName: r.employeeName,
-        role: r.role,
+        role: employeeRoleLabel(r.role),
         leaveType: r.leaveType,
         startDate: r.startDate,
         endDate: r.endDate,
@@ -2673,13 +2718,14 @@ router.get('/attendance', async (req, res) => {
       attendance.map((a) => ({
         employeeId: a.employeeId,
         name: a.name,
-        role: a.role,
+        role: employeeRoleLabel(a.role),
         date: a.date,
         checkIn: a.checkIn,
         checkOut: a.checkOut,
         sessions: attendanceSessions(a),
         sessionCount: attendanceSessions(a).length,
         manualRecorded: attendanceSessions(a).some((session) => session.captureMethod === 'admin-manual' || session.manualClockOut === true),
+        editedByAdmin: attendanceSessions(a).some((session) => Boolean(session.correctedAt)),
         status: attendanceArrivalStatus(a, settings),
         autoClockedOut: a.autoClockedOut ?? false,
       }))
@@ -2786,6 +2832,8 @@ router.post('/attendance/idle-day', async (req, res) => {
     const byEmployee = new Map(existingRecords.map(record => [record.employeeId, record]));
     const onLeave = new Set(leaves.filter(leave => approvedLeaveCoversDate(leave, date)).map(leave => leave.employeeId));
     const now = new Date();
+    const affectedEmployeeIds = [];
+    res.locals.auditMetadata = { attendanceAction: idleDay ? 'company-idle-day-added' : 'company-idle-day-removed', date, employeeNotificationIds: affectedEmployeeIds, employeeNotificationPartial: true };
     if (idleDay) await db.collection('idle_days').updateOne({ date }, { $set: { date, setBy: req.auth.actor.email, updatedAt: now }, $setOnInsert: { createdAt: now } }, { upsert: true });
     else await db.collection('idle_days').deleteOne({ date });
     for (const employee of employees) {
@@ -2800,9 +2848,10 @@ router.post('/attendance/idle-day', async (req, res) => {
         else if (date < kioskTimestamp().date) await collection.updateOne({ _id: existing._id }, { $set: { status: 'Absent', automaticAbsence: true, updatedAt: now }, $unset: { idleDay: '', idleDayBy: '', idleDayAt: '' } });
         else await collection.deleteOne({ _id: existing._id });
       }
+      if (idleDay || existing?.idleDay) affectedEmployeeIds.push(employee.id);
     }
     aiInsightsCache = { expiresAt: 0, value: null };
-    res.locals.auditMetadata = { attendanceAction: idleDay ? 'company-idle-day-added' : 'company-idle-day-removed', date, recordCount: ids.length };
+    res.locals.auditMetadata = { attendanceAction: idleDay ? 'company-idle-day-added' : 'company-idle-day-removed', date, recordCount: ids.length, employeeNotificationIds: affectedEmployeeIds };
     res.json({ idleDay, updated: ids.length });
   } catch (error) {
     console.error('Company idle day update failed:', error instanceof Error ? error.message : error);
@@ -3001,7 +3050,7 @@ router.post('/attendance/kiosk', async (req, res) => {
         if (error?.code === 11000) return rejectScan(409, 'conflict', 'Attendance was already recorded for this employee today');
         throw error;
       }
-      res.locals.auditMetadata = { ...res.locals.auditMetadata, attendanceRecorded: true, kioskAction: 'time-in', eventTime: stamp.time };
+      res.locals.auditMetadata = { ...res.locals.auditMetadata, attendanceRecorded: true, kioskAction: 'time-in', eventTime: stamp.time, date: stamp.date };
       if (verificationAttemptId) await db.collection('biometric_verification_attempts').updateOne({ _id: verificationAttemptId }, { $set: { action: 'time-in', eventTime: stamp.time, attendanceDate: stamp.date } });
       res.locals.auditMetadata = { ...res.locals.auditMetadata, kioskAction: 'time-in', eventTime: stamp.time };
       return res.status(201).json({ action: 'time-in', record: { ...record, eventTime: stamp.time, _id: undefined } });
@@ -3049,7 +3098,7 @@ router.post('/attendance/kiosk', async (req, res) => {
 
     const updated = await db.collection('attendance').findOneAndUpdate(versionFilter, { $set: update }, { returnDocument: 'after' });
     if (!updated) return rejectScan(409, 'conflict', 'Attendance was updated by another request');
-    res.locals.auditMetadata = { ...res.locals.auditMetadata, attendanceRecorded: true, kioskAction: action, eventTime: stamp.time };
+    res.locals.auditMetadata = { ...res.locals.auditMetadata, attendanceRecorded: true, kioskAction: action, eventTime: stamp.time, date: stamp.date };
     if (action === 'time-out') {
       const attendancePeriod = payrollPeriodKey(new Date(`${stamp.date}T12:00:00+08:00`));
       await preparePayrollRecord(db, employee, attendancePeriod, settings);

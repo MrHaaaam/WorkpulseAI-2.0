@@ -5,6 +5,22 @@ import { buildNotifications, NOTIFICATION_LIFETIME_MS } from './notifications.js
 const now = new Date('2026-09-18T12:00:00Z');
 const leave = (id, createdAt, status = 'pending') => ({ id, createdAt, status, employeeId: 'E1', employeeName: 'Alex', startDate: '2026-09-20', endDate: '2026-09-21' });
 
+test('historical attendance edits produce separate admin notifications with stable IDs and actual edit timestamps', () => {
+  const record = { employeeId: 'E1', name: 'Alex', date: '2025-01-01', sessions: [{ checkIn: '09:00 AM', checkOut: '05:00 PM' }], correctionHistory: [
+    { sessionNumber: 1, correctedAt: '2026-09-18T10:00:00Z', reason: 'Supervisor verified arrival', before: [{ checkIn: '08:00 AM', checkOut: '05:00 PM' }], after: [{ checkIn: '09:00 AM', checkOut: '05:00 PM' }] },
+    { sessionNumber: 1, correctedAt: '2026-09-18T11:00:00Z', reason: 'Verified departure', before: [{ checkIn: '09:00 AM', checkOut: '05:00 PM' }], after: [{ checkIn: '09:00 AM', checkOut: '04:00 PM' }] },
+  ] };
+  const events = buildNotifications({ now, attendance: [record] });
+  assert.equal(events.length, 2);
+  assert.equal(events[0].title, 'Alex: attendance edited by admin');
+  assert.match(events[1].description, /2025-01-01.*08:00 AM.*09:00 AM.*Supervisor verified arrival/);
+  assert.equal(events[0].employeeId, 'E1');
+  assert.notEqual(events[0].id, events[1].id);
+  assert.deepEqual(buildNotifications({ now: new Date(now.getTime() + 60000), attendance: [record] }), events);
+  assert.equal(buildNotifications({ now: new Date(now.getTime() + NOTIFICATION_LIFETIME_MS), attendance: [record] }).length, 0);
+});
+
+
 test('expires at exactly 72 hours and excludes future or invalid events', () => {
   const cutoff = now.getTime() - NOTIFICATION_LIFETIME_MS;
   const result = buildNotifications({ now, leaveRequests: [leave('expired', new Date(cutoff)), leave('live', new Date(cutoff + 1)), leave('future', new Date(now.getTime() + 1)), leave('invalid', 'invalid')] });

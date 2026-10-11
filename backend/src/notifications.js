@@ -23,6 +23,15 @@ export function buildNotifications({ leaveRequests = [], attendance = [], insigh
   for (const record of attendance) {
     const key = `${record.employeeId}:${record.date}`;
     const name = record.name || record.employeeId;
+    for (const [index, correction] of (record.correctionHistory || []).entries()) {
+      const sessionIndex = Number(correction.sessionNumber) - 1;
+      const before = correction.before?.[sessionIndex];
+      const after = correction.after?.[sessionIndex];
+      const times = session => `${session?.checkIn || 'No time-in'} → ${session?.checkOut || 'Open'}`;
+      add(`attendance:${key}:edit:${index}`, 'attendance', `${name}: attendance edited by admin`,
+        `${record.date}, session ${correction.sessionNumber}: ${times(before)} changed to ${times(after)}. Reason: ${correction.reason || 'Attendance correction'}`,
+        correction.correctedAt, record.employeeId);
+    }
     const sessions = record.sessions?.length ? record.sessions : record.checkIn ? [{ checkIn: record.checkIn, checkOut: record.checkOut }] : [];
     sessions.forEach((session, index) => {
       if (session.checkIn) add(`attendance:${key}:${index}:in`, 'attendance', `${name} clocked in`, `${record.date} at ${session.checkIn}`, session.checkInAt || eventTime(record.date, session.checkIn), record.employeeId);
@@ -53,7 +62,7 @@ export async function loadNotifications(db, now = new Date()) {
   const start = new Date(now);
   start.setUTCFullYear(start.getUTCFullYear() - 1);
   const [attendance, leaveRequests] = await Promise.all([
-    db.collection('attendance').find({ employeeId: { $in: employeeIds }, date: { $gte: start.toISOString().slice(0, 10) } }).toArray(),
+    db.collection('attendance').find({ employeeId: { $in: employeeIds }, $or: [{ date: { $gte: start.toISOString().slice(0, 10) } }, { 'correctionHistory.correctedAt': { $gt: new Date(now.getTime() - NOTIFICATION_LIFETIME_MS) } }] }).toArray(),
     db.collection('leave_requests').find({ employeeId: { $in: employeeIds }, $or: [{ createdAt: { $gt: new Date(now.getTime() - NOTIFICATION_LIFETIME_MS) } }, { status: 'approved', endDate: { $gte: start.toISOString().slice(0, 10) } }] }).toArray(),
   ]);
   const insights = buildAIInsights({ attendance, employees, leaveRequests, now });

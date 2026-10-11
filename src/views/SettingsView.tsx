@@ -15,7 +15,7 @@ import { Dialog, DialogClose, DialogHeader } from "../components/ui/Dialog";
 
 type Settings = {
   shift: { enabled: boolean; startTime: string; workStopTime: string; autoClockOutTime: string; workDays: number; workWeekdays: number[]; scheduleOverrides: { date: string; working: boolean; kind?: "holiday" | "rest-day" | "workday" }[] };
-  payroll: { hourlyRates: { regular: number | ""; extra: number | ""; manager: number | ""; supervisor: number | "" }; cashAdvanceMax: number | "" };
+  payroll: { hourlyRates: { regular: number | ""; extra: number | ""; manager: number | "" }; cashAdvanceMax: number | "" };
 };
 
 function isoDate(date: Date) {
@@ -43,7 +43,7 @@ function monthDates(month: Date) {
 
 const defaults: Settings = {
   shift: { enabled: true, startTime: "06:00", workStopTime: "18:00", autoClockOutTime: "21:00", workDays: 7, workWeekdays: [0, 1, 2, 3, 4, 5, 6], scheduleOverrides: [] },
-  payroll: { hourlyRates: { regular: 50, extra: 40, manager: 50, supervisor: 50 }, cashAdvanceMax: 1000 },
+  payroll: { hourlyRates: { regular: 50, extra: 40, manager: 50 }, cashAdvanceMax: 1000 },
 };
 
 export function SettingsView() {
@@ -65,7 +65,7 @@ export function SettingsView() {
       .then((response) => response.ok ? response.json() : Promise.reject())
       .then((data) => setSettings({
         shift: { ...defaults.shift, ...(data.shift ?? {}) },
-        payroll: { hourlyRates: { ...defaults.payroll.hourlyRates, ...(data.payroll?.hourlyRates ?? {}) }, cashAdvanceMax: data.payroll?.cashAdvanceMax ?? defaults.payroll.cashAdvanceMax },
+        payroll: { hourlyRates: { regular: data.payroll?.hourlyRates?.regular ?? defaults.payroll.hourlyRates.regular, extra: data.payroll?.hourlyRates?.extra ?? defaults.payroll.hourlyRates.extra, manager: data.payroll?.hourlyRates?.manager ?? data.payroll?.hourlyRates?.supervisor ?? defaults.payroll.hourlyRates.manager }, cashAdvanceMax: data.payroll?.cashAdvanceMax ?? defaults.payroll.cashAdvanceMax },
       }))
       .catch(() => undefined);
   }, []);
@@ -206,14 +206,12 @@ export function SettingsView() {
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="space-y-2"><Label htmlFor="regular-hourly-rate">Regular employee rate</Label><div className="relative"><span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-slate-500">₱</span><BoundedNumberInput id="regular-hourly-rate" className="pl-8 pr-16" min="1" max={HOURLY_RATE_MAX} title="1 to 10,000; up to 2 decimal places" value={settings.payroll.hourlyRates.regular} onChange={(event) => setSettings((current) => ({ ...current, payroll: { ...current.payroll, hourlyRates: { ...current.payroll.hourlyRates, regular: event.target.value === "" ? "" : Number(event.target.value) } } }))} /><span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-xs text-slate-400">/ hour</span></div></div>
               <div className="space-y-2"><Label htmlFor="extra-hourly-rate">Extra employee rate</Label><div className="relative"><span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-slate-500">₱</span><BoundedNumberInput id="extra-hourly-rate" className="pl-8 pr-16" min="1" max={HOURLY_RATE_MAX} title="1 to 10,000; up to 2 decimal places" value={settings.payroll.hourlyRates.extra} onChange={(event) => setSettings((current) => ({ ...current, payroll: { ...current.payroll, hourlyRates: { ...current.payroll.hourlyRates, extra: event.target.value === "" ? "" : Number(event.target.value) } } }))} /><span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-xs text-slate-400">/ hour</span></div></div>
-              <div className="space-y-2"><Label htmlFor="manager-hourly-rate">Manager employee rate</Label><div className="relative"><span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-slate-500">₱</span><BoundedNumberInput id="manager-hourly-rate" className="pl-8 pr-16" min="1" max={HOURLY_RATE_MAX} title="1 to 10,000; up to 2 decimal places" value={settings.payroll.hourlyRates.manager} onChange={(event) => setSettings((current) => ({ ...current, payroll: { ...current.payroll, hourlyRates: { ...current.payroll.hourlyRates, manager: event.target.value === "" ? "" : Number(event.target.value) } } }))} /><span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-xs text-slate-400">/ hour</span></div></div>
-              <div className="space-y-2"><Label htmlFor="supervisor-hourly-rate">Supervisor employee rate</Label><div className="relative"><span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-slate-500">₱</span><BoundedNumberInput id="supervisor-hourly-rate" className="pl-8 pr-16" min="1" max={HOURLY_RATE_MAX} title="1 to 10,000; up to 2 decimal places" value={settings.payroll.hourlyRates.supervisor} onChange={(event) => setSettings((current) => ({ ...current, payroll: { ...current.payroll, hourlyRates: { ...current.payroll.hourlyRates, supervisor: event.target.value === "" ? "" : Number(event.target.value) } } }))} /><span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-xs text-slate-400">/ hour</span></div></div>
+              <div className="space-y-2"><Label htmlFor="manager-hourly-rate">Manager / Supervisor rate</Label><div className="relative"><span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-slate-500">₱</span><BoundedNumberInput id="manager-hourly-rate" className="pl-8 pr-16" min="1" max={HOURLY_RATE_MAX} title="1 to 10,000; up to 2 decimal places" value={settings.payroll.hourlyRates.manager} onChange={(event) => setSettings((current) => ({ ...current, payroll: { ...current.payroll, hourlyRates: { ...current.payroll.hourlyRates, manager: event.target.value === "" ? "" : Number(event.target.value) } } }))} /><span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-xs text-slate-400">/ hour</span></div></div>
             </div>
             <div className="grid gap-3 sm:grid-cols-2" role="status" aria-live="polite">
               <div className="rounded-xl border border-violet-100 bg-violet-50 p-3"><p className="text-xs font-semibold text-violet-700">Regular employee example</p><p className="mt-1 text-sm text-violet-950">8 completed hours × ₱{Number(settings.payroll.hourlyRates.regular || 0).toFixed(2)} = <strong>₱{(8 * Number(settings.payroll.hourlyRates.regular || 0)).toFixed(2)}</strong></p></div>
               <div className="rounded-xl border border-violet-100 bg-violet-50 p-3"><p className="text-xs font-semibold text-violet-700">Extra employee example</p><p className="mt-1 text-sm text-violet-950">8 completed hours × ₱{Number(settings.payroll.hourlyRates.extra || 0).toFixed(2)} = <strong>₱{(8 * Number(settings.payroll.hourlyRates.extra || 0)).toFixed(2)}</strong></p></div>
-              <div className="rounded-xl border border-violet-100 bg-violet-50 p-3"><p className="text-xs font-semibold text-violet-700">Manager employee example</p><p className="mt-1 text-sm text-violet-950">8 completed hours × ₱{Number(settings.payroll.hourlyRates.manager || 0).toFixed(2)} = <strong>₱{(8 * Number(settings.payroll.hourlyRates.manager || 0)).toFixed(2)}</strong></p></div>
-              <div className="rounded-xl border border-violet-100 bg-violet-50 p-3"><p className="text-xs font-semibold text-violet-700">Supervisor employee example</p><p className="mt-1 text-sm text-violet-950">8 completed hours × ₱{Number(settings.payroll.hourlyRates.supervisor || 0).toFixed(2)} = <strong>₱{(8 * Number(settings.payroll.hourlyRates.supervisor || 0)).toFixed(2)}</strong></p></div>
+              <div className="rounded-xl border border-violet-100 bg-violet-50 p-3"><p className="text-xs font-semibold text-violet-700">Manager / Supervisor example</p><p className="mt-1 text-sm text-violet-950">8 completed hours × ₱{Number(settings.payroll.hourlyRates.manager || 0).toFixed(2)} = <strong>₱{(8 * Number(settings.payroll.hourlyRates.manager || 0)).toFixed(2)}</strong></p></div>
             </div>
             <p className="text-xs leading-5 text-slate-500">Payroll is calculated as completed attendance hours × the employee type’s hourly rate, plus approved additions and carried balances.</p>
           </CardContent>

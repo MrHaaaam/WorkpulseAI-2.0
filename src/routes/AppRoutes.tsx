@@ -21,7 +21,7 @@ const portalViews: readonly ViewKey[] = ['overview', 'attendance', 'calendar', '
 type OverviewEmployee = { role?: string; status: string; biometricStatus: string; createdAt?: string };
 type OverviewPayroll = { status: string; periodStart?: string };
 type OverviewAttendance = { employeeId?: string; name?: string; role?: string; date?: string; checkIn?: string; checkOut?: string; worked?: boolean; status: string };
-type OverviewLeave = { id: string; employeeId?: string; startDate: string; endDate: string; approvedDates?: string[]; totalDays: number; status: string };
+type OverviewLeave = { id: string; employeeId?: string; startDate: string; endDate: string; requestedDates?: string[]; approvedDates?: string[]; totalDays: number; status: string };
 type OverviewAuditEvent = { id: string; executedAction?: string; detail?: string; occurredAt?: string; actorEmail?: string | null; actorRole?: string; screenName?: string; action?: string; targetType?: string; targetId?: string | null; outcome?: string; metadata?: Record<string, unknown> };
 
 function readableAuditAction(action = 'unknown', targetType = 'system') {
@@ -474,7 +474,7 @@ export function AppRoutes() {
     return {
       id: event.id,
       user: event.screenName || 'System',
-      role: event.actorRole === 'admin' ? 'Admin' : event.actorRole === 'manager' ? 'Manager' : event.actorRole === 'anonymous' ? 'System' : 'Staff',
+      role: event.actorRole === 'admin' ? 'Admin' : ['manager', 'supervisor'].includes(event.actorRole ?? '') ? 'Manager / Supervisor' : event.actorRole === 'anonymous' ? 'System' : 'Staff',
       action: auditActionLabel(event),
       time,
       date: validDate ? validDate.toLocaleDateString('en-PH', { timeZone: 'Asia/Manila', month: 'short', day: 'numeric', year: 'numeric' }) : '—',

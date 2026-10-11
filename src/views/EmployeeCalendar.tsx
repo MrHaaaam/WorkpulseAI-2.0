@@ -1,9 +1,11 @@
+import { AttendanceSourceLabels, type AttendanceSource } from '../components/AttendanceSourceLabels';
 import { Input } from "../components/ui/Input";
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { CalendarDays, ChevronLeft, ChevronRight, Clock3 } from 'lucide-react'
 import { apiFetch } from '../lib/api'
+import { calendarLeavesForDate } from '../../shared/calendar-leave.js'
 
-type Attendance = { date: string; status: string; checkIn?: string; checkOut?: string; sessions?: { checkIn: string; checkOut?: string | null }[] }
+type Attendance = AttendanceSource & { date: string; status: string; checkIn?: string; checkOut?: string; sessions?: (AttendanceSource & { checkIn: string })[] }
 type Leave = { id: string; leaveType: string; status: string; startDate: string; endDate: string; requestedDates?: string[]; approvedDates?: string[] }
 type Schedule = { workWeekdays: number[]; scheduleOverrides: { date: string; working: boolean; kind?: string }[]; startTime?: string; workStopTime?: string }
 type CalendarData = { month: string; employees?: { id: string; name: string }[]; attendance: Attendance[]; idleDates: string[]; leaveRequests: Leave[]; workSchedule: Schedule }
@@ -27,12 +29,7 @@ const moveMonth = (month: string, offset: number) => {
   return `${next.getUTCFullYear()}-${String(next.getUTCMonth() + 1).padStart(2, '0')}`
 }
 
-function coversDate(leave: Leave, date: string) {
-  const dates = leave.status === 'approved' ? leave.approvedDates : leave.requestedDates
-  return Array.isArray(dates) && dates.length ? dates.includes(date) : leave.startDate <= date && date <= leave.endDate
-}
-
-function buildDays(data: CalendarData): Day[] {
+function buildDays(data: CalendarData, today: string): Day[] {
   const [year, month] = data.month.split('-').map(Number)
   const count = new Date(Date.UTC(year, month, 0)).getUTCDate()
   const overrides = new Map(data.workSchedule.scheduleOverrides.map((item) => [item.date, item]))
@@ -44,7 +41,7 @@ function buildDays(data: CalendarData): Day[] {
     const weekday = new Date(`${date}T12:00:00Z`).getUTCDay()
     const working = override?.working ?? data.workSchedule.workWeekdays.includes(weekday)
     const schedule = override?.kind === 'holiday' ? 'Holiday' : working ? 'Workday' : 'Rest day'
-    return { date, schedule, idle: idle.has(date), leave: data.leaveRequests.filter((item) => coversDate(item, date)), attendance: attendance.get(date) }
+    return { date, schedule, idle: idle.has(date), leave: calendarLeavesForDate(data.leaveRequests, date, today), attendance: attendance.get(date) }
   })
 }
 
@@ -91,7 +88,7 @@ export function EmployeeCalendar({ refreshKey = 0, admin = false }: { refreshKey
     return () => controller.abort()
   }, [load, refreshKey])
 
-  const days = useMemo(() => data?.month === month ? buildDays(data) : [], [data, month])
+  const days = useMemo(() => data?.month === month ? buildDays(data, today) : [], [data, month, today])
   const selectedDay = days.find((day) => day.date === selected) ?? days[0]
   const leading = days.length ? new Date(`${days[0].date}T12:00:00Z`).getUTCDay() : 0
   const summary = {
@@ -134,7 +131,7 @@ export function EmployeeCalendar({ refreshKey = 0, admin = false }: { refreshKey
           })}</div>
         </div>}
       </section>
-      <aside className="self-start rounded-2xl border border-slate-200 bg-white p-5 shadow-sm"><div className="flex items-center gap-2 text-slate-400"><CalendarDays className="h-4 w-4" /><span className="text-[11px] font-semibold uppercase tracking-widest">Day details</span></div>{selectedDay && !loading ? <><h3 className="mt-3 text-lg font-semibold text-slate-900">{dateLabel(selectedDay.date)}</h3><div className="mt-4 flex flex-wrap gap-2">{dayTags(selectedDay).map((tag, index) => <span key={`${tag.label}-${index}`} className={`rounded-lg px-2.5 py-1.5 text-xs font-semibold ${tagStyles[tag.tone]}`}>{tag.label}</span>)}</div>{selectedDay.schedule === 'Workday' && data?.workSchedule.startTime && <p className="mt-5 text-sm text-slate-600">Scheduled start: <strong className="text-slate-900">{calendarTime(data.workSchedule.startTime)}</strong>{data.workSchedule.workStopTime && <> · End: <strong className="text-slate-900">{calendarTime(data.workSchedule.workStopTime)}</strong></>}</p>}{selectedDay.attendance && <div className="mt-5 border-t border-slate-100 pt-4"><p className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-slate-500"><Clock3 className="h-4 w-4" />Time records</p>{(selectedDay.attendance.sessions?.length ? selectedDay.attendance.sessions : selectedDay.attendance.checkIn ? [{ checkIn: selectedDay.attendance.checkIn, checkOut: selectedDay.attendance.checkOut }] : []).map((session, index) => <p key={index} className="mt-2 text-sm text-slate-700">Session {index + 1}: {calendarTime(session.checkIn)} – {session.checkOut ? calendarTime(session.checkOut) : 'In progress'}</p>)}{!selectedDay.attendance.checkIn && !selectedDay.attendance.sessions?.length && <p className="mt-2 text-sm text-slate-500">No time entries recorded.</p>}</div>}</> : <p className="mt-3 text-sm text-slate-500">Select a date to see its details.</p>}<p className="mt-6 border-t border-slate-100 pt-4 text-xs leading-5 text-slate-500">Holidays and special days reflect the company schedule set by your administrator. Pending leave is not yet approved.</p></aside>
+      <aside className="self-start rounded-2xl border border-slate-200 bg-white p-5 shadow-sm"><div className="flex items-center gap-2 text-slate-400"><CalendarDays className="h-4 w-4" /><span className="text-[11px] font-semibold uppercase tracking-widest">Day details</span></div>{selectedDay && !loading ? <><h3 className="mt-3 text-lg font-semibold text-slate-900">{dateLabel(selectedDay.date)}</h3><div className="mt-4 flex flex-wrap gap-2">{dayTags(selectedDay).map((tag, index) => <span key={`${tag.label}-${index}`} className={`rounded-lg px-2.5 py-1.5 text-xs font-semibold ${tagStyles[tag.tone]}`}>{tag.label}</span>)}</div>{selectedDay.schedule === 'Workday' && data?.workSchedule.startTime && <p className="mt-5 text-sm text-slate-600">Scheduled start: <strong className="text-slate-900">{calendarTime(data.workSchedule.startTime)}</strong>{data.workSchedule.workStopTime && <> · End: <strong className="text-slate-900">{calendarTime(data.workSchedule.workStopTime)}</strong></>}</p>}{selectedDay.attendance && <div className="mt-5 border-t border-slate-100 pt-4"><p className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-slate-500"><Clock3 className="h-4 w-4" />Time records</p>{(selectedDay.attendance.sessions?.length ? selectedDay.attendance.sessions : selectedDay.attendance.checkIn ? [{ ...selectedDay.attendance, checkIn: selectedDay.attendance.checkIn }] : []).map((session, index) => <div key={index} className="mt-2 rounded-lg bg-slate-50 p-3"><p className="text-sm text-slate-700">Session {index + 1}: {calendarTime(session.checkIn)} – {session.checkOut ? calendarTime(session.checkOut) : 'In progress'}</p><AttendanceSourceLabels session={session} /></div>)}{!selectedDay.attendance.checkIn && !selectedDay.attendance.sessions?.length && <p className="mt-2 text-sm text-slate-500">No time entries recorded.</p>}</div>}</> : <p className="mt-3 text-sm text-slate-500">Select a date to see its details.</p>}<p className="mt-6 border-t border-slate-100 pt-4 text-xs leading-5 text-slate-500">Holidays and special days reflect the company schedule set by your administrator. Pending leave is not yet approved.</p></aside>
     </div>
   </div>
 }

@@ -1,0 +1,11 @@
+# Direct attendance editing and employee notifications
+
+Admins can open **Attendance → Edit attendance**, or select **Edit times** on a row. Choose the employee, date and session, change the time-in/time-out, enter a reason and the admin password, and save. Missing attendance can be added without an employee report. The existing **Record attendance** tool still records the current time for scanner outages.
+
+The employee portal has a **notification bell** for regular, extra, manager and supervisor accounts. It shows unread counts, category filters, individual updates and a **Mark all read** action. Selecting a notification opens the relevant attendance, calendar, leave, payroll or profile screen. The bell refreshes every 30 seconds while the portal is visible, on focus, when opened and when Refresh is selected. It shows the latest 200 notifications.
+
+Notifications cover admin actions on attendance, leave decisions and reversals, payroll payments/holds/reversals/bonuses/allowances/reset/email, cash advances, employee details, fingerprint registration, login email, access and company schedule/pay settings. Automatic payroll refresh, exports, previews and failed actions do not produce employee notifications. Bulk actions notify successful employees only. Messages do not contain passwords, fingerprint samples, other employees' details or aggregate payroll totals. Employees can only read or mark their own notifications.
+
+Attendance editing preserves original sessions, rates and before/after history. It checks stale attendance, chronology, overnight and adjacent-day overlaps, approved leave and paid/carried/reset payroll. Attendance, unpaid payroll recalculation and the employee notification commit together using the existing MongoDB transaction support. Other business actions write notifications after the response; storage failures are logged for administrator troubleshooting. Notifications are included in backups and permanent employee deletion.
+
+Deploy the frontend to Vercel and backend to Render together. Backend startup creates the employee-notification indexes. Verify using an admin and employee account: edit attendance, confirm the bell shows the correction and reason, mark it read, and test leave, payroll, cash advance and profile changes. Local automated verification does not certify the deployed database or browser.

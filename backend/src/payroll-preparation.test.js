@@ -29,6 +29,17 @@ test('cash advance uses earned hourly pay and does not duplicate a carried propo
   assert.equal(record.amount, 300);
 });
 
+test('payroll preparation preserves installment obligations when unpaid periods are combined', async () => {
+  const attendance = [{ employeeId: employee.id, date: periodStart, sessions: [{ checkIn: '09:00 AM', checkOut: '05:00 PM', hourlyRate: 100 }] }];
+  const prior = { id: 'old', _id: 'old', employeeId: employee.id, periodStart: '2026-09-01', grossAmount: 800, amount: 600, advanceDeduction: 200, status: 'processing' };
+  const db = database({ attendance, advances: [{ employeeId: employee.id, amount: 1000, startPeriod: '2026-09-01' }], priorPayroll: [prior] });
+  const { record } = await preparePayrollRecord(db, employee, periodStart, {});
+  assert.equal(record.advanceDeduction, 400);
+  assert.equal(record.carryOverAmount, 800);
+  assert.equal(record.amount, 1200);
+  assert.deepEqual(record.advanceDeductionPeriods, [{ periodStart: '2026-09-01', amount: 200 }, { periodStart, amount: 200 }]);
+});
+
 test('a concurrent insert returns the winning payroll without relinking carry-over', async () => {
   const winner = { id: 'PR-winner', employeeId: employee.id, periodStart, status: 'processing', amount: 100 };
   const db = database({ error: conflict(), winner });
@@ -57,9 +68,9 @@ test('employee hourly rate stays above changing company defaults', async () => {
   assert.equal(result.record.hourlyRate, 100);
 });
 
-test('manager and supervisor payroll use their own company rates', async () => {
+test('manager and legacy supervisor payroll share one company rate', async () => {
   const settings = { payroll: { hourlyRates: { regular: 50, extra: 40, manager: 90, supervisor: 70 } } };
-  for (const [role, rate] of [['manager', 90], ['supervisor', 70]]) {
+  for (const [role, rate] of [['manager', 90], ['supervisor', 90]]) {
     const result = await preparePayrollRecord(database(), { ...employee, role }, periodStart, settings);
     assert.equal(result.record.hourlyRate, rate);
   }

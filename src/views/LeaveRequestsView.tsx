@@ -1,3 +1,4 @@
+import { employeeRoleLabel } from '../../shared/employee-roles.js';
 import { Input } from "../components/ui/Input";
 import { AdminPageHeader } from "../components/AdminPageHeader";
 import { useEffect, useState } from "react";
@@ -18,6 +19,7 @@ import { Button } from "../components/ui/Button";
 import { LeaveDatePicker } from "../components/LeaveDatePicker";
 import { PaginationControls } from "../components/ui/Pagination";
 import { usePagination } from "../hooks/usePagination";
+import { leaveDateProgress, leaveDateStatus, requestedLeaveDatesFor } from '../../shared/calendar-leave.js';
 
 export interface LeaveRequest {
   id: string;
@@ -49,23 +51,18 @@ function friendlyDate(value: string) {
 }
 
 function requestedDatesFor(request: LeaveRequest) {
-  if (request.requestedDates?.length) return [...new Set(request.requestedDates)].sort();
-  const start = new Date(`${request.startDate}T00:00:00Z`);
-  const end = new Date(`${request.endDate}T00:00:00Z`);
-  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return [];
-  const dates: string[] = [];
-  for (let date = start; date <= end; date = new Date(date.getTime() + 86_400_000)) dates.push(date.toISOString().slice(0, 10));
-  return dates;
+  return requestedLeaveDatesFor(request);
 }
 
-function LeaveDates({ request }: { request: LeaveRequest }) {
-  const dates = request.approvedDates?.length ? request.approvedDates : request.requestedDates?.length ? request.requestedDates : [];
+function LeaveDates({ request, today }: { request: LeaveRequest; today: string }) {
+  const dates = request.approvedDates?.length ? request.approvedDates : requestedDatesFor(request);
   const rangeLabel = request.startDate === request.endDate
     ? friendlyDate(request.startDate)
     : `${friendlyDate(request.startDate)} to ${friendlyDate(request.endDate)}`;
-  const labels = dates.length ? dates.slice(0, 3).map(friendlyDate) : [rangeLabel];
+  const labels = dates.length ? dates.slice(0, 3).map(date => `${friendlyDate(date)}${['pending', 'passed'].includes(request.status) ? ` · ${leaveDateStatus(request, date, today) === 'passed' ? 'Passed' : 'Pending'}` : ''}`) : [rangeLabel];
   const dayCount = dates.length || request.totalDays;
-  return <div className="mt-1 flex flex-wrap items-center gap-1.5" title={dates.length ? dates.map(friendlyDate).join(", ") : rangeLabel}>{labels.map((label, index)=><span key={index} className="rounded-md bg-violet-50 px-2 py-1 text-[11px] font-semibold text-violet-700">{label}</span>)}{dates.length>3&&<span className="text-[11px] font-semibold text-slate-500">+{dates.length-3} more</span>}<span className="text-[11px] font-bold text-slate-700">{dayCount} {dayCount===1?"day":"days"}</span></div>;
+  const progress = leaveDateProgress(request, today);
+  return <div className="mt-1 space-y-2"><div className="flex flex-wrap items-center gap-1.5" title={dates.length ? dates.map(date => `${friendlyDate(date)}: ${leaveDateStatus(request, date, today)}`).join(", ") : rangeLabel}>{labels.map((label, index)=><span key={index} className={`rounded-md px-2 py-1 text-[11px] font-semibold ${label.endsWith('Passed') ? 'bg-slate-100 text-slate-600' : label.endsWith('Pending') ? 'bg-amber-50 text-amber-700' : 'bg-violet-50 text-violet-700'}`}>{label}</span>)}{dates.length>3&&<span className="text-[11px] font-semibold text-slate-500">+{dates.length-3} more</span>}<span className="text-[11px] font-bold text-slate-700">{dayCount} {dayCount===1?"day":"days"}</span></div>{progress.pendingDates.length > 0 && progress.passedDates.length > 0 && <p className="text-xs text-slate-600">{progress.pendingDates.length} pending · {progress.passedDates.length} passed; past dates require individual review.</p>}</div>;
 }
 
 function requestedOn(value?: string) {
@@ -115,7 +112,12 @@ export function LeaveRequestsView({
   const [bulkPassword, setBulkPassword] = useState("");
   const [bulkBusy, setBulkBusy] = useState(false);
   const [bulkFailures, setBulkFailures] = useState<{ id: string; error: string }[]>([]);
-  useEffect(() => { apiFetch('/api/leave-requests').then((response) => response.ok ? response.json() : Promise.reject()).then(setLocalRequests).catch(() => setLocalRequests([])); }, []);
+  useEffect(() => {
+    let active = true;
+    const load = () => { if (document.visibilityState === 'hidden') return; void apiFetch('/api/leave-requests').then(response => response.ok ? response.json() : Promise.reject()).then(data => { if (active) setLocalRequests(data); }).catch(() => {}); };
+    load(); const timer = window.setInterval(load, 60_000); window.addEventListener('focus', load);
+    return () => { active = false; window.clearInterval(timer); window.removeEventListener('focus', load); };
+  }, []);
 
   function openApproval(request: LeaveRequest) {
     setReviewTarget(request); setApprovalPreview(null); setPreviewLoading(true); setPreviewError("");
@@ -200,7 +202,7 @@ export function LeaveRequestsView({
   const today = (() => { const parts = Object.fromEntries(new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Manila", year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(new Date()).filter((part) => part.type !== "literal").map((part) => [part.type, part.value])); return `${parts.year}-${parts.month}-${parts.day}`; })();
   const undoDates = (undoTarget?.approvedDates ?? []).filter(date => date >= today);
   const keptDates = (undoTarget?.approvedDates ?? []).filter(date => date < today);
-  const activeRequests = [...localRequests].sort((left, right) => Number(right.status === "pending") - Number(left.status === "pending") || new Date(right.createdAt ?? 0).getTime() - new Date(left.createdAt ?? 0).getTime());
+  const activeRequests = localRequests.map(request => ({ ...request, status: leaveDateProgress(request, today).status as LeaveRequest['status'] })).sort((left, right) => Number(right.status === "pending") - Number(left.status === "pending") || new Date(right.createdAt ?? 0).getTime() - new Date(left.createdAt ?? 0).getTime());
   const pendingCount = activeRequests.filter(r => r.status === "pending").length;
   const approvedCount = activeRequests.filter(r => r.status === "approved" && r.approvedDates?.some(date => date >= today)).length;
   const totalDaysRequested = activeRequests.reduce((acc, r) => acc + (r.status === "approved" ? r.approvedDates?.filter(date => date >= today).length ?? 0 : 0), 0);
@@ -208,8 +210,8 @@ export function LeaveRequestsView({
   // UPDATED: Filtration rules look strictly at search text and status matches now
   const filteredRequests = activeRequests.filter(req => {
     const matchesSearch = req.employeeName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                          req.role.toLowerCase().includes(searchTerm.toLowerCase());
-    const matchesStatus = filterStatus === "all" || req.status === filterStatus;
+                          employeeRoleLabel(req.role).toLowerCase().includes(searchTerm.toLowerCase());
+    const matchesStatus = filterStatus === "all" || req.status === filterStatus || (filterStatus === 'passed' && leaveDateProgress(req, today).passedDates.length > 0);
 
     return matchesSearch && matchesStatus;
   });
@@ -313,7 +315,7 @@ export function LeaveRequestsView({
                 </div>
                 <div className="min-w-0">
                   <p className="break-words text-sm font-semibold text-slate-900">{request.employeeName}</p>
-                  <p className="truncate text-xs text-slate-400">{request.role}</p>
+                  <p className="truncate text-xs text-slate-400">{employeeRoleLabel(request.role)}</p>
                   <p className="mt-1 text-xs leading-5 text-slate-500">{requestedOn(request.createdAt)}</p>
                 </div>
               </div>
@@ -332,7 +334,7 @@ export function LeaveRequestsView({
 
                 <div>
                   <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Dates</p>
-                  <LeaveDates request={request}/>
+                  <LeaveDates request={request} today={today}/>
                 </div>
 
                 {/* Reason */}

@@ -1,3 +1,4 @@
+import { employeeRoleLabel } from '../../shared/employee-roles.js';
 import { PASSWORD_RULES, passwordValidationError } from '../../shared/password-policy.js';
 import { emailInput } from '../../shared/input-format.js';
 import { ForceClockOutDialog } from "../components/ForceClockOutDialog";
@@ -66,11 +67,11 @@ export function AdminView() {
 
   const filteredEmployees = useMemo(() => {
     const query = employeeSearch.trim().toLowerCase();
-    return query ? localEmployees.filter((employee) => `${employee.name} ${employee.id} ${employee.role}`.toLowerCase().includes(query)) : localEmployees;
+    return query ? localEmployees.filter((employee) => `${employee.name} ${employee.id} ${employeeRoleLabel(employee.role)}`.toLowerCase().includes(query)) : localEmployees;
   }, [employeeSearch, localEmployees]);
   const filteredArchivedAccounts = useMemo(() => {
     const query = archiveSearch.trim().toLowerCase();
-    const matchingAccounts = query ? archivedAccounts.filter((account) => `${account.name} ${account.id} ${account.record.role}`.toLowerCase().includes(query)) : archivedAccounts;
+    const matchingAccounts = query ? archivedAccounts.filter((account) => `${account.name} ${account.id} ${employeeRoleLabel(account.record.role)}`.toLowerCase().includes(query)) : archivedAccounts;
     if (archiveRange === "all") return matchingAccounts;
     const rangeDays = archiveRange === "30d" ? 30 : archiveRange === "1y" ? 365 : 365 * 5;
     const cutoff = archiveReferenceTime - rangeDays * 86400000;
@@ -274,12 +275,12 @@ export function AdminView() {
         <Card>
           <CardHeader>
             <CardTitle>Employee Access</CardTitle>
-            <CardDescription>Manage all employee accounts, including employees assigned as managers</CardDescription>
+            <CardDescription>Manage all employee accounts, including employees assigned as managers / supervisors</CardDescription>
           </CardHeader>
           <CardContent>
             <div className="relative mb-4 max-w-sm"><Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" /><Input aria-label="Search employee access" value={employeeSearch} onChange={(event) => setEmployeeSearch(event.target.value)} placeholder="Search employee, ID, or role" className="pl-9" /></div>
             <div className="space-y-2 sm:hidden">
-              {employeePage.pageItems.map((employee) => <div key={employee.id} className="rounded-xl border border-slate-200 p-4"><div className="flex items-start justify-between gap-2"><div className="min-w-0"><p className="break-words font-semibold text-slate-900">{employee.name}</p><p className="text-xs text-slate-500">{employee.id} · {employee.role}</p></div><Badge variant={employee.banned ? "danger" : "success"}>{employee.banned ? "Blocked" : "Active"}</Badge></div><Button className="mt-3 w-full" size="sm" variant="outline" onClick={() => void toggleBanEmployee(employee.id)}>{employee.banned ? "Restore access" : "Block access"}</Button></div>)}
+              {employeePage.pageItems.map((employee) => <div key={employee.id} className="rounded-xl border border-slate-200 p-4"><div className="flex items-start justify-between gap-2"><div className="min-w-0"><p className="break-words font-semibold text-slate-900">{employee.name}</p><p className="text-xs text-slate-500">{employee.id} · {employeeRoleLabel(employee.role)}</p></div><Badge variant={employee.banned ? "danger" : "success"}>{employee.banned ? "Blocked" : "Active"}</Badge></div><Button className="mt-3 w-full" size="sm" variant="outline" onClick={() => void toggleBanEmployee(employee.id)}>{employee.banned ? "Restore access" : "Block access"}</Button></div>)}
             </div>
             <div className={`${hoverScrollbarClasses} hidden sm:block`}>
               <Table className="min-w-[620px]">
@@ -298,7 +299,7 @@ export function AdminView() {
                         <div className="font-medium text-slate-900">{e.name}</div>
                         <div className="text-xs text-slate-500">{e.id}</div>
                       </TableCell>
-                      <TableCell className="capitalize text-slate-600">{e.role}</TableCell>
+                      <TableCell className="capitalize text-slate-600">{employeeRoleLabel(e.role)}</TableCell>
                       <TableCell>
                         {e.banned ? (
                           <Badge variant="danger">Banned</Badge>

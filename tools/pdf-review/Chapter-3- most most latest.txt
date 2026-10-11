@@ -1,0 +1,506 @@
+PAGE 1
+ 
+36 
+   
+ 
+DISCUSSION OF FINDINGS 
+Chapter 3 
+ DISCUSSION OF FINDINGS 
+This chapter presents the findings and evaluation of 
+WorkPulse: Employee Attendance and Work Analytics 
+Information System for MVL. It covers the identified 
+problems and requirements, implemented system modules, 
+technical and user evaluation results, biometric 
+verification performance, and operational and usability 
+issues. Survey results are presented using frequencies, 
+percentages, and weighted means, while interview and 
+observation findings are summarized into recurring themes. 
+Challenges and Issues of the Current System 
+ Based on the identified existing processes, the 
+current system of managing employee attendance and 
+workforce information presents several challenges. The 
+processes for employee information, attendance, leave, and 
+payroll are partly manual or fragmented, which can affect 
+the accuracy, efficiency, and accessibility of records. The 
+following are the major challenges identified: 
+ 
+ 
+ 
+ 
+PAGE 2
+ 
+37 
+   
+ 
+DISCUSSION OF FINDINGS 
+Table 2 
+Challenges and Issues Encountered in the Current Employee 
+Attendance and Work Analytics Process 
+ 
+The table presents the major challenges encountered by 
+users in the Employee Attendance and Work Analytics Process 
+ 
+Challenges  
+and Issues 
+Frequency Percentage 
+1. Inaccurate 
+Attendance 
+Recording 
+27 90% 
+2.Risk of 
+Unauthorized or 
+Proxy Attendance 
+28 93.33% 
+3. Inefficient 
+Monitoring of Work 
+Hours  
+21 70% 
+4. Payroll 
+processing 
+Difficulties 
+27 90% 
+5. Limited Employee 
+Access to Records 
+28 93.33% 
+PAGE 3
+ 
+38 
+   
+ 
+DISCUSSION OF FINDINGS 
+Inaccurate Attendance Recording. This issue was 
+identified by 90% of the respondents. Inaccurate attendance 
+records can occur during the current attendance process, 
+making it difficult to maintain reliable employee 
+attendance information. This can also affect the accuracy 
+of monitoring and payroll-related records. 
+Risk of Unauthorized or Proxy Attendance. Reported by 
+93.33% of respondents, this issue reflects the concern that 
+attendance may be recorded by someone other than the actual 
+employee. This can compromise the accuracy and reliability 
+of attendance records and may lead to incorrect employee 
+attendance information. 
+Inefficient Monitoring of Work Hours. A total of 70% 
+of respondents experienced difficulties in monitoring 
+employee work hours. Manual monitoring can make it 
+challenging to accurately track working time, especially 
+when dealing with multiple employees. This may result in 
+inefficient monitoring and inaccurate work-hour records. 
+Payroll Processing Difficulties. Reported by 90% of 
+respondents, this issue reflects the challenges encountered 
+in processing employee payroll. Manual handling of 
+attendance and payroll information can increase the 
+PAGE 4
+ 
+39 
+   
+ 
+DISCUSSION OF FINDINGS 
+possibility of errors and delays, making payroll processing 
+less efficient. 
+Limited Employee Access to Records. This issue was 
+identified by 93.33% of the respondents. Employees have 
+limited access to their attendance, leave, and other work-
+related records. This can reduce transparency and may 
+require employees to depend on administrators whenever they 
+need to check or obtain their information. 
+Features of the Proposed System 
+ To address the identified challenges, WorkPulse: 
+Employee Attendance and Work Analytics Information System 
+for MVL is proposed as a responsive web-based workforce 
+information management system. It centralizes employee, 
+attendance, leave, and payroll-related information and 
+provides separate services for administrators and 
+employees. The proposed system includes the following 
+features: 
+Employee Information Management. The system provides a 
+centralized employee directory where authorized 
+administrators can manage employee information and maintain 
+organized workforce records. 
+ 
+PAGE 5
+ 
+40 
+   
+ 
+DISCUSSION OF FINDINGS 
+Figure 3 
+Employee Information Management Module 
+Fingerprint-Based Attendance. Employees can record their 
+Time-In and Time-Out using a fingerprint scanner. The 
+fingerprint is used to verify the employee's identity 
+before an attendance record is created.  
+Figure 4 
+Fingerprint-Based Attendance 
+ 
+
+PAGE 6
+ 
+41 
+   
+ 
+DISCUSSION OF FINDINGS 
+Attendance Monitoring. Administrators can view and 
+monitor employee attendance records. The system supports 
+daily attendance viewing and date-range filtering. 
+Figure 5 
+Attendance Monitoring Module 
+ 
+ 
+Employee Self-Service Portal. Employees have access to 
+their own authorized information through an employee 
+portal. They can view and monitor their personal 
+information, attendance records, payroll information, and 
+leave records. The portal provides employees with 
+convenient access to their records, allowing them to review 
+their information and stay updated on their attendance, 
+salary, and leave status without relying solely on HR 
+personnel. 
+ 
+
+PAGE 7
+ 
+42 
+   
+ 
+DISCUSSION OF FINDINGS 
+Figure 6 
+Employee Self-Service Portal Module 
+ 
+Leave Management. Employees can submit leave requests 
+through the system, while administrators can review and 
+process those requests and manage leave information. 
+Figure 7 
+Leave Management Module 
+   
+
+PAGE 8
+ 
+43 
+   
+ 
+DISCUSSION OF FINDINGS 
+Payroll Management. The system provides payroll-related 
+workflows and stores payroll information associated with 
+employee records. 
+Figure 8 
+Payroll Management Module 
+   
+ 
+ 
+ 
+ 
+Payroll Summary / Payslip View. Employees can access 
+their authorized payroll summaries or payslip-related 
+information through the employee portal. 
+Figure 9 
+Payroll Summary / Payslip View Modul 
+
+PAGE 9
+ 
+44 
+   
+ 
+DISCUSSION OF FINDINGS 
+Workforce Analytics Dashboard. The system generates 
+descriptive workforce analytics using stored organizational 
+data. These can be presented through counts, rates, tables, 
+charts, and reports to assist administrators in 
+understanding workforce information. 
+Figure 10 
+Workforce Analytics Dashboard Module 
+ 
+Role-Based Access Control. The system separates access 
+according to user roles. The defined roles are 
+Administrator and Employee, with each role receiving only 
+the functions and records appropriate to its 
+responsibilities. 
+ 
+ 
+ 
+
+PAGE 10
+ 
+45 
+   
+ 
+DISCUSSION OF FINDINGS 
+Figure 11 
+Role-Based Access Control Module 
+  
+Secure Authentication. The system implements 
+authentication controls, including password authentication 
+and email One-Time Password (OTP) verification. 
+Figure 12 
+Secure Authentication Module 
+    
+
+PAGE 11
+ 
+46 
+   
+ 
+DISCUSSION OF FINDINGS 
+Audit logging. Important system and user activities are 
+recorded through audit logs. This provides accountability 
+and supports security review. 
+Figure 13 
+Audit Logging Module 
+ 
+Data Validation and Security. The system implements 
+input validation, authorization, session controls, 
+restricted database access, and other security mechanisms 
+to protect workforce information. These measures help 
+prevent unauthorized access, invalid data entries, and 
+potential security threats. The system also ensures that 
+users can only access information and features according to 
+their assigned roles and permissions, helping maintain the 
+confidentiality, integrity, and security of employee 
+records. 
+ 
+
+PAGE 12
+ 
+47 
+   
+ 
+DISCUSSION OF FINDINGS 
+Figure 14  
+Data Validation and Security Module  
+ 
+Cloud-Based Data Storage. The system uses MongoDB Atlas 
+as its cloud-hosted database for employee profiles, 
+attendance records, leave information, payroll records, 
+company preferences, and audit-related records.  
+Figure 15 
+Cloud-Based Data Storage 
+ 
+
+PAGE 13
+ 
+48 
+   
+ 
+DISCUSSION OF FINDINGS 
+Company and System Settings. Authorized administrators 
+can manage applicable company preferences and system 
+settings.  
+Figure 16 
+Company and System Settings Module 
+   
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+Usability Level of the Proposed System 
+ This section presents the results of the usability 
+evaluation of the WorkPulse: Employee Attendance and Work 
+Analytics Information System. The evaluation determines the 
+system's usability, effectiveness, efficiency, and user 
+satisfaction based on the responses gathered from the 
+selected participants. The evaluation may use the System 
+Usability Scale (SUS) to measure overall usability, while 
+additional system quality characteristics such as 
+functionality, security, performance efficiency, and 
+
+PAGE 14
+ 
+49 
+   
+ 
+DISCUSSION OF FINDINGS 
+reliability may be evaluated using a structured five-point 
+Likert Scale questionnaire. 
+ Profile of the Respondents. The respondents of the 
+study were composed of manager,regular staff, student/part-
+time employees who are potential users of the WorkPulse 
+system. They were selected based on their involvement in 
+employee attendance, workforce information, administrative 
+processes, or familiarity with digital systems. 
+Table 3 
+Profile of the Respondents 
+ 
+     The table shows that most of the respondents are 
+student employees (part-time), comprising 63.33% of the 
+total participants. Meanwhile, 33.33% are regular staff, 
+Category Frequency Percentage 
+Manager 1 3.33% 
+Regular Staff 10 33.33% 
+Student 
+Employees(Part-time) 
+19 63.33% 
+Total 30 100% 
+PAGE 15
+ 
+50 
+   
+ 
+DISCUSSION OF FINDINGS 
+and 3.33% are managers. This indicates that the evaluation 
+results are largely based on the perspectives of student 
+employees, who make up the majority of the respondents. 
+System Usability Scale (SUS) Evaluation. The usability 
+of the WorkPulse: Employee Attendance and Work Analytics 
+Information System was evaluated using the System Usability 
+Scale (SUS), a standardized questionnaire widely used to 
+measure system usability. SUS consists of ten statements 
+rated using a five-point Likert scale ranging from strongly 
+disagree to strongly agree. The responses were computed 
+following standard SUS procedures to obtain a score out of 
+100. 
+Table 4 
+Computed SUS Score 
+Description Value 
+SUS Score 80.83 
+Adjective Rating Good 
+Acceptability 
+ Acceptable 
+ 
+The computed SUS score of 80.83 indicates that the 
+system falls within the “Good” range. This suggests that 
+PAGE 16
+ 
+51 
+   
+ 
+DISCUSSION OF FINDINGS 
+the respondents generally found the system easy to use and 
+understandable when performing its intended functions.  
+ Likert Scale Used in System Evaluation. In 
+addition to usability evaluation, the system was further 
+assessed using a structured questionnaire based on a five-
+point Likert Scale. The Likert Scale is one of the most 
+widely used approaches in survey research, allowing 
+respondents to express their level of agreement or 
+disagreement with given statements. It provides a set of 
+pre-coded responses with a neutral midpoint, making it 
+suitable for measuring user perception. 
+The level of each item was determined using the 
+formula: 
+ 
+ 
+𝐻𝑖𝑔ℎ𝑒𝑠𝑡 𝑆𝑐𝑎𝑙𝑒 𝑉𝑎𝑙𝑢𝑒 − 𝐿𝑜𝑤𝑒𝑠𝑡 𝑆𝑐𝑎𝑙𝑒 𝑉𝑎𝑙𝑢𝑒
+𝑁𝑢𝑚𝑏𝑒𝑟 𝑜𝑓 𝑆𝑐𝑎𝑙𝑒 𝐿𝑒𝑣𝑒𝑙𝑠 = 5 − 15 = 0.80 
+ 
+Thus, the interpretation of responses is shown in the 
+table 5. 
+ 
+ 
+ 
+ 
+PAGE 17
+ 
+52 
+   
+ 
+DISCUSSION OF FINDINGS 
+Table 5 
+Likert Scale Interpretation  
+Range Scale Interpretation Descriptions 
+4.21 -
+5.00 5 Strongly Agree 
+The respondents strongly 
+agree with the statement. 
+3.41 -
+4.20 4 Agree 
+The respondents agree with 
+the statement. 
+2.61 – 
+3.40 3 Undecided 
+The respondents are 
+undecided with the 
+statement. 
+1.81 – 
+2.60 2 Disagree 
+The respondents disagree 
+with the statement. 
+1.00 - 
+1.80 1 Strongly Disagree The respondents strongly disagree with the statement. 
+ 
+Computation of Results. The evaluation of the 
+WorkPulse: Employee Attendance and Work Analytics 
+Information System for MVL was based on three key system 
+quality criteria, namely security, performance efficiency, 
+and reliability. These criteria were used to assess the 
+system’s ability to protect employee and organizational 
+data, perform attendance and workforce-related processes 
+efficiently, and operate consistently without errors. Each 
+criterion was measured using multiple statements in the 
+Likert Scale questionnaire. The participants’ responses 
+PAGE 18
+ 
+53 
+   
+ 
+DISCUSSION OF FINDINGS 
+were computed and interpreted to determine the overall 
+quality and effectiveness of the WorkPulse system. 
+To determine the results, the mean was computed for 
+each statement, while the weighted mean was used to obtain 
+the overall rating for each evaluation category. The mean 
+represents the average response of the respondents for each 
+indicator, and the weighted mean represents the overall 
+average for each criterion. 
+The mean is computed using the formula: 
+𝑀 = 𝑓(𝑋1 + 𝑋2 + ⋯ + 𝑋𝑛)𝑛  
+The weighted mean is computed as: 
+𝑊𝑀 = ∑𝑀𝑛  
+Where 𝑀 represents the mean of each statement and 𝑛 
+represents the number of indicators under each criterion. 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+PAGE 19
+ 
+54 
+   
+ 
+DISCUSSION OF FINDINGS 
+Figure 17 
+Weighted Mean per Evaluation Category 
+ 
+Interpretation of Results. The table presents the 
+weighted mean of the WorkPulse: Employee Attendance and 
+Work Analytics Information System for MVL based on the 
+selected evaluation criteria of security, performance 
+efficiency, and reliability. 
+ In terms of security, the system obtained a weighted 
+mean of 4.90, which falls under the “Strongly Agree” 
+interpretation. This indicates that the respondents 
+strongly perceive WorkPulse as capable of protecting user 
+data from unauthorized access, ensuring secure login and 
+
+PAGE 20
+ 
+55 
+   
+ 
+DISCUSSION OF FINDINGS 
+authentication, and maintaining the confidentiality of user 
+information.  
+For performance efficiency, the system achieved a 
+weighted mean of 4.69, also interpreted as “Strongly 
+Agree.” This suggests that the respondents find the system 
+responsive to user actions, capable of performing tasks 
+without delays, and efficient in handling multiple tasks.  
+With regard to reliability, the system obtained a 
+weighted mean of 4.88, interpreted as “Strongly Agree.” 
+This indicates that the respondents strongly agree that 
+WorkPulse operates consistently, produces accurate results, 
+and performs its intended functions as expected. 
+ Overall, the system obtained a weighted mean of 4.82, 
+which is interpreted as “Strongly Agree.” This indicates 
+that the WorkPulse: Employee Attendance and Work Analytics 
+Information System for MVL demonstrates a high level of 
+quality in terms of security, performance efficiency, and 
+reliability, showing that the system was highly evaluated 
+by the respondents based on the selected criteria. 
+ 
+ 

@@ -40,6 +40,7 @@ export function auditPresentation(event) {
     executedAction: meta.fingerprintRecognized ? `Registered fingerprint identified${target}` : 'Fingerprint identification — no registered match',
     detail: 'Fingerprint identification test only. This operation does not record attendance.',
   };
+  if (path === '/attendance/correction') return result('Attendance times corrected', 'Correct attendance times');
   if (path.includes('leave-requests')) {
     if (path.endsWith('/undo-approval')) return result('Leave approval undone', 'Undo leave approval');
     if (path.endsWith('/cancel')) return result('Leave request cancelled', 'Cancel leave request');

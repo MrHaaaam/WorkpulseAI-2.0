@@ -1,0 +1,88 @@
+PAGE 1
+Chapter 4
+CONCLUSIONS AND RECOMMENDATIONS
+This chapter presents conclusions drawn from the findings of WorkPulse: Employee 
+Attendance and Work Analytics Information System for MVL and recommendations for 
+further improvement. User-evaluation results are distinguished from technical testing and 
+biometric performance evidence.
+Conclusions
+1. The study identified inaccurate attendance recording, risks of unauthorized or 
+proxy attendance, inefficient work-hour monitoring, payroll-processing difficulties, and 
+limited employee access to records as major challenges. These findings support the need 
+for centralized workforce information management.
+2. WorkPulse provides centralized employee records for the Regular, Extra, and 
+Manager / Supervisor employee classifications, alongside administrator and employee 
+access groups. The documented functions include fingerprint-based attendance, 
+authorized manual attendance and corrections with required reasons and correction 
+history, employee notifications, leave requests, cash advance management, payroll and 
+payslip summaries, descriptive reporting, and analytical features. Cash advance 
+workflows encompass requests, approval or rejection, confirmation of disbursement, 
+outstanding balances, and repayment tracking. Payroll workflows distinguish Ready to 
+Pay, Carried to Next Period, and Paid statuses. Limited offline saving and 
+synchronization support designated operations but do not make the entire system offline-
+capable.
+3. The reported System Usability Scale (SUS) score was 80.83, interpreted in Chapter 
+3 as Good and Acceptable. This indicates favorable usability feedback from participating 
+respondents; it does not, by itself, establish technical correctness or operational 
+reliability.
+4. The respondent questionnaire reported weighted means of 4.90 for security, 4.69 
+for performance efficiency, and 4.88 for reliability, with an overall weighted mean of 
+PAGE 2
+4.82. All were interpreted as Strongly Agree. These are respondents’ perceptions of 
+system quality, not direct measurements of security, speed, or reliability. Technical test 
+outcomes must be reported and interpreted separately using actual expected-versus-
+observed results.
+5. Fingerprint attendance depends on the configured scanner, its locally installed 
+capture and matching components, and the designated workstation. The study’s 
+fingerprint-performance objective must be concluded using actual genuine and 
+unrecognized scan trials, timing observations, and the documented computation of 
+relevant rates. [INSERT VERIFIED BIOMETRIC RESULTS: trial counts, valid 
+comparisons, false acceptances, false rejections, failed captures, processing times, and 
+corresponding rates.] No numerical biometric performance conclusion is asserted without 
+those records.
+6. WorkPulse has operational limitations. Fresh authentication, server-side approvals, 
+fingerprint transactions, and payment-related actions require their applicable online 
+services or local workstation components. Offline queues and cached views are limited 
+and may contain outdated records; queued actions require synchronization and server 
+revalidation. When the fingerprint workstation or device is unavailable, the approved 
+fallback is verified administrator manual attendance with a documented reason, 
+correction history, and employee notification; a paper attendance record may be used 
+until authorized entry is possible.
+Recommendations
+1. Conduct broader fingerprint-reader and workstation compatibility tests under 
+different device conditions. Maintain documented workstation recovery steps, reader 
+diagnostics, and a paper-to-authorized-manual-attendance fallback procedure for device 
+failure.
+2. Improve attendance monitoring beyond the existing daily/date-range filters and 
+basic summaries by adding exception-focused views, correction review tools, clearer 
+source indicators, and configurable alerts for unusual or unresolved attendance records.
+3. Extend payroll and cash advance reporting with reconciliation views, repayment 
+histories, carried-balance audit trails, and clearer employee-facing breakdowns. Verify 
+PAGE 3
+that settled payroll records cannot be altered by attendance corrections without an 
+approved controlled process.
+4. Enhance the existing employee notification feature through configurable 
+notification preferences, clearer delivery status, and optional additional delivery channels, 
+subject to consent and data-protection requirements.
+5. Further evaluate and refine existing descriptive and AI-assisted analytical functions 
+using sufficient relevant data, documented model versions and performance measures 
+where trained models are active, and explicit labels when statistical fallback is used. Do 
+not treat forecasts as automatic personnel or payroll decisions.
+6. Conduct extended outage, synchronization, and recovery tests, including duplicate 
+submissions, stale cached data, local-storage failures, unauthorized access, and 
+interrupted connectivity. Record expected and observed outcomes before drawing 
+technical reliability conclusions.
+7. Complete and report biometric evaluation using actual enrollment and scan-trial 
+evidence, including genuine and unrecognized trials, failed captures, measured response 
+times, and clearly defined FAR/FRR denominators. Expand testing only with appropriate 
+consent and privacy safeguards.
+8. Preserve complete supporting materials, including respondent questionnaires, SUS 
+scoring sheets, item-level Likert calculations, technical test logs, biometric evaluation 
+records, and current deployment screenshots, as appendices or verifiable project 
+evidence.
+Evidence required before final submission
+The uploaded Chapter 4 and previously shared Chapter 3 report survey scores but do 
+not provide verified biometric trial counts or complete technical test logs. Replace the 
+bracketed biometric placeholder and substantiate technical conclusions only after 
+reviewing the actual evidence. Confirm that every feature described as implemented is 
+present in the final tested deployment.

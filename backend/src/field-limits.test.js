@@ -29,8 +29,8 @@ test('number editing supports decimals and deletion, blocks huge values, exponen
 });
 
 test('settings server validation rejects invalid payroll values', () => {
-  const settings = { payroll: { hourlyRates: { regular: 10000, extra: 1.25, manager: 80, supervisor: 70 } } };
+  const settings = { payroll: { hourlyRates: { regular: 10000, extra: 1.25, manager: 80 } } };
   assert.equal(settingsNumbersValidationError(settings), null);
   for (const regular of [0, -1, 10000.01, 10.001, '', null, 1e60]) assert.ok(settingsNumbersValidationError({ ...settings, payroll: { hourlyRates: { ...settings.payroll.hourlyRates, regular } } }));
-  for (const role of ['manager', 'supervisor']) assert.ok(settingsNumbersValidationError({ ...settings, payroll: { hourlyRates: { ...settings.payroll.hourlyRates, [role]: 0 } } }));
+  for (const role of ['manager']) assert.ok(settingsNumbersValidationError({ ...settings, payroll: { hourlyRates: { ...settings.payroll.hourlyRates, [role]: 0 } } }));
 });

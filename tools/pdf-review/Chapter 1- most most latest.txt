@@ -1,0 +1,508 @@
+PAGE 1
+ 
+ 
+  
+WORKPULSE: EMPLOYEE ATTENDANCE AND WORK ANALYTICS  
+INFORMATION SYSTEM FOR MVL  
+  
+A Capstone Project Presented to the Faculty of the  
+College of Information Technology Education  
+PHINMA – University of Pangasinan  
+  
+In Partial Fulfillment of the 
+Requirements for the Degree  
+BACHELOR OF SCIENCE IN INFORMATION TECHNOLOGY  
+ 
+ by  
+  
+EGGY JOY F. MARTIN  
+EMMANUEL P. DEOCARES  
+JERWIN CLAUS J. PARAGAS 
+ BRYAN P. PALSIMON  
+ALFONSO R. BAUTISTA III  
+  
+March 2026  
+    
+PAGE 2
+ 
+1  
+      
+  
+INTRODUCTION 
+  
+Chapter 1 
+INTRODUCTION 
+Background of the Study  
+Employee attendance and work information management is 
+a vital component of organizational operations, as it 
+directly affects productivity, accountability, and decision-
+making. Globally, organizations are increasingly adopting 
+digital and analytics-driven human resource systems to 
+replace manual and outdated attendance methods that often 
+result in errors, inefficiencies, and limited access to 
+actionable insights. Recent literature highlights that the 
+integration of biometric-based system is revolutionizing 
+human resource management by enhancing operational 
+efficiency, minimizing labor-related inefficiencies, and 
+eliminating the administrative burdens of traditional 
+tracking methods (ljiga et al., 2025). Modern workforce 
+analytics systems enable organizations to record attendance 
+accurately, monitor work patterns, and generate data-driven 
+reports that support effective human resource management.  
+Despite these global advancements, studies reveal that 
+many organizations still rely on disconnected or partly 
+manual processes to manage employee information, attendance, 
+PAGE 3
+ 
+2  
+      
+  
+INTRODUCTION 
+  
+leave, and payroll. These practices often result in 
+inconsistent records, delayed approvals, limited employee 
+transparency, inefficient reporting, and weak 
+accountability. Basic systems may also lack appropriate 
+authentication, authorization, audit logging, and protection 
+for sensitive employee information, which can compromise 
+employee trust and organizational credibility. 
+Furthermore, traditional payroll and security systems 
+such as manual logs or PIN codes contribute heavily to human 
+error and unauthorized entry, explicitly highlighting the 
+critical need for biometric verification to eliminate proxy 
+attendance practices like "buddy punching" (International 
+Journal of Science and Research Archive, 2026). 
+In the Philippine context, organizations are rapidly 
+transitioning toward digital transformation in response to 
+the growing demand for efficient, transparent, and 
+technology-driven workplace systems. The Philippine HR 
+technology market is experiencing significant growth as 
+employers increasingly rely on cloud-based platforms and 
+digital portals for faster, more efficient workforce 
+processing (IMARC Group, 2025). This push for digitalization 
+is evident even at the national level, with recent milestone 
+PAGE 4
+ 
+3  
+      
+  
+INTRODUCTION 
+  
+initiatives like the Philippine Civil Service Modernization 
+Project launched in late 2025, which seeks to harness 
+digital tools to automate human resource and payroll systems 
+for better efficiency and transparency (Civil Service 
+Commission, 2025). 
+However, many private and local organizations continue 
+to face challenges such as fragmented attendance records, 
+inefficient monitoring of work hours, and limited analytical 
+capability. A centralized and secure workforce information 
+management system is therefore needed to improve record 
+management, administrative workflows, employee access, and 
+data-supported decision-making.  
+In response to these challenges, this study proposes 
+WorkPulse, a secure web-based workforce information 
+management system with integrated fingerprint-based 
+attendance verification. The project aims to centralize 
+employee, attendance, leave, and payroll records while 
+providing strict role-based access restricted to 
+administrators and employees. By utilizing a fingerprint 
+scanner to verify employee identity during time-in and time-
+out, the system ensures that attendance records are tightly 
+associated with the correct employee, improving identity 
+PAGE 5
+ 
+4  
+      
+  
+INTRODUCTION 
+  
+assurance and operational integrity. Data is securely 
+managed using a cloud-hosted MongoDB Atlas platform to 
+ensure structured, accessible, and continuous data storage. 
+This study aligns with Sustainable Development Goal (SDG) 8: 
+Decent Work and Economic Growth by promoting fair labor 
+practices, and SDG 9: Industry, Innovation, and 
+Infrastructure by integrating digital analytics and secure 
+hardware solutions into organizational process.  
+Statement of the Problem  
+Many organizations manage employee information, 
+attendance, leave, and payroll through disconnected or 
+partly manual processes. These practices often lead to 
+inaccurate records, lack of transparency, inefficient 
+workforce planning, and weak security controls that may 
+expose sensitive employee data.  
+In view of the foregoing, this study seeks to answer the 
+following questions:  
+1. What challenges are encountered in managing employee 
+information, attendance, leave, and payroll through 
+current manual or fragmented processes? 
+PAGE 6
+ 
+5  
+      
+  
+INTRODUCTION 
+  
+2. What functional and security requirements should 
+WorkPulse provide for administrators and employees? 
+3. How can the system centralize workforce records and 
+support attendance monitoring, leave processing, 
+payroll workflows, and employee self-service? 
+4. How acceptable is the developed system in terms of 
+functional suitability, usability, performance 
+efficiency, reliability, and security? 
+5. How accurately and reliably does the integrated 
+fingerprint verification authenticate employee 
+attendance? 
+Objectives of the Study  
+The primary objective of this study is to design, 
+develop, and evaluate a secure web-based workforce 
+information management system that centralizes employee, 
+attendance, leave, and payroll records using MongoDB Atlas; 
+provides role-based administrator and employee services; and 
+enforces fingerprint-based attendance verification. 
+The specific objectives of this study are:  
+PAGE 7
+ 
+6  
+      
+  
+INTRODUCTION 
+  
+1. To identify problems and requirements in existing 
+employee information, attendance, leave, and payroll 
+processes. 
+2. To develop a centralized web-based system 
+integrated with a MongoDB Atlas cloud database for employee 
+records, attendance monitoring, leave management, and 
+payroll workflows. 
+3. To implement separate administrator and employee 
+access based on authenticated roles and record ownership. 
+4. To provide an employee portal for viewing 
+personal information, attendance, payroll, and leave 
+records and for submitting leave requests. 
+5. To implement appropriate security controls, 
+including authentication, authorization, session 
+management, request protection, input validation, and audit 
+logging. 
+6. To generate descriptive dashboards and reports 
+from stored workforce records. 
+7. To evaluate the system using defined software-
+quality criteria and test procedures. 
+PAGE 8
+ 
+7  
+      
+  
+INTRODUCTION 
+  
+8. To integrate and evaluate fingerprint-based time-
+in and time-out verification using measured biometric 
+performance and usability results. 
+Scope and Delimitation  
+This study covers the design and development of 
+WorkPulse, as a responsive, web-based workforce information 
+management system utilizing a cloud-hosted MongoDB Atlas 
+database. The scope includes an attendance kiosk equipped 
+with a fingerprint scanner that allows employees to perform 
+time-in and time-out through biometric identity 
+verification, preventing unauthorized clock-ins. The system 
+also encompasses administrator and employee authentication 
+(via email OTP), role-based access control, employee 
+information management, an employee self-service portal, 
+attendance-record monitoring, leave-request processing, 
+payroll workflows, and system settings. The system features 
+descriptive dashboards and security audit event logging. 
+Account roles are strictly limited to administrators and 
+regular employees, with no separate portal for HR or middle 
+management. 
+However, the system has specific delimitations. The 
+fingerprint-based attendance feature is limited to the 
+PAGE 9
+ 
+8  
+      
+  
+INTRODUCTION 
+  
+specific fingerprint scanner hardware supported and 
+configured for the system; it does not include facial 
+recognition or webcam-based attendance verification. 
+Furthermore, the system provides descriptive workforce 
+analytics but does not provide a complete measurement of 
+employee productivity. Finally, the deployed system depends 
+on its configured server, internet connectivity for cloud 
+database synchronization with MongoDB Atlas, and email 
+services; mobile access depends on network deployment and 
+browser compatibility. 
+Significance of the Study  
+This study aims to contribute to improved workforce 
+management and organizational efficiency. The system may 
+benefit the following: 
+Administrators and Management. Administrators can 
+efficiently track verifiable employee attendance, manage 
+leave approvals, process payroll workflows, and make 
+informed decisions using centralized data dashboards hosted 
+on a scalable cloud database. The system helps centralize 
+workforce records, reduce repetitive administrative work, 
+and provides a highly reliable method of confirming physical 
+attendance through biometric integration.   
+PAGE 10
+ 
+9  
+      
+  
+INTRODUCTION 
+  
+Employees. Employees benefit from accurate attendance 
+records, fair evaluations, and an intuitive self-service 
+portal where they can view their own authorized records, 
+monitor their payroll, and submit leave requests, improving 
+transparency.  
+IT Practitioners and Developers. IT Practitioners and 
+Developers: The project demonstrates biometric hardware 
+integration, cloud database integration using MongoDB Atlas, 
+authentication, authorization, audit logging, multi-factor 
+authentication (MFA), and other security controls relevant 
+to modern web-based workforce systems. 
+Future Researchers. The system provides a foundation 
+for future studies involving biometric attendance 
+integration, cloud-based workforce analytics, privacy-aware 
+management systems, and the evaluation of Al-assisted 
+administrative tools. 
+Definition of Terms  
+This section presents the operational definitions of 
+key terms used in this study to provide clarity and ensure a 
+common understanding, the following  terms are operationally 
+defined as used in this study: 
+PAGE 11
+ 
+10  
+      
+  
+INTRODUCTION 
+  
+Authentication. The process of verifying the identity 
+of a user before allowing access to the WorkPulse system. 
+Authorization. The process of determining the 
+functions, records, and resources that an authenticated user 
+is permitted to access based on their assigned role and 
+ownership of information. 
+Cloud Database. A database hosted on remote internet-
+connected infrastructure that allows data to be stored, 
+managed, and accessed through cloud services. In this study, 
+WorkPulse uses a cloud-hosted database for workforce 
+records. 
+Dashboard. A visual interface that presents summarized 
+workforce information through organized displays, 
+indicators, and reports to assist administrators in 
+monitoring and decision-making. 
+Descriptive Analytics. The process of summarizing and 
+presenting stored workforce data through dashboards, 
+reports, counts, and other descriptive information to 
+support administrative monitoring and decision-making 
+without predicting future outcomes. 
+PAGE 12
+ 
+11  
+      
+  
+INTRODUCTION 
+  
+Employee. An authorized regular user of WorkPulse who 
+can access personal workforce information, including 
+attendance, payroll, and leave records, and submit leave 
+requests through the employee portal. 
+Employee Portal. A role-restricted interface that 
+allows employees to access their authorized personal 
+information, attendance records, payroll information, and 
+leave records, as well as submit leave requests. 
+Fingerprint Scanner. A biometric hardware device 
+integrated into WorkPulse to capture an employee's 
+fingerprint for identity verification during attendance 
+transactions. 
+Fingerprint Verification. The process of verifying an 
+employee's identity using a scanned fingerprint before 
+recording a time-in or time-out attendance transaction. 
+Leave Management. The process of submitting, reviewing, 
+approving, and recording employee leave requests through the 
+WorkPulse system. 
+MongoDB Atlas. A cloud-hosted database platform used by 
+WorkPulse to store and manage employee, attendance, leave, 
+payroll, and other workforce-related records. 
+PAGE 13
+ 
+12  
+      
+  
+INTRODUCTION 
+  
+Multi-Factor Authentication (MFA). An authentication 
+approach that uses more than one method or factor to verify 
+a user's identity. In WorkPulse, email One-Time Password 
+(OTP) authentication is incorporated as an additional 
+security measure for user access. 
+One-Time Password (OTP). A temporary verification code 
+sent through an authorized email address and used to confirm 
+a user's identity during the authentication process. 
+Payroll Workflow. The processes involved recording, 
+managing, monitoring, and processing employee payroll-
+related information within WorkPulse. 
+Role-Based Access Control (RBAC). A security mechanism 
+that restricts system access according to the user's 
+assigned role. In WorkPulse, access is primarily divided 
+between administrators and regular employees. 
+Security Audit Logging. The recording of significant 
+system activities and security-related events to support 
+monitoring, accountability, and investigation of system 
+activities. 
+ 
+PAGE 14
+ 
+13  
+      
+  
+INTRODUCTION 
+  
+Session Management. The processes used to create, 
+validate, maintain, and terminate authenticated user 
+sessions to help prevent unauthorized access to the system. 
+Time-In and Time-Out. The recording of an employee's 
+beginning and ending work times. In WorkPulse, these 
+attendance transactions are verified through the integrated 
+fingerprint scanner. 
+Web-Based Workforce Information Management System. A 
+software system accessed through a web browser that manages 
+employee-related information and workforce processes. In 
+this study, it refers specifically to WorkPulse and its 
+functions for employee records, attendance, leave, payroll, 
+authentication, reporting, and security. 
+Workforce Information Management. The organized 
+collection, storage, processing, and management of employee-
+related information, including attendance, leave, payroll, 
+and other workforce records within a centralized system. 
+WorkPulse. The secure web-based workforce information 
+management system developed in this study to centralize 
+employee, attendance, leave, and payroll records while 
+providing role-based access and fingerprint-based attendance 
+verification. 
+PAGE 15
+ 
+14  
+      
+  
+INTRODUCTION 
+  
+Attendance Monitoring. Refers to the process of 
+viewing, tracking, and managing employee attendance records, 
+including Time-In and Time-Out information, within the 
+WorkPulse system. 
+Audit Logging. Refers to the recording of important 
+system and user activities to provide accountability and 
+support security review. 
+Cloud-Based Data Storage. Refers to the storage of 
+employee profiles, attendance records, leave information, 
+payroll records, company preferences, and audit-related 
+records using a cloud-hosted database. 
+Data Validation. Refers to the process of checking and 
+verifying information entered into the system to help 
+prevent invalid or incorrect data entries. 
+Employee Information Management. Refers to the 
+centralized management and organization of employee 
+information and workforce records by authorized 
+administrators. 
+Employee Self-Service Portal. Refers to the employee-
+accessible section of the system where users can view their 
+PAGE 16
+ 
+15  
+      
+  
+INTRODUCTION 
+  
+authorized personal information, attendance records, payroll 
+information, and leave records. 
+Fingerprint-Based Attendance. Refers to the use of a 
+fingerprint scanner to verify an employee's identity before 
+creating a Time-In or Time-Out attendance record. 
+Leave Management. Refers to the system process that 
+allows employees to submit leave requests and enables 
+administrators to review, process, and manage leave 
+information. 
+Payroll Management. Refers to the system's processes 
+for managing and storing payroll-related information 
+associated with employee records. 
+Payroll Summary/Payslip View. Refers to the feature 
+that allows employees to access their authorized payroll 
+summaries or payslip-related information through the 
+employee portal. 
+Role-Based Access Control (RBAC). Refers to the 
+security mechanism that assigns system access and available 
+functions according to the user's assigned role, such as 
+Administrator or Employee. 
+PAGE 17
+ 
+16  
+      
+  
+INTRODUCTION 
+  
+Secure Authentication. Refers to the security process 
+used to verify a user's identity through authentication 
+controls such as password authentication and email One-Time 
+Password (OTP) verification. 
+System Usability Scale (SUS). Refers to the 
+standardized questionnaire used to evaluate the overall 
+usability of the WorkPulse system using ten statements rated 
+on a five-point scale. 
+Workforce Analytics Dashboard. Refers to the system 
+feature that presents workforce information through counts, 
+rates, tables, charts, and reports to assist administrators 
+in understanding organizational data. 
+Weighted Mean. Refers to the computed overall average 
+used to determine the rating for each system evaluation 
+criterion based on the respondents' ratings. 
+Biometric Verification. Refers to the process of 
+verifying an employee’s identity using unique biometric 
+information, such as a fingerprint, before recording an 
+attendance transaction. 
+PAGE 18
+ 
+17  
+      
+  
+INTRODUCTION 
+  
+Encryption. Refers to a security measure that protects 
+information by converting data into a form that cannot be 
+easily understood or accessed by unauthorized users. 
+Performance Efficiency. Refers to the system’s ability 
+to perform its intended functions efficiently, respond to 
+user actions, and process tasks without unnecessary delays. 
+Predictive Insights. Refers to information or possible 
+trends that may be generated through the analysis of 
+workforce data to support planning and decision-making. 
+System Enhancement. Refers to the improvement or 
+addition of features, functions, security measures, or other 
+capabilities to further improve the WorkPulse system. 
+System Evaluation. Refers to the process of assessing 
+the WorkPulse system based on selected criteria such as 
+usability, security, performance efficiency, and 
+reliability. 
+System Quality. Refers to the overall quality of the 
+WorkPulse system as determined through its usability, 
+security, performance efficiency, and reliability evaluation 
+results. 
+PAGE 19
+ 
+18  
+      
+  
+INTRODUCTION 
+  
+Workforce Planning. Refers to the use of workforce 
+information and analytics to support organizational planning 
+and decision-making related to employees and work 
+activities. 
+ 

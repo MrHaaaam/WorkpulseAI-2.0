@@ -1,3 +1,4 @@
+import { employeeRole } from '../../shared/employee-roles.js';
 import crypto from 'node:crypto';
 import mongoose from 'mongoose';
 import { getSystemControls } from './system-controls.js';
@@ -124,7 +125,7 @@ export async function authenticate(req, res, next) {
       const controls = await getSystemControls(db);
       if (controls.maintenanceMode) return res.status(503).json({ error: 'WORKPULSE MVL is temporarily available to administrators only while maintenance is in progress.' });
     }
-    req.auth = { actor, session, accountType, tokenSource: requestToken.source };
+    req.auth = { actor: { ...actor, role: employeeRole(actor.role) }, session, accountType, tokenSource: requestToken.source };
     next();
   } catch { res.status(401).json({ error: 'Authentication failed' }); }
 }

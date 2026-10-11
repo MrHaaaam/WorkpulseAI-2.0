@@ -28,7 +28,7 @@ export function identifiersValidationError(identifiers) {
   return null;
 }
 export function settingsNumbersValidationError(settings) {
-  for (const type of ['regular', 'extra', 'manager', 'supervisor']) {
+  for (const type of ['regular', 'extra', 'manager']) {
     if (!validBoundedNumber(settings?.payroll?.hourlyRates?.[type], 1, HOURLY_RATE_MAX)) return 'Hourly rates must be from 1 to 10,000 with at most 2 decimal places.';
   }
   return null;

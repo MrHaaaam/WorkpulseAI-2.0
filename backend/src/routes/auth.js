@@ -1,3 +1,4 @@
+import { employeeRole } from '../../../shared/employee-roles.js';
 import { LOGIN_PASSWORD_MAX, validPasswordCharacters, passwordValidationError } from '../../../shared/password-policy.js';
 import { validEmail } from '../input-validation.js';
 import { createLoginCooldown } from '../login-cooldown.js';
@@ -116,7 +117,7 @@ router.post('/login', async (request, response) => {
       await db.collection('admin_sessions').insertOne({ tokenDigest: crypto.createHash('sha256').update(token).digest('hex'), csrfDigest: csrf.tokenDigest, accountId: account._id, accountType, otpBypassed: true, createdAt, expiresAt });
       setSessionCookie(response, token);
       await auditEvent({ req: request, actor: account, action: 'auth.login', targetType: 'session', outcome: 'success', metadata: { otpBypassed: true } });
-      return response.json({ authenticated: true, csrfToken: csrf.token, role: account.role, accountType, mustChangePassword: false, expiresAt: expiresAt.toISOString() });
+      return response.json({ authenticated: true, csrfToken: csrf.token, role: employeeRole(account.role), accountType, mustChangePassword: false, expiresAt: expiresAt.toISOString() });
     }
     if (!emailConfigured()) return response.status(503).json({ error: 'Email OTP is not configured on the server' });
     const otp = String(crypto.randomInt(100000, 1_000_000));
@@ -170,7 +171,7 @@ router.post('/verify-otp', otpLimit, async (request, response) => {
   await auditEvent({ req: request, actor: account, action: 'auth.login', targetType: 'session', outcome: 'success' });
   response.json({
     csrfToken: csrf.token,
-    role: account?.role ?? 'admin',
+    role: employeeRole(account?.role ?? 'admin'),
     accountType,
     mustChangePassword: accountType === 'employee' && account?.mustChangePassword === true,
     expiresAt: expiresAt.toISOString(),
@@ -202,9 +203,10 @@ router.get('/session', async (request, response) => {
   response.json({
     authenticated: true,
     csrfToken: csrf.token,
-    role: account.role,
+    role: employeeRole(account.role),
     accountType,
     mustChangePassword: accountType === 'employee' && account.mustChangePassword === true,
+    offlineOwner: `${accountType}:${String(account._id)}`,
     expiresAt: new Date(Math.min(new Date(session.expiresAt).getTime(), hardExpiry)).toISOString(),
   });
 });
