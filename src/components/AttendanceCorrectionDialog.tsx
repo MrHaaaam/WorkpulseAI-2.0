@@ -6,9 +6,10 @@ import { Input, Textarea } from './ui/Input';
 import { Dialog, DialogClose } from './ui/Dialog';
 import { useToast } from './ui/Toast';
 import { isOffline } from '../lib/offline';
+import { attendanceWindowError, type AttendanceWindow } from '../../shared/attendance-window.js';
 
 type Employee = { id: string; name: string };
-type Preview = { employee: Employee; date: string; sessions: { checkIn: string; checkOut?: string | null }[]; version: string; blockedReason?: string | null };
+type Preview = { employee: Employee; date: string; schedule?: AttendanceWindow; sessions: ({ checkIn: string; checkOut?: string | null } & AttendanceWindow)[]; version: string; blockedReason?: string | null };
 const today = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Manila', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
 function timeInput(value?: string | null) {
   const match = String(value || '').match(/^(\d{1,2}):(\d{2})\s*(AM|PM)?$/i);
@@ -59,6 +60,8 @@ export function AttendanceCorrectionDialog({ initialEmployeeId = '', initialDate
     event.preventDefault(); if (!preview || preview.blockedReason || saving) return;
     setSaving(true); setError('');
     try {
+      const windowError = attendanceWindowError(checkIn, checkOut, { ...preview.schedule, ...preview.sessions[sessionNumber - 1] });
+      if (windowError) throw new Error(windowError);
       const result = await read(await apiFetch('/api/attendance/correction', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ employeeId, date, sessionNumber, checkIn, checkOut, reason, password, version: preview.version }) }));
       if (result.queued) { onClose(); return; }
       onSaved(); toast({ title: 'Attendance updated', description: 'The employee was notified. Unpaid payroll was recalculated.', variant: 'success' }); onClose();
@@ -68,6 +71,7 @@ export function AttendanceCorrectionDialog({ initialEmployeeId = '', initialDate
     }
     finally { setSaving(false); }
   }
+  if (isOffline()) return <Dialog open onClose={onClose}><div className="space-y-4 p-6"><h2 className="text-lg font-semibold">Edit Attendance requires internet</h2><p role="alert" className="text-sm text-slate-600">Existing attendance cannot be edited offline. Use Offline records to capture employee time-in and time-out, then reconnect to sync.</p><Button onClick={onClose}>Close</Button></div></Dialog>;
   return <Dialog open onClose={() => !saving && onClose()} className="flex max-w-2xl flex-col overflow-hidden">
     <div className="flex shrink-0 items-start justify-between gap-3 border-b border-violet-100 bg-gradient-to-br from-violet-50 via-white to-indigo-50 p-5 sm:px-6">
       <div className="flex gap-3"><div className="grid h-12 w-12 shrink-0 place-items-center rounded-2xl bg-violet-600 text-white shadow-lg shadow-violet-200"><Clock3 className="h-6 w-6" /></div><div><p className="text-[10px] font-bold uppercase tracking-[0.18em] text-violet-600">Attendance correction</p><h2 className="mt-1 text-xl font-bold text-slate-900">Edit attendance</h2><p className="mt-1 text-sm text-slate-500">Review the record and update the employee’s times.</p></div></div><DialogClose onClose={() => !saving && onClose()} />

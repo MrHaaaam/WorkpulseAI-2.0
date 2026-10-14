@@ -16,6 +16,8 @@ import { recentAttendanceEvents } from '../recent-attendance.js';
 import { normalizeName, validEmail, validAddress, employeeValidationError } from '../input-validation.js';
 import { checkoutIsChronological } from '../attendance-validation.js';
 import { approvedLeaveCoversDate, manualAttendanceProblem } from '../manual-attendance.js';
+import { inputTime } from '../attendance-corrections.js';
+import { attendanceWindowError } from '../../../shared/attendance-window.js';
 import { clockOutSessions, forcedClockOutUpdate } from '../force-clock-out.js';
 import { activityFilter, auditPresentation } from '../audit-display.js';
 import { loadNotifications } from '../notifications.js';
@@ -462,7 +464,10 @@ registerEmployeeUpdates(router, { getSettings, configuredHourlyRate, preparePayr
 
 router.post('/offline/sync', async (req, res) => {
   try {
+    if (req.auth?.actor?.role !== 'admin') return res.status(403).json({ error: 'Offline synchronization is available to administrators only. Use the employee portal online.' });
     const operation = req.body?.operation;
+    if (operation?.kind !== 'attendance') return res.status(403).json({ error: 'Only administrator attendance records can be synchronized offline.' });
+    if (operation.payload?.captureOnly !== true) return res.status(403).json({ error: 'Offline records can only capture time-in and time-out. Editing existing attendance requires the online Edit Attendance form.' });
     if (operation?.kind === 'attendance') {
       const verification = await verifyAdminPassword(req, req.body?.password);
       if (!verification.valid) {
@@ -2861,6 +2866,9 @@ async function recordManualAttendance(db, { employeeId, action, stamp, settings,
   }
   const problem = manualAttendanceProblem({ action, sessions, workday: scheduledWorkStatus(settings, stamp.date), approvedLeave, maxSessions: MAX_DAILY_ATTENDANCE_SESSIONS });
   if (problem) throw manualAttendanceFailure(problem);
+  const schedule = { workStartTime: settings.shift.startTime, overtimeStopTime: settings.shift.autoClockOutTime, ...(action === 'time-out' ? last : {}) };
+  const windowError = attendanceWindowError(action === 'time-out' ? inputTime(last.checkIn) : inputTime(stamp.time), action === 'time-out' ? inputTime(stamp.time) : '', schedule);
+  if (windowError) throw manualAttendanceFailure(windowError, 400);
   const details = { captureMethod: 'admin-manual', manualReason: 'Scanner unavailable', manualNote: note, manualRecordedBy: actor, manualRecordedByName: actorName || actor };
   if (action === 'time-in' && !existing) {
     const record = { employeeId, name: employee.name, role: employeeRoleLabel(employee.role), date: stamp.date, checkIn: stamp.time, checkOut: null,
@@ -3021,6 +3029,8 @@ router.post('/attendance/kiosk', async (req, res) => {
       return rejectScan(403, 'non-working-day', 'Time-in is unavailable today because this date is marked as a non-working day.');
     }
     if (!existing) {
+      const windowError = attendanceWindowError(inputTime(stamp.time), '', { workStartTime: settings.shift.startTime, overtimeStopTime: settings.shift.autoClockOutTime });
+      if (windowError) return rejectScan(400, 'outside-schedule', windowError);
       const record = {
         employeeId, name: employee.name, role: employeeRoleLabel(employee.role),
         date: stamp.date, checkIn: stamp.time, checkOut: null,
@@ -3053,6 +3063,9 @@ router.post('/attendance/kiosk', async (req, res) => {
 
     const sessions = attendanceSessions(existing);
     const lastSession = sessions.at(-1);
+    const clockingOut = Boolean(lastSession && !lastSession.checkOut);
+    const windowError = attendanceWindowError(clockingOut ? inputTime(lastSession.checkIn) : inputTime(stamp.time), clockingOut ? inputTime(stamp.time) : '', { workStartTime: settings.shift.startTime, overtimeStopTime: settings.shift.autoClockOutTime, ...(clockingOut ? lastSession : {}) });
+    if (windowError) return rejectScan(400, 'outside-schedule', windowError);
     const versionFilter = { _id: existing._id, ...(existing.updatedAt ? { updatedAt: existing.updatedAt } : {}) };
     let action;
     let update;

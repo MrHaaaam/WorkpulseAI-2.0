@@ -40,6 +40,8 @@ export async function deleteOfflineItem(id: string) {
   await transaction('queue', 'readwrite', store => store.delete(id)); offlineChanged();
 }
 export async function queueOffline(kind: OfflineKind, payload: Record<string, unknown>, id: string = crypto.randomUUID()) {
+  if (sessionStorage.getItem('workpulse_role') !== 'admin' || kind !== 'attendance') throw new Error('Offline attendance is available to administrators only. Employee portal actions require an internet connection.');
+  if (payload.captureOnly !== true) throw new Error('Editing existing attendance requires internet. Use Offline records to capture employee time-in and time-out.');
   const owner = offlineOwner();
   if (!owner) throw new Error('Connect and sign in once to prepare offline storage for this account.');
   const expires = Date.parse(sessionStorage.getItem('workpulse_session_expires') || '');
@@ -53,6 +55,7 @@ export async function queueOffline(kind: OfflineKind, payload: Record<string, un
 }
 const cacheable = (path: string) => /^\/api\/(?:employees$|attendance(?:\?|$|\/manual$|\/correction\?)|employee\/me$|employee\/me\/(?:calendar\?|notifications$))/.test(path);
 export async function cacheRead(path: string, value: unknown, owner = offlineOwner()) {
+  if (sessionStorage.getItem('workpulse_role') !== 'admin') return;
   if (!owner || owner !== offlineOwner() || !cacheable(path)) return;
   // The directory API can contain account fields; offline attendance only needs these.
   if (path === '/api/employees' && Array.isArray(value)) value = value.map(({ id, name, role, status, createdAt }) => ({ id, name, role, status, createdAt }));
@@ -62,6 +65,7 @@ export async function cacheRead(path: string, value: unknown, owner = offlineOwn
   for (const old of records.slice(150)) await transaction('reads', 'readwrite', store => store.delete(old.id));
 }
 export async function cachedRead(path: string) {
+  if (sessionStorage.getItem('workpulse_role') !== 'admin') return undefined;
   if (!offlineOwner() || !cacheable(path)) return undefined;
   const cached = await transaction<CachedRead | undefined>('reads', 'readonly', store => store.get(`${offlineOwner()}:${path}`));
   if (!cached || Date.now() - cached.savedAt > 7 * 24 * 60 * 60 * 1000) return undefined;
@@ -72,16 +76,9 @@ export async function clearOfflineReads(owner: string) {
   for (const item of records.filter(item => item.owner === owner)) await transaction('reads', 'readwrite', store => store.delete(item.id));
 }
 export function offlineOperation(path: string, method: string, body: unknown): { kind: OfflineKind; payload: Record<string, unknown> } | null {
+  if (sessionStorage.getItem('workpulse_role') !== 'admin') return null;
   if (!body || typeof body !== 'object' || Array.isArray(body)) return null;
   const payload = { ...body } as Record<string, unknown>;
-  if (path === '/api/attendance/correction' && method === 'PATCH') { delete payload.password; return { kind: 'attendance', payload }; }
-  if (path === '/api/employee/me/leave-requests' && method === 'POST') {
-    const capturedOn = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Manila', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
-    return { kind: 'leave', payload: { ...payload, capturedOn } };
-  }
-  if (path === '/api/employee/me/cash-advance-requests' && method === 'POST') {
-    const date = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Manila', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
-    return { kind: 'cash-advance', payload: { ...payload, requestPeriod: `${date.slice(0, 7)}-${Number(date.slice(8, 10)) <= 15 ? '01' : '16'}` } };
-  }
+  if (path === '/api/attendance/correction' && method === 'PATCH' && payload.captureOnly === true) { delete payload.password; return { kind: 'attendance', payload }; }
   return null;
 }

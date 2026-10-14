@@ -27,7 +27,7 @@ function matches(record, filter) {
   return Object.entries(filter).every(([key, value]) => value && typeof value === 'object' && '$exists' in value ? (record[key] !== undefined) === value.$exists : value && typeof value === 'object' && '$in' in value ? value.$in.includes(record[key]) : JSON.stringify(record[key]) === JSON.stringify(value));
 }
 function database({ attendance = [], payroll = [], leave = [], failNotification = false, conflict = false, payrollConflict = false } = {}) {
-  let data = structuredClone({ attendance, payroll_requests: payroll, leave_requests: leave, idle_days: [], employees: [{ id: 'E1', name: 'Alex', role: 'regular', status: 'active' }], employee_notifications: [] });
+  let data = structuredClone({ attendance, payroll_requests: payroll, leave_requests: leave, idle_days: [], offline_operations: [], employees: [{ id: 'E1', name: 'Alex', role: 'regular', status: 'active' }], employee_notifications: [] });
   function update(record, mutation) {
     Object.assign(record, mutation.$set ?? {});
     for (const key of Object.keys(mutation.$unset ?? {})) delete record[key];
@@ -213,10 +213,27 @@ test('stale previews and concurrent scans cannot be overwritten', async () => {
   await assert.rejects(correctAttendance(db, { ...options, version: attendanceVersion(original) }), /changed during/);
   assert.deepEqual(db.data.attendance, [original]); assert.equal(db.data.employee_notifications.length, 0);
 });
+test('offline capture conflicts explain current sessions and preserve employee scans', async () => {
+  for (const checkOut of [null, '05:00 PM']) {
+    const original = { _id: 'a1', employeeId: 'E1', date: options.date, sessions: [{ checkIn: '11:13 AM', checkOut }] };
+    const db = database({ attendance: [original] });
+    const before = structuredClone(db.data);
+    await assert.rejects(correctAttendance(db, { ...options, captureOnly: true, operationKey: 'offline-test', operationHash: 'test' }), error => {
+      assert.match(error.message, /Attendance sync blocked for E1/);
+      assert.match(error.message, /Session 1: 11:13 AM/);
+      assert.ok(error.message.includes(checkOut || 'Open (not yet timed out)'));
+      assert.match(error.message, /were not overwritten, and no new session was created/);
+      assert.match(error.message, /Open Edit Attendance/);
+      return true;
+    });
+    assert.deepEqual(db.data, before);
+  }
+});
+
 test('overnight shifts use next-day timestamps and cannot overlap adjacent attendance', async () => {
   const db = database();
-  await correctAttendance(db, { ...options, checkIn: '22:00', checkOut: '06:00' });
+  await correctAttendance(db, { ...options, checkIn: '22:00', checkOut: '06:00', getSessionDefaults: async () => ({ ...defaults, workStartTime: '22:00', overtimeStopTime: '06:00' }) });
   assert.equal(db.data.attendance[0].sessions[0].checkOutAt.toISOString(), '2026-10-09T22:00:00.000Z');
   const previous = database({ attendance: [{ _id: 'a-prev', employeeId: 'E1', date: '2026-10-08', sessions: [{ checkIn: '10:00 PM', checkOut: '06:00 AM' }] }] });
-  await assert.rejects(correctAttendance(previous, { ...options, checkIn: '05:00', checkOut: '12:00' }), /adjacent date/);
+  await assert.rejects(correctAttendance(previous, { ...options, checkIn: '05:00', checkOut: '12:00', getSessionDefaults: async () => ({ ...defaults, workStartTime: '04:00' }) }), /adjacent date/);
 });

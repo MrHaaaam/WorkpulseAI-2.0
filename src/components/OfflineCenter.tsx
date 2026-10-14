@@ -6,6 +6,7 @@ import { Dialog, DialogClose, DialogHeader } from './ui/Dialog';
 import { Input } from './ui/Input';
 import { Button } from './ui/Button';
 import { useToast } from './ui/Toast';
+import { attendanceWindowError } from '../../shared/attendance-window.js';
 
 const manilaDate = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Manila', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
 const manilaTime = () => new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Manila', hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date());
@@ -20,12 +21,21 @@ export function OfflineCenter() {
   const [searchDraft, setSearchDraft] = useState('');
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
-  const [kindFilter, setKindFilter] = useState('all');
   const [recordDate, setRecordDate] = useState('');
   const [captureOpen, setCaptureOpen] = useState(false);
+  const [discardItem, setDiscardItem] = useState<OfflineItem | null>(null);
+  const [discardError, setDiscardError] = useState('');
+  const [discarding, setDiscarding] = useState(false);
   const [role, setRole] = useState(sessionStorage.getItem('workpulse_role') || '');
   const [now, setNow] = useState(Date.now);
   const [shellReady, setShellReady] = useState(Boolean(navigator.serviceWorker?.controller));
+  useEffect(() => {
+    const updateDate = () => setDate(manilaDate());
+    const timer = window.setInterval(updateDate, 1000);
+    window.addEventListener('focus', updateDate);
+    document.addEventListener('visibilitychange', updateDate);
+    return () => { clearInterval(timer); window.removeEventListener('focus', updateDate); document.removeEventListener('visibilitychange', updateDate); };
+  }, []);
   const refresh = useCallback(async () => {
     setOffline(isOffline()); setRole(sessionStorage.getItem('workpulse_role') || '');
     setNow(Date.now());
@@ -35,7 +45,7 @@ export function OfflineCenter() {
   }, []);
   const pending = items.filter(item => item.status !== 'synced');
   const sync = useCallback(async (includeAttendance = false) => {
-    if (syncing.current || !navigator.onLine || !offlineOwner()) return;
+    if (syncing.current || !navigator.onLine || !offlineOwner() || sessionStorage.getItem('workpulse_role') !== 'admin') return;
     syncing.current = true; setBusy(true);
     const owner = offlineOwner(); let saved = 0; let rejected = 0;
     try {
@@ -52,11 +62,11 @@ export function OfflineCenter() {
         const result = await response.json().catch(() => ({}));
         if ([401, 429].includes(response.status)) throw new Error(result.error || 'Sign in again to synchronize.');
         if (response.status >= 500) throw new Error(result.error || 'Server unavailable. Local records are retained.');
-        if (!response.ok) { await updateOfflineItem({ ...attemptedItem, status: 'review', error: result.error || 'Server validation rejected this record.' }); rejected++; continue; }
+        if (!response.ok) { const error = result.error || 'Server validation rejected this record.'; await updateOfflineItem({ ...attemptedItem, status: 'review', error }); rejected++; continue; }
         await updateOfflineItem({ ...attemptedItem, status: 'synced', error: undefined }); saved++;
       }
       if (saved) { toast({ title: `${saved} local record${saved === 1 ? '' : 's'} synchronized`, description: 'Accepted by the server. Refresh the affected page to see the saved records.', variant: 'success' }); window.dispatchEvent(new Event('workpulse-synced')); }
-      if (rejected) toast({ title: 'Some records need review', description: 'Open Offline records to see the server validation errors. Rejected records were not applied.', variant: 'error' });
+      if (rejected) { setOpen(true); toast({ title: `${rejected} offline record${rejected === 1 ? '' : 's'} not applied`, description: 'Review the error shown on each local record. Existing server attendance was not overwritten.', variant: 'error' }); }
     } catch (cause) {
       if (cause instanceof TypeError || !navigator.onLine) connectionChanged(false);
       toast({ title: 'Synchronization paused', description: cause instanceof Error ? cause.message : 'Reconnect and retry. Your local records are retained.', variant: 'error' });
@@ -68,7 +78,7 @@ export function OfflineCenter() {
     queueMicrotask(() => { void refresh(); });
     const changed = () => { void refresh(); };
     const online = () => { connectionChanged(true); void syncRef.current(false); };
-    const offline = () => { connectionChanged(false); toast({ title: 'Offline mode', description: 'Supported records can be saved locally. Payments, approvals and fingerprint matching require internet.', variant: 'info' }); };
+    const offline = () => { connectionChanged(false); toast({ title: sessionStorage.getItem('workpulse_role') === 'admin' ? 'Offline mode' : 'Internet connection required', description: sessionStorage.getItem('workpulse_role') === 'admin' ? 'Administrator attendance can be saved locally. Payments, approvals and fingerprint matching require internet.' : 'The employee portal requires internet. Leave and cash advance requests cannot be saved offline.', variant: 'info' }); };
     const toastEvent = (event: Event) => toast((event as CustomEvent).detail);
     const show = () => { setOpen(true); void refresh(); };
     window.addEventListener('workpulse-offline-change', changed); window.addEventListener('online', online); window.addEventListener('offline', offline); window.addEventListener('workpulse-offline-toast', toastEvent);
@@ -92,6 +102,7 @@ export function OfflineCenter() {
       if (!employeeId.trim() || !checkIn || reason.trim().length < 5) throw new Error('Enter employee ID, time-in and a reason.');
       const capturedNow = new Date();
       const today = manilaDate();
+      if (date !== today) { setDate(today); throw new Error('The Manila date changed. Review the attendance times and save again for today.'); }
       if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || Number.isNaN(Date.parse(date + 'T00:00:00Z')) || new Date(date + 'T00:00:00Z').toISOString().slice(0, 10) !== date || date > today) throw new Error('Choose today or a valid past date.');
       if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(checkIn) || (checkOut && !/^([01]\d|2[0-3]):[0-5]\d$/.test(checkOut))) throw new Error('Enter valid attendance times.');
       if (date < today && !checkOut) throw new Error('Past attendance needs both time-in and time-out.');
@@ -107,13 +118,16 @@ export function OfflineCenter() {
         const response = await apiFetch(`/api/attendance/correction?employeeId=${encodeURIComponent(employeeId.trim())}&date=${date}`);
         if (!response.ok) throw new Error('Employee unavailable.');
         const preview = await response.json();
+        const windowError = attendanceWindowError(checkIn, checkOut, preview.schedule);
+        if (windowError) throw new Error(windowError);
         version = preview.version; sessionNumber = preview.sessions.length + 1;
-        if (preview.sessions.some((session: { checkOut?: string }) => !session.checkOut)) throw new Error('An existing session is still open. Use Edit Attendance to complete that session.');
+        const openSession = preview.sessions.findIndex((session: { checkOut?: string }) => !session.checkOut);
+        if (openSession >= 0) throw new Error(`${employeeId.trim()} is already timed in for Session ${openSession + 1} on ${date} at ${preview.sessions[openSession].checkIn} and has not timed out. An existing session is still open. This entry was not queued. Use Edit Attendance to complete or correct Session ${openSession + 1}; a new session can start only after it closes.`);
         if (sessionNumber > 3) throw new Error('This date already has three sessions.');
       } catch (cause) {
         // With no cached preview, server validation must confirm this is a new day.
         if (!isOffline()) throw cause;
-        if (cause instanceof Error && /existing session|three sessions/.test(cause.message)) throw cause;
+        if (cause instanceof Error && /existing session|three sessions|Allowed attendance window/.test(cause.message)) throw cause;
       }
       await queueOffline('attendance', { employeeId: employeeId.trim(), date, sessionNumber, checkIn, checkOut, reason: reason.trim(), version, captureOnly: true });
       setCheckIn(''); setCheckOut('');
@@ -124,11 +138,12 @@ export function OfflineCenter() {
     const employee = employees.find(employee => employee.id === item.payload.employeeId);
     const text = [item.kind, employee?.name, ...Object.values(item.payload).map(String)].join(' ').toLowerCase();
     const dates = item.kind === 'attendance' ? [item.payload.date] : item.kind === 'leave' ? item.payload.requestedDates as string[] : [new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Manila', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(item.createdAt))];
-    return (!search || text.includes(search.toLowerCase())) && (statusFilter === 'all' || item.status === statusFilter) && (kindFilter === 'all' || item.kind === kindFilter) && (!recordDate || dates?.includes(recordDate));
+    return (!search || text.includes(search.toLowerCase())) && (statusFilter === 'all' || item.status === statusFilter) && (!recordDate || dates?.includes(recordDate));
   });
-  const resetFilters = () => { setSearchDraft(''); setSearch(''); setStatusFilter('all'); setKindFilter('all'); setRecordDate(''); };
+  const resetFilters = () => { setSearchDraft(''); setSearch(''); setStatusFilter('all'); setRecordDate(''); };
   const expires = Date.parse(sessionStorage.getItem('workpulse_session_expires') || '');
   if (!offlineOwner() || !Number.isFinite(expires) || expires <= now) return null;
+  if (role !== 'admin') return null;
   return <>
     <button type="button" onClick={() => { setOpen(true); void refresh(); }} className={`fixed bottom-4 right-4 z-40 inline-flex items-center gap-2 rounded-full border px-4 py-2.5 text-xs font-semibold shadow-lg ${offline ? 'border-amber-200 bg-amber-50 text-amber-800' : 'border-violet-200 bg-white text-violet-700'}`}>
       {offline ? <WifiOff className="h-4 w-4" /> : <CloudCheck className="h-4 w-4" />}{offline ? 'Offline - cached data' : 'Offline records'}{pending.length > 0 && <span className="rounded-full bg-violet-600 px-2 py-0.5 text-white">{pending.length}</span>}
@@ -143,16 +158,15 @@ export function OfflineCenter() {
         {storageError && <p role="alert" className="text-sm text-rose-700">{storageError}</p>}
         {role === 'admin' && captureOpen && <form onSubmit={capture} className="space-y-3 rounded-xl border border-slate-200 bg-slate-50 p-5"><h3 className="font-semibold text-slate-900">Add manual attendance</h3><p className="text-xs text-slate-500">Record actual times. An open session from a past date needs time-out before it can sync. Existing records are never silently overwritten.</p>
           <label className="block text-xs font-medium text-slate-700">Employee ID<Input required disabled={busy} list="offline-employees" value={employeeId} onChange={event => setEmployeeId(event.target.value)} placeholder="Type employee ID or choose from saved directory" /><datalist id="offline-employees">{employees.map(employee => <option key={employee.id} value={employee.id}>{employee.name}</option>)}</datalist></label>
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2"><label className="text-xs text-slate-700">Date<Input required disabled={busy} type="date" max={manilaDate()} value={date} onChange={event => setDate(event.target.value)} /></label><label className="text-xs text-slate-700">Reason<Input required disabled={busy} minLength={5} maxLength={500} value={reason} onChange={event => setReason(event.target.value)} /></label></div>
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2"><label className="text-xs text-slate-700">Date<Input disabled type="date" value={date} /></label><label className="text-xs text-slate-700">Reason<Input required disabled={busy} minLength={5} maxLength={500} value={reason} onChange={event => setReason(event.target.value)} /></label></div>
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2"><label className="text-xs text-slate-700">Time-in<Input required disabled={busy} type="time" value={checkIn} onChange={event => setCheckIn(event.target.value)} /><button type="button" disabled={busy} onClick={() => { setDate(manilaDate()); setCheckIn(manilaTime()); }} className="mt-1 text-xs font-semibold text-violet-700">Use current Manila time</button></label><label className="text-xs text-slate-700">Time-out (optional today)<Input disabled={busy} type="time" value={checkOut} onChange={event => setCheckOut(event.target.value)} /><button type="button" disabled={busy} onClick={() => setCheckOut(manilaTime())} className="mt-1 text-xs font-semibold text-violet-700">Use current Manila time</button></label></div>
           <Button type="submit" disabled={busy}>Save locally</Button>
         </form>}
         <div className="space-y-3 rounded-xl border border-slate-200 bg-slate-50 p-4">
           <form onSubmit={event => { event.preventDefault(); setSearch(searchDraft.trim()); }} className="flex flex-col gap-2 sm:flex-row"><div className="relative flex-1"><Search className="pointer-events-none absolute left-3 top-3 h-4 w-4 text-slate-400" /><Input aria-label="Search local records" className="pl-9" value={searchDraft} onChange={event => setSearchDraft(event.target.value)} placeholder="Search employee, ID or reason..." /></div><Button type="submit"><Search className="h-4 w-4" />Search</Button></form>
           <div className="flex flex-wrap items-end gap-3">
-            <Button variant={statusFilter === 'all' && kindFilter === 'all' && !recordDate && !search && !searchDraft ? 'default' : 'outline'} onClick={resetFilters}>All records <span className="text-xs opacity-75">({items.length})</span></Button>
+            <Button variant={statusFilter === 'all' && !recordDate && !search && !searchDraft ? 'default' : 'outline'} onClick={resetFilters}>All records <span className="text-xs opacity-75">({items.length})</span></Button>
             <label className="flex-1 text-xs font-medium text-slate-600"><span className="mb-1 flex items-center gap-1"><Filter className="h-3 w-3" />Status</span><select className="h-11 w-full min-w-32 rounded-lg border border-slate-200 bg-white px-3 text-sm" value={statusFilter} onChange={event => setStatusFilter(event.target.value)}><option value="all">All statuses</option><option value="pending">Pending sync</option><option value="review">Needs review</option><option value="synced">Synced</option></select></label>
-            <label className="flex-1 text-xs font-medium text-slate-600"><span className="mb-1 block">Record type</span><select className="h-11 w-full min-w-36 rounded-lg border border-slate-200 bg-white px-3 text-sm" value={kindFilter} onChange={event => setKindFilter(event.target.value)}><option value="all">All types</option><option value="attendance">Attendance</option><option value="leave">Leave request</option><option value="cash-advance">Cash advance</option></select></label>
             <label className="flex-1 text-xs font-medium text-slate-600"><span className="mb-1 block">Date</span><Input type="date" value={recordDate} onChange={event => setRecordDate(event.target.value)} /></label>
           </div>
         </div>
@@ -160,15 +174,16 @@ export function OfflineCenter() {
         {filteredItems.map(item => <div key={item.id} className="space-y-3 rounded-xl border border-slate-200 bg-white p-4"><div className="flex justify-between gap-2"><strong className="text-sm capitalize text-slate-900">{item.kind === 'cash-advance' ? 'Cash advance request' : item.kind === 'leave' ? 'Leave request' : 'Attendance'}</strong><span className={`rounded-full px-2 py-1 text-xs ${item.status === 'synced' ? 'bg-emerald-50 text-emerald-700' : item.status === 'review' ? 'bg-rose-50 text-rose-700' : 'bg-amber-50 text-amber-700'}`}>{item.status === 'review' ? 'Needs review' : item.status === 'synced' ? 'Synced' : 'Pending sync'}</span></div>
           <p className="text-xs text-slate-600">{item.kind === 'attendance' ? `${item.payload.employeeId} · ${item.payload.date} · ${item.payload.checkIn} to ${item.payload.checkOut || 'Open'}` : item.kind === 'leave' ? `${item.payload.leaveType} · ${(item.payload.requestedDates as string[]).join(', ')}` : `PHP ${item.payload.amount} · ${item.payload.requestPeriod}`}</p>
           <p className="text-xs text-slate-500">{String(item.payload.reason || 'No reason entered')}</p>
-          {item.error && <p role="alert" className="text-xs text-rose-700">{item.error}</p>}
+          {item.error && <div role="alert" className="rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm text-rose-800"><p className="mb-1 font-semibold">Record not applied</p><p>{item.error}</p></div>}
           {item.status === 'pending' && item.attemptedAt && <p className="text-xs text-amber-700">A sync was attempted without confirmation. Retry the original record before changing its details.</p>}
           {item.kind === 'attendance' && item.status !== 'synced' && (!item.attemptedAt || item.status === 'review' && /Past attendance needs both/.test(item.error || '')) && !item.payload.checkOut && <label className="block text-xs text-slate-700">Complete local time-out<Input type="time" disabled={busy} onChange={event => { void updateOfflineItem({ ...item, payload: { ...item.payload, checkOut: event.target.value }, status: 'pending', attemptedAt: undefined, error: undefined }).catch(cause => toast({ title: 'Time-out not saved', description: cause.message, variant: 'error' })); }} /></label>}
-          <div className="flex gap-3">{item.status === 'review' && <button type="button" disabled={busy} onClick={() => void updateOfflineItem({ ...item, status: 'pending', error: undefined }).catch(cause => toast({ title: 'Retry unavailable', description: cause.message, variant: 'error' }))} className="text-xs font-semibold text-violet-700">Retry validation</button>}<button type="button" disabled={busy} onClick={() => { if (window.confirm(item.status === 'synced' ? 'Remove this local copy? The server record will stay.' : 'Discard this unsynced local record? It has not been saved to the server.')) void deleteOfflineItem(item.id).catch(cause => toast({ title: 'Local record not removed', description: cause.message, variant: 'error' })); }} className="text-xs text-slate-500">{item.status === 'synced' ? 'Remove local copy' : 'Discard local record'}</button></div>
+          <div className="flex flex-wrap gap-3">{item.status === 'review' && !/attendance changed|Editing existing attendance|online Edit Attendance/i.test(item.error || '') && <Button type="button" variant="outline" size="sm" disabled={busy} onClick={() => void updateOfflineItem({ ...item, status: 'pending', error: undefined }).catch(cause => toast({ title: 'Retry unavailable', description: cause.message, variant: 'error' }))}>Retry validation</Button>}<Button type="button" variant={item.status === 'synced' ? 'outline' : 'destructive'} size="sm" disabled={busy} onClick={() => { setDiscardError(''); setDiscardItem(item); }}>{item.status === 'synced' ? 'Remove local copy' : 'Discard local record'}</Button></div>
         </div>)}
         {!filteredItems.length && <div className="rounded-xl border border-dashed border-slate-200 px-5 py-10 text-center"><FileClock className="mx-auto mb-3 h-8 w-8 text-slate-300" /><p className="text-sm font-semibold text-slate-700">{items.length ? 'No matching records' : 'No local records yet'}</p><p className="mt-1 text-xs text-slate-500">{items.length ? 'Try another search or clear the filters to see all records.' : 'Records saved offline will appear here for review and synchronization.'}</p>{items.length > 0 && <Button variant="ghost" className="mt-3" onClick={resetFilters}>Clear filters</Button>}</div>}
         {pending.some(item => item.kind === 'attendance') && <label className="block text-sm font-medium text-slate-700">Admin password for attendance sync<Input type="password" autoComplete="current-password" disabled={busy || !navigator.onLine} value={password} onChange={event => setPassword(event.target.value)} /><span className="text-xs font-normal text-slate-500">Used only for this sync attempt. Never stored in the local queue.</span></label>}
         <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 pt-4"><p className="text-xs text-slate-500">Sync applies to all pending records.</p><Button disabled={busy || !navigator.onLine || !pending.some(item => item.status === 'pending') || (pending.some(item => item.kind === 'attendance' && item.status === 'pending') && !password)} onClick={() => void sync(true)}>{busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}Sync pending records</Button></div>
       </div>
     </Dialog>
+    <Dialog open={Boolean(discardItem)} onClose={() => !discarding && setDiscardItem(null)}><div className="space-y-4 p-6"><h2 className="text-lg font-semibold text-slate-900">{discardItem?.status === 'synced' ? 'Remove local copy?' : 'Discard unsynced attendance?'}</h2><p className="text-sm text-slate-600">{String(discardItem?.payload.employeeId || '')} · {String(discardItem?.payload.date || '')} · {String(discardItem?.payload.checkIn || '')} to {String(discardItem?.payload.checkOut || 'Open')}</p><p className="text-sm text-slate-700">{discardItem?.status === 'synced' ? 'This removes the copy from this browser. Saved server attendance will remain.' : 'This record has not been saved to the server. Discarding permanently removes this local entry. Existing server attendance will remain.'}</p>{discardError && <p role="alert" className="rounded-lg bg-rose-50 p-3 text-sm text-rose-700">{discardError}</p>}<div className="flex justify-end gap-3"><Button variant="outline" disabled={discarding} onClick={() => setDiscardItem(null)}>Cancel</Button><Button variant="destructive" disabled={discarding} onClick={async () => { if (!discardItem) return; setDiscarding(true); setDiscardError(''); try { await deleteOfflineItem(discardItem.id); setDiscardItem(null); toast({ title: 'Local record removed', description: 'Server attendance was not changed.', variant: 'success' }); } catch (cause) { setDiscardError(cause instanceof Error ? cause.message : 'Unable to remove this local record. Try again.'); } finally { setDiscarding(false); } }}>{discarding ? 'Removing...' : discardItem?.status === 'synced' ? 'Remove local copy' : 'Discard record'}</Button></div></div></Dialog>
   </>;
 }

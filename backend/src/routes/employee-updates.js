@@ -40,7 +40,8 @@ export function registerEmployeeUpdates(router, { getSettings, configuredHourlyR
         db.collection('payroll_requests').find({ employeeId }).toArray(),
       ]);
       const blockedReason = attendanceCorrectionBlockReason({ employee, attendance, leaves, payroll, date });
-      res.json({ employee: { id: employee.id, name: employee.name }, date, blockedReason, sessions: attendanceSessions(attendance).map(item => ({ checkIn: item.checkIn, checkOut: item.checkOut })), version: attendanceVersion(attendance) });
+      const settings = await getSettings(db);
+      res.json({ employee: { id: employee.id, name: employee.name }, date, blockedReason, schedule: { workStartTime: settings.shift.startTime, overtimeStopTime: settings.shift.autoClockOutTime }, sessions: attendanceSessions(attendance).map(item => ({ checkIn: item.checkIn, checkOut: item.checkOut, workStartTime: item.workStartTime, overtimeStopTime: item.overtimeStopTime })), version: attendanceVersion(attendance) });
     } catch (error) { fail(res, error); }
   });
   router.patch('/attendance/correction', requireRole('admin'), async (req, res) => {

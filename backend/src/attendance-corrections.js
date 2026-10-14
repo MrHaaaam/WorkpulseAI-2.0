@@ -1,5 +1,6 @@
 import { employeeRoleLabel } from '../../shared/employee-roles.js';
 import crypto from 'node:crypto';
+import { attendanceWindowError } from '../../shared/attendance-window.js';
 import { payrollTransaction } from './payroll-transaction.js';
 import { payrollCoversDate } from './leave-approval.js';
 import { approvedLeaveCoversDate } from './manual-attendance.js';
@@ -63,6 +64,8 @@ export function correctedSessions(record, correction, { checkIn, checkOut, now, 
   if (checkOut) requiredTime(checkOut);
   if (!checkOut && correction.date < manilaDate(now) && !previous) throw problem('Past attendance needs both time-in and time-out.', 400);
   const target = timesForSession(correction.date, checkIn, checkOut);
+  const windowError = attendanceWindowError(checkIn, checkOut, { ...sessionDefaults, ...previous });
+  if (windowError) throw problem(windowError, 400);
   if (target.start > now || target.end > now) throw problem('Attendance times cannot be in the future.', 400);
   sessions[index] = { ...sessionDefaults, ...previous, checkIn: displayTime(checkIn), checkOut: checkOut ? displayTime(checkOut) : null,
     checkInAt: target.start, checkOutAt: target.end, captureMethod: 'admin-manual', manualReason: 'Attendance correction',
@@ -105,8 +108,20 @@ export async function correctAttendance(db, { employeeId, date, sessionNumber, r
       // Their recorded sessions remain editable; registration still bounds new attendance.
       if (!attendanceSessions(existing).length && employee.createdAt && date < manilaDate(new Date(employee.createdAt))) throw problem('New attendance cannot precede the employee account. Select a date on or after account creation.');
       const emptyOfflineCapture = operationKey && captureOnly === true && version === attendanceVersion(null) && !attendanceSessions(existing).length;
-      if (!emptyOfflineCapture && version !== attendanceVersion(existing)) throw problem('Attendance changed. Reload the current times before saving.');
+      if (!emptyOfflineCapture && version !== attendanceVersion(existing)) {
+        if (operationKey) {
+          const sessions = attendanceSessions(existing);
+          const current = sessions.length ? sessions.map((session, index) => `Session ${index + 1}: ${session.checkIn} to ${session.checkOut || 'Open (not yet timed out)'}`).join('; ') : 'No recorded sessions';
+          throw problem(`Attendance sync blocked for ${employeeId} on ${date}: attendance changed after this offline entry was captured. Current server attendance: ${current}. Your queued Session ${sessionNumber} (${checkIn || 'no time-in'} to ${checkOut || 'no time-out'}) was not applied. Existing time-in and time-out were not overwritten, and no new session was created. Open Edit Attendance for this employee and date, compare the times, and save a correction if needed. Retrying this unchanged offline entry will not resolve the conflict.`);
+        }
+        throw problem('Attendance changed. Reload the current times before saving.');
+      }
       const leaves = await tx.collection('leave_requests').find({ employeeId, status: 'approved' }).toArray();
+      if (operationKey && captureOnly) {
+        const currentSessions = attendanceSessions(existing);
+        if (currentSessions.some(session => !session.checkOut)) throw problem('Offline capture cannot replace an open server session. Reconnect and use Edit Attendance to complete it. The local entry was not applied.');
+        if (sessionNumber !== currentSessions.length + 1) throw problem('Offline capture can only add the next attendance session; it cannot edit existing sessions. The local entry was not applied.');
+      }
       const payroll = await tx.collection('payroll_requests').find({ employeeId }).toArray();
       // Lock every payroll statement: a later carried statement may already contain this date's earnings.
       const blockedReason = attendanceCorrectionBlockReason({ employee, attendance: existing, leaves, payroll, date, now });

@@ -1,4 +1,4 @@
-import { cacheRead, cachedRead, clearOfflineReads, connectionChanged, offlineChanged, offlineOperation, offlineOwner, queueOffline } from './offline';
+import { cacheRead, cachedRead, clearOfflineReads, connectionChanged, offlineChanged, offlineOperation, offlineOwner, queueOffline, isOffline } from './offline';
 type SessionData = { authenticated?: boolean; token?: string; csrfToken?: string; role?: string; accountType?: string; mustChangePassword?: boolean; expiresAt?: string; offlineOwner?: string }
 
 let csrfRefreshPromise: Promise<string | null> | null = null
@@ -48,6 +48,7 @@ export async function apiNetworkFetch(path: string, init: RequestInit = {}) {
 }
 
 export async function apiFetch(path: string, init: RequestInit = {}) {
+  if (path.startsWith('/api/attendance/correction') && String(init.method || 'GET').toUpperCase() === 'PATCH' && isOffline()) throw new Error('Editing existing attendance requires internet. Use Offline records to capture employee time-in and time-out.');
   const ownerAtStart = offlineOwner();
   const method = String(init.method || 'GET').toUpperCase();
   const body = typeof init.body === 'string' ? JSON.parse(init.body) : null;
@@ -90,7 +91,7 @@ export function restoreSession() {
       connectionChanged(false);
       const expiresAt = sessionStorage.getItem('workpulse_session_expires');
       const role = sessionStorage.getItem('workpulse_role');
-      if (!offlineOwner() || !expiresAt || Date.parse(expiresAt) <= Date.now() || !role) throw error;
+      if (!offlineOwner() || !expiresAt || Date.parse(expiresAt) <= Date.now() || role !== 'admin') throw error;
       return { response: Response.json({ authenticated: true }), data: { authenticated: true, role, expiresAt, offlineOwner: offlineOwner(), mustChangePassword: sessionStorage.getItem('workpulse_must_change_password') === 'true' } };
     })
   }
