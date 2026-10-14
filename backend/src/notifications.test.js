@@ -5,14 +5,26 @@ import { buildNotifications, NOTIFICATION_LIFETIME_MS } from './notifications.js
 const now = new Date('2026-09-18T12:00:00Z');
 const leave = (id, createdAt, status = 'pending') => ({ id, createdAt, status, employeeId: 'E1', employeeName: 'Alex', startDate: '2026-09-20', endDate: '2026-09-21' });
 
+test('new employees appear in notifications with the creating admin and expire after three days', () => {
+  const employees = [{ id: 'E1', name: 'Alex', createdAt: '2026-09-18T11:00:00Z', createdByName: 'Maria Santos' }];
+  const events = buildNotifications({ employees, now });
+  assert.equal(events.length, 1);
+  assert.equal(events[0].category, 'employees');
+  assert.equal(events[0].id, 'employee:E1:created');
+  assert.match(events[0].title, /Alex.*account created/);
+  assert.match(events[0].description, /Maria Santos/);
+  assert.deepEqual(buildNotifications({ employees, now }), events);
+  assert.equal(buildNotifications({ employees, now: new Date(now.getTime() + NOTIFICATION_LIFETIME_MS) }).length, 0);
+});
+
 test('historical attendance edits produce separate admin notifications with stable IDs and actual edit timestamps', () => {
   const record = { employeeId: 'E1', name: 'Alex', date: '2025-01-01', sessions: [{ checkIn: '09:00 AM', checkOut: '05:00 PM' }], correctionHistory: [
     { sessionNumber: 1, correctedAt: '2026-09-18T10:00:00Z', reason: 'Supervisor verified arrival', before: [{ checkIn: '08:00 AM', checkOut: '05:00 PM' }], after: [{ checkIn: '09:00 AM', checkOut: '05:00 PM' }] },
-    { sessionNumber: 1, correctedAt: '2026-09-18T11:00:00Z', reason: 'Verified departure', before: [{ checkIn: '09:00 AM', checkOut: '05:00 PM' }], after: [{ checkIn: '09:00 AM', checkOut: '04:00 PM' }] },
+    { sessionNumber: 1, correctedAt: '2026-09-18T11:00:00Z', correctedByName: 'Maria Santos', reason: 'Verified departure', before: [{ checkIn: '09:00 AM', checkOut: '05:00 PM' }], after: [{ checkIn: '09:00 AM', checkOut: '04:00 PM' }] },
   ] };
   const events = buildNotifications({ now, attendance: [record] });
   assert.equal(events.length, 2);
-  assert.equal(events[0].title, 'Alex: attendance edited by admin');
+  assert.equal(events[0].title, 'Alex: attendance edited by admin Maria Santos');
   assert.match(events[1].description, /2025-01-01.*08:00 AM.*09:00 AM.*Supervisor verified arrival/);
   assert.equal(events[0].employeeId, 'E1');
   assert.notEqual(events[0].id, events[1].id);

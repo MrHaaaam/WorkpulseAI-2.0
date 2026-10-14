@@ -24,3 +24,7 @@ dist-ssr
 *.sln
 *.sw?
 .env
+
+# Local recovery previews and current-data safety backups
+backend/recovery-preview*.json
+backend/pre-recovery-*.json

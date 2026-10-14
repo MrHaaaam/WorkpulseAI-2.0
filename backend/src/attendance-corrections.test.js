@@ -1,10 +1,28 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { attendanceVersion, correctAttendance, correctedSessions } from './attendance-corrections.js';
+import { attendanceCorrectionBlockReason, attendanceVersion, correctAttendance, correctedSessions } from './attendance-corrections.js';
+import { enforceAutomaticClockOut } from './routes/api.js';
 
 const now = new Date('2026-10-10T10:00:00Z');
 const defaults = { hourlyRate: 100, workStartTime: '09:00', workStopTime: '17:00', overtimeStopTime: '22:00' };
 const options = { employeeId: 'E1', date: '2026-10-09', sessionNumber: 1, checkIn: '09:00', checkOut: '17:00', reason: 'Arrival verified by supervisor.', version: attendanceVersion(null), actor: 'admin@example.test', now, getSessionDefaults: async () => defaults, refreshPayroll: async () => {} };
+test('preview blocks approved leave, leave records, unavailable employees and settled payroll', () => {
+  const base = { employee: { status: 'active' }, date: options.date, now };
+  assert.equal(attendanceCorrectionBlockReason(base), null);
+  assert.match(attendanceCorrectionBlockReason({ ...base, leaves: [{ status: 'approved', approvedDates: [options.date] }] }), /approved leave/);
+  assert.match(attendanceCorrectionBlockReason({ ...base, attendance: { status: 'On Leave' } }), /approved leave/);
+  assert.match(attendanceCorrectionBlockReason({ ...base, employee: { banned: true } }), /unavailable/);
+  assert.match(attendanceCorrectionBlockReason({ ...base, payroll: [{ periodStart: '2026-10-01', status: 'paid' }] }), /Payroll/);
+  assert.equal(attendanceCorrectionBlockReason({ ...base, leaves: [{ status: 'pending', startDate: options.date, endDate: options.date }, { status: 'approved', approvedDates: ['2026-10-08'] }] }), null);
+});
+test('admin name is retained in history, session and employee notification', async () => {
+  const db = database();
+  await correctAttendance(db, { ...options, actorName: 'Maria Santos' });
+  assert.equal(db.data.attendance[0].correctionHistory[0].correctedByName, 'Maria Santos');
+  assert.equal(db.data.attendance[0].correctionHistory[0].correctedBy, options.actor);
+  assert.equal(db.data.attendance[0].sessions[0].manualRecordedByName, 'Maria Santos');
+  assert.match(db.data.employee_notifications[0].title, /Maria Santos/);
+});
 function matches(record, filter) {
   return Object.entries(filter).every(([key, value]) => value && typeof value === 'object' && '$exists' in value ? (record[key] !== undefined) === value.$exists : value && typeof value === 'object' && '$in' in value ? value.$in.includes(record[key]) : JSON.stringify(record[key]) === JSON.stringify(value));
 }
@@ -40,6 +58,71 @@ test('correction preserves other sessions, the original rates and history', asyn
   assert.equal(db.data.attendance[0].sessions[0].hourlyRate, 70);
   assert.deepEqual(db.data.attendance[0].sessions[1], original.sessions[1]);
   assert.deepEqual(db.data.attendance[0].correctionHistory[0].before, original.sessions);
+});
+
+test('clearing both times removes an accidental session and recalculates payroll with history', async () => {
+  for (const index of [0, 1]) {
+    const original = { _id: 'a1', employeeId: 'E1', date: options.date, sessions: [
+      { checkIn: '08:00 AM', checkOut: '12:00 PM', hourlyRate: 70 },
+      { checkIn: '01:00 PM', checkOut: '05:00 PM', hourlyRate: 80 },
+    ] };
+    const db = database({ attendance: [original] }); let refreshed = false;
+    await correctAttendance(db, { ...options, sessionNumber: index + 1, checkIn: '', checkOut: '', version: attendanceVersion(original), refreshPayroll: async () => { refreshed = true; } });
+    assert.ok(refreshed);
+    assert.deepEqual(db.data.attendance[0].sessions, [original.sessions[1 - index]]);
+    assert.deepEqual(db.data.attendance[0].correctionHistory[0].before, original.sessions);
+    assert.equal(db.data.employee_notifications.length, 1);
+    assert.match(db.data.employee_notifications[0].description, /No time-in.*No time-out/);
+  }
+});
+
+test('removing the only session clears legacy summary times instead of leaving phantom attendance', async () => {
+  const original = { _id: 'a1', employeeId: 'E1', date: options.date, checkIn: '09:00 AM', checkOut: '05:00 PM' };
+  const db = database({ attendance: [original] });
+  await correctAttendance(db, { ...options, checkIn: '', checkOut: '', version: attendanceVersion(original) });
+  const record = db.data.attendance[0];
+  assert.deepEqual(record.sessions, []);
+  assert.equal(record.checkIn, null); assert.equal(record.checkOut, null);
+  assert.equal(record.sessionCount, 0); assert.equal(record.status, 'Absent');
+  assert.equal(record.lastAction, null);
+});
+
+test('existing last session can reopen, while orphan time-out, empty new sessions and open earlier sessions fail', async () => {
+  const original = { _id: 'a1', employeeId: 'E1', date: options.date, sessions: [{ checkIn: '09:00 AM', checkOut: '05:00 PM' }] };
+  const db = database({ attendance: [original] });
+  await correctAttendance(db, { ...options, checkOut: '', version: attendanceVersion(original) });
+  assert.equal(db.data.attendance[0].sessions[0].checkOut, null);
+  assert.equal(db.data.attendance[0].sessions[0].checkOutAt, null);
+  assert.equal(db.data.attendance[0].sessions[0].suppressAutomaticClockOut, true);
+  for (const changes of [{ checkIn: '', checkOut: '17:00' }, { checkIn: '', checkOut: '', sessionNumber: 2 }]) {
+    const rejected = database({ attendance: [original] }); const before = structuredClone(rejected.data);
+    await assert.rejects(correctAttendance(rejected, { ...options, ...changes, version: attendanceVersion(original) }));
+    assert.deepEqual(rejected.data, before);
+  }
+  const multiple = { ...original, sessions: [...original.sessions, { checkIn: '06:00 PM', checkOut: '07:00 PM' }] };
+  await assert.rejects(correctAttendance(database({ attendance: [multiple] }), { ...options, checkOut: '', version: attendanceVersion(multiple) }), /last session/);
+});
+
+test('session removal preserves paid-payroll protection and rolls back failed recalculation', async () => {
+  const original = { _id: 'a1', employeeId: 'E1', date: options.date, sessions: [{ checkIn: '09:00 AM', checkOut: '05:00 PM' }] };
+  const changes = { ...options, checkIn: '', checkOut: '', version: attendanceVersion(original) };
+  const paid = database({ attendance: [original], payroll: [{ _id: 'p1', employeeId: 'E1', periodStart: '2026-10-01', status: 'paid' }] });
+  await assert.rejects(correctAttendance(paid, changes), /Payroll/);
+  const failed = database({ attendance: [original] }); const before = structuredClone(failed.data);
+  await assert.rejects(correctAttendance(failed, { ...changes, refreshPayroll: async () => { throw new Error('Unavailable'); } }));
+  assert.deepEqual(failed.data, before);
+});
+
+test('automatic clock-out does not restore a deliberately cleared time-out', async () => {
+  const records = [
+    { _id: 'cleared', date: '2020-01-01', sessions: [{ checkIn: '09:00 AM', checkOut: null, suppressAutomaticClockOut: true }] },
+    { _id: 'normal', date: '2020-01-01', sessions: [{ checkIn: '09:00 AM', checkOut: null }] },
+  ];
+  const updates = [];
+  const db = { collection: () => ({ find: () => ({ toArray: async () => records }), updateOne: async (filter, update) => updates.push({ filter, update }) }) };
+  await enforceAutomaticClockOut(db, { shift: { enabled: true, autoClockOutTime: '22:00' } });
+  assert.equal(updates.length, 1);
+  assert.equal(updates[0].filter._id, 'normal');
 });
 
 test('historical recorded times can be corrected before account creation, but new attendance cannot', async () => {

@@ -18,7 +18,7 @@ export async function syncOfflineOperation(db, { actor, operation, now = new Dat
   const operationHash = crypto.createHash('sha256').update(JSON.stringify({ kind, body })).digest('hex');
   if (kind === 'attendance') {
     if (actor.role !== 'admin') throw problem('Administrator access required.', 403);
-    return correctAttendance(db, { ...body, actor: actor.email, now, operationKey: key, operationHash, getSessionDefaults, refreshPayroll });
+    return correctAttendance(db, { ...body, actor: actor.email, actorName: actor.name || actor.fullName || actor.email, now, operationKey: key, operationHash, getSessionDefaults, refreshPayroll });
   }
   if (!['leave', 'cash-advance'].includes(kind) || !['regular', 'extra', 'manager', 'supervisor'].includes(actor.role) || !actor.employeeId) throw problem('This action is unavailable for offline synchronization.', 403);
   const employeeId = actor.employeeId;

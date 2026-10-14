@@ -22,7 +22,7 @@ type RiskEmployee = { employeeId: string; name: string; tier: "green" | "orange"
 type Anomaly = { employeeId: string; name: string; date: string; time: string; score: number; deviationMinutes: number };
 type Scanner = { deviceUid: string; scans: number; averageScore: number; health: number; status: "healthy" | "attention" | "critical" };
 type RecentMatch = { employeeId: string | null; name: string; action: "time-in" | "time-out" | "daily-limit" | "recognized" | "no-match"; eventTime: string | null; scannedAt: string | null; deviceUid: string; score: number | null; matchStrength: number | null; accepted: boolean; responseTimeMs: number | null };
-type Insights = {
+export type Insights = {
   generatedAt: string;
   forecast: { version: string; status: Readiness; sampleDays: number; clockInDays: number; activeEmployees: number; latestDataDate: string | null; dataStale: boolean; summary: string; forecast: ForecastDay[] };
   risk: { version: string; status: Readiness; periodStart: string; periodEnd: string; employeesAnalyzed: number; flagged: number; summary: string; employees: RiskEmployee[] };

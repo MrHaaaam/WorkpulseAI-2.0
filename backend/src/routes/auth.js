@@ -16,6 +16,7 @@ const scrypt = promisify(crypto.scrypt);
 let operationIndex = 0;
 const operations = ['+', '-', '×', '÷'];
 const captchaLimit = rateLimit({ windowMs: 60_000, max: 20, keyPrefix: 'captcha' });
+const loginLimit = rateLimit({ windowMs: 60_000, max: 30, keyPrefix: 'login' });
 const loginCooldown = createLoginCooldown();
 const otpLimit = rateLimit({ windowMs: 10 * 60_000, max: 10, keyPrefix: 'otp' });
 const passwordResetRequestLimit = rateLimit({ windowMs: 15 * 60_000, max: 5, keyPrefix: 'password-reset-request' });
@@ -78,10 +79,13 @@ router.get('/captcha', captchaLimit, async (_request, response) => {
   response.json({ captchaId, challenge });
 });
 
-router.post('/login', async (request, response) => {
+const boundedIdentifier = value => typeof value === 'string' && /^[A-Za-z0-9_-]{1,100}$/.test(value);
+
+router.post('/login', loginLimit, async (request, response) => {
   try {
     const { email, password, captchaId, captchaAnswer } = request.body ?? {};
     if (!email || !password || !captchaId || captchaAnswer === undefined) return response.status(400).json({ error: 'Complete all login fields' });
+    if (!boundedIdentifier(captchaId) || !['string', 'number'].includes(typeof captchaAnswer)) return response.status(400).json({ error: 'Invalid CAPTCHA input' });
     if (String(email).length > 254 || String(password).length > LOGIN_PASSWORD_MAX || !validPasswordCharacters(password) || String(captchaAnswer).length > 20) return response.status(400).json({ error: 'Invalid login input' });
     if (typeof password !== 'string' || /\s/.test(password)) return response.status(400).json({ error: 'Passwords cannot contain spaces.' });
     if (!validEmail(email)) return response.status(400).json({ error: 'Enter a valid email address.' });
@@ -139,43 +143,51 @@ router.post('/login', async (request, response) => {
 });
 
 router.post('/verify-otp', otpLimit, async (request, response) => {
-  const { verificationId, otp } = request.body ?? {};
-  const db = mongoose.connection.db;
-  const record = await db.collection('login_otps').findOne({ verificationId });
-  if (!record || record.expiresAt < new Date() || record.attempts >= 5) { await auditEvent({ req: request, action: 'auth.otp_verify', targetType: 'session', outcome: 'failure', metadata: { reason: 'expired_or_locked' } }); return response.status(401).json({ error: 'Invalid or expired verification code' }); }
-  const valid = await verifySecret(String(otp ?? '').trim(), record.otpHash);
-  if (!valid) {
-    await db.collection('login_otps').updateOne({ _id: record._id }, { $inc: { attempts: 1 } });
-    await auditEvent({ req: request, action: 'auth.otp_verify', targetType: 'session', outcome: 'failure', metadata: { reason: 'invalid_code' } });
-    return response.status(401).json({ error: 'Invalid or expired verification code' });
+  try {
+    const { verificationId, otp } = request.body ?? {};
+    if (!boundedIdentifier(verificationId) || typeof otp !== 'string' || !/^\d{6}$/.test(otp)) return response.status(400).json({ error: 'Enter a valid verification ID and 6-digit code.' });
+    const db = mongoose.connection.db;
+    const record = await db.collection('login_otps').findOne({ verificationId });
+    if (!record || record.expiresAt < new Date() || record.attempts >= 5) { await auditEvent({ req: request, action: 'auth.otp_verify', targetType: 'session', outcome: 'failure', metadata: { reason: 'expired_or_locked' } }); return response.status(401).json({ error: 'Invalid or expired verification code' }); }
+    const valid = await verifySecret(String(otp ?? '').trim(), record.otpHash);
+    if (!valid) {
+      await db.collection('login_otps').updateOne({ _id: record._id }, { $inc: { attempts: 1 } });
+      await auditEvent({ req: request, action: 'auth.otp_verify', targetType: 'session', outcome: 'failure', metadata: { reason: 'invalid_code' } });
+      return response.status(401).json({ error: 'Invalid or expired verification code' });
+    }
+    // Only one request may exchange a valid OTP for a session, even concurrently.
+    const consumed = await db.collection('login_otps').deleteOne({ _id: record._id, expiresAt: { $gt: new Date() }, attempts: { $lt: 5 } });
+    if (consumed.deletedCount !== 1) return response.status(401).json({ error: 'Invalid or expired verification code' });
+    const accountId = record.accountId ?? record.adminId;
+    const accountType = record.accountType ?? 'admin';
+    const account = await db.collection(accountType === 'employee' ? 'employee_accounts' : 'admin_accounts').findOne({ _id: accountId, active: true });
+    if (!account || (accountType === 'employee' && (!(await db.collection('employees').findOne({ id: account.employeeId, archived: { $ne: true }, banned: { $ne: true }, status: { $ne: 'inactive' } }, { projection: { _id: 1 } })) || (await getSystemControls(db)).maintenanceMode))) return response.status(401).json({ error: 'Account access is unavailable' });
+    const token = crypto.randomBytes(32).toString('hex');
+    const tokenDigest = crypto.createHash('sha256').update(token).digest('hex');
+    const csrf = createCsrfToken();
+    const createdAt = new Date();
+    const expiresAt = new Date(createdAt.getTime() + SESSION_LIFETIME_MS);
+    await db.collection('admin_sessions').insertOne({ tokenDigest, csrfDigest: csrf.tokenDigest, accountId, accountType, ...(accountType === 'admin' ? { adminId: accountId } : {}), createdAt, expiresAt });
+    setSessionCookie(response, token);
+    if (accountType === 'employee' && account && typeof account.mustChangePassword !== 'boolean' && !account.passwordChangedAt) {
+      account.mustChangePassword = true;
+      await db.collection('employee_accounts').updateOne(
+        { _id: account._id, mustChangePassword: { $exists: false } },
+        { $set: { mustChangePassword: true, updatedAt: new Date() } },
+      );
+    }
+    await auditEvent({ req: request, actor: account, action: 'auth.login', targetType: 'session', outcome: 'success' });
+    response.json({
+      csrfToken: csrf.token,
+      role: employeeRole(account?.role ?? 'admin'),
+      accountType,
+      mustChangePassword: accountType === 'employee' && account?.mustChangePassword === true,
+      expiresAt: expiresAt.toISOString(),
+    });
+  } catch (error) {
+    console.error('OTP verification failed:', error instanceof Error ? error.message : error);
+    response.status(500).json({ error: 'Unable to verify the login code. Please try again.' });
   }
-  await db.collection('login_otps').deleteOne({ _id: record._id });
-  const accountId = record.accountId ?? record.adminId;
-  const accountType = record.accountType ?? 'admin';
-  const account = await db.collection(accountType === 'employee' ? 'employee_accounts' : 'admin_accounts').findOne({ _id: accountId, active: true });
-  if (!account || (accountType === 'employee' && (!(await db.collection('employees').findOne({ id: account.employeeId, archived: { $ne: true }, banned: { $ne: true }, status: { $ne: 'inactive' } }, { projection: { _id: 1 } })) || (await getSystemControls(db)).maintenanceMode))) return response.status(401).json({ error: 'Account access is unavailable' });
-  const token = crypto.randomBytes(32).toString('hex');
-  const tokenDigest = crypto.createHash('sha256').update(token).digest('hex');
-  const csrf = createCsrfToken();
-  const createdAt = new Date();
-  const expiresAt = new Date(createdAt.getTime() + SESSION_LIFETIME_MS);
-  await db.collection('admin_sessions').insertOne({ tokenDigest, csrfDigest: csrf.tokenDigest, accountId, accountType, ...(accountType === 'admin' ? { adminId: accountId } : {}), createdAt, expiresAt });
-  setSessionCookie(response, token);
-  if (accountType === 'employee' && account && typeof account.mustChangePassword !== 'boolean' && !account.passwordChangedAt) {
-    account.mustChangePassword = true;
-    await db.collection('employee_accounts').updateOne(
-      { _id: account._id, mustChangePassword: { $exists: false } },
-      { $set: { mustChangePassword: true, updatedAt: new Date() } },
-    );
-  }
-  await auditEvent({ req: request, actor: account, action: 'auth.login', targetType: 'session', outcome: 'success' });
-  response.json({
-    csrfToken: csrf.token,
-    role: employeeRole(account?.role ?? 'admin'),
-    accountType,
-    mustChangePassword: accountType === 'employee' && account?.mustChangePassword === true,
-    expiresAt: expiresAt.toISOString(),
-  });
 });
 
 router.get('/session', async (request, response) => {
@@ -258,12 +270,12 @@ router.post('/forgot-password/request', passwordResetRequestLimit, async (reques
 
 router.post('/forgot-password/verify', passwordResetVerifyLimit, async (request, response) => {
   try {
-    const verificationId = String(request.body?.verificationId ?? '');
-    const code = String(request.body?.code ?? '').trim();
-    if (!verificationId || !/^\d{6}$/.test(code)) return response.status(400).json({ error: 'Enter the complete 6-digit code.' });
+    const verificationId = request.body?.verificationId;
+    const code = request.body?.code;
+    if (!boundedIdentifier(verificationId) || typeof code !== 'string' || !/^\d{6}$/.test(code)) return response.status(400).json({ error: 'Enter the complete 6-digit code.' });
     const db = mongoose.connection.db;
     const record = await db.collection('password_reset_otps').findOne({ verificationId });
-    if (!record || record.expiresAt < new Date() || record.attempts >= 5 || record.usedAt) {
+    if (!record || record.expiresAt < new Date() || record.attempts >= 5 || record.usedAt || record.verifiedAt) {
       return response.status(401).json({ error: 'The reset code is invalid or has expired.' });
     }
     if (!(await verifySecret(code, record.codeHash))) {
@@ -273,10 +285,11 @@ router.post('/forgot-password/verify', passwordResetVerifyLimit, async (request,
     }
     const resetToken = crypto.randomBytes(32).toString('hex');
     const resetTokenDigest = crypto.createHash('sha256').update(resetToken).digest('hex');
-    await db.collection('password_reset_otps').updateOne(
-      { _id: record._id, usedAt: { $exists: false } },
+    const verified = await db.collection('password_reset_otps').updateOne(
+      { _id: record._id, usedAt: { $exists: false }, verifiedAt: { $exists: false }, attempts: { $lt: 5 }, expiresAt: { $gt: new Date() } },
       { $set: { resetTokenDigest, verifiedAt: new Date(), resetExpiresAt: new Date(Date.now() + 10 * 60_000), expiresAt: new Date(Date.now() + 10 * 60_000) }, $unset: { codeHash: '' } },
     );
+    if (verified.modifiedCount !== 1) return response.status(401).json({ error: 'The reset code is invalid or has expired.' });
     response.json({ resetToken });
   } catch (error) {
     console.error('Password reset verification failed:', error instanceof Error ? error.message : error);
@@ -286,10 +299,10 @@ router.post('/forgot-password/verify', passwordResetVerifyLimit, async (request,
 
 router.post('/forgot-password/reset', passwordResetCompleteLimit, async (request, response) => {
   try {
-    const verificationId = String(request.body?.verificationId ?? '');
-    const resetToken = String(request.body?.resetToken ?? '');
+    const verificationId = request.body?.verificationId;
+    const resetToken = request.body?.resetToken;
     const newPassword = request.body?.newPassword;
-    if (!verificationId || verificationId.length > 100 || resetToken.length !== 64) return response.status(401).json({ error: 'Your password reset request has expired.' });
+    if (!boundedIdentifier(verificationId) || typeof resetToken !== 'string' || !/^[a-f0-9]{64}$/.test(resetToken)) return response.status(401).json({ error: 'Your password reset request has expired.' });
     const passwordError = passwordValidationError(newPassword);
     if (passwordError) return response.status(400).json({ error: passwordError });
     const db = mongoose.connection.db;
@@ -301,11 +314,16 @@ router.post('/forgot-password/reset', passwordResetCompleteLimit, async (request
     if (await verifySecret(newPassword, account.passwordHash)) return response.status(400).json({ error: 'Choose a password different from your current password.' });
 
     const changedAt = new Date();
+    // Claim the reset token before changing credentials so parallel replay loses.
+    const claimed = await db.collection('password_reset_otps').updateOne(
+      { _id: record._id, resetTokenDigest, resetExpiresAt: { $gt: changedAt }, usedAt: { $exists: false } },
+      { $set: { usedAt: changedAt }, $unset: { resetTokenDigest: '' } },
+    );
+    if (claimed.modifiedCount !== 1) return response.status(401).json({ error: 'Your password reset request is invalid or has expired.' });
     await db.collection('employee_accounts').updateOne(
       { _id: account._id },
       { $set: { passwordHash: await hashSecret(newPassword), mustChangePassword: false, passwordChangedAt: changedAt, credentialsChangedAt: changedAt, updatedAt: changedAt } },
     );
-    await db.collection('password_reset_otps').updateOne({ _id: record._id, usedAt: { $exists: false } }, { $set: { usedAt: changedAt }, $unset: { resetTokenDigest: '' } });
     await db.collection('admin_sessions').deleteMany({ accountId: account._id, accountType: 'employee' });
     await auditEvent({ req: request, actor: account, action: 'auth.password_reset_completed', targetType: 'employee_account', targetId: account.employeeId, outcome: 'success' });
     response.json({ changed: true, message: 'Your password has been reset. You can now sign in.' });

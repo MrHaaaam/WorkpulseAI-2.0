@@ -30,11 +30,12 @@ The local backend suite completed with 175 passing checks, zero failures, and ze
 | 20 | A server response is lost and the same operation is retried | Prevent duplicate processing | Original operation identifier reused; no additional business mutation created | Passed |
 | 21 | Administrator captures attendance offline | Retain locally and require password-confirmed synchronization | Attendance saved locally; automatic synchronization withheld; password-confirmed synchronization completed | Passed |
 | 22 | Browser storage fails | Report the failure without falsely claiming a successful local save | Storage error was surfaced | Passed |
-| 23 | A different account signs in on the same browser | Prevent access to the prior account's cached records | Account-isolation checks passed | Passed |
-| 24 | User attempts an unsupported financial action offline | Block the action | Unsupported action blocked; no successful financial transaction fabricated | Passed |
-| 25 | An offline operation fails while saving its receipt, updating payroll, or creating a notification | Prevent partial business changes | Transaction rollback preserved the pre-operation records | Passed |
+| 23 | User attempts an unsupported financial action offline | Block the action | Unsupported action blocked; no successful financial transaction fabricated | Passed |
+| 24 | An offline operation fails while saving its receipt, updating payroll, or creating a notification | Prevent partial business changes | Transaction rollback preserved the pre-operation records | Passed |
 
-The table groups selected behaviors from the larger suite; its 25 rows are not 25 independently administered participant trials. Simulated failures verify the handling implemented in the application, not every possible infrastructure failure.
+The table groups selected behaviors from the larger suite; its 24 rows are not 24 independently administered participant trials. Simulated failures verify the handling implemented in the application, not every possible infrastructure failure.
+
+The former account-isolation row was removed because its wording overstated the browser check: the script changed the offline owner identifier and checked cached-record separation; it did not perform a complete sign-in with a different account or test independent sessions across tabs. Tabs in the same browser profile can share a cookie-authenticated session, so opening another tab may reuse the login and logging out may invalidate that shared session. This behavior does not establish whether different accounts can access each other's records.
 
 ## Scope requiring additional evidence
 

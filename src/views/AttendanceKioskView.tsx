@@ -224,7 +224,7 @@ export function AttendanceKioskView() {
               <p className="mt-6 text-xs font-bold uppercase tracking-[.18em] text-violet-200">Scanner status</p>
               <h2 className="mt-2 text-2xl font-bold" role="status" aria-live="polite" aria-atomic="true">{message}</h2>
               <p className="mt-3 max-w-md text-sm leading-6 text-indigo-100">No button is needed. Keep your finger flat, then lift it after recognition.</p>
-              {error && <div className="mt-4 rounded-xl border border-rose-300/30 bg-rose-400/10 px-4 py-3 text-left text-sm text-rose-100" role="alert"><p className="font-semibold">We could not record your attendance.</p><p className="mt-1">{error} Try again, or ask a supervisor for help.</p></div>}
+              {error && <div className="mt-4 rounded-xl border border-rose-300/30 bg-rose-400/10 px-4 py-3 text-left text-sm text-rose-100" role="alert"><p className="font-semibold">We could not record your attendance.</p><p className="mt-1">{error}</p></div>}
             </>}
           </div>
         </div>

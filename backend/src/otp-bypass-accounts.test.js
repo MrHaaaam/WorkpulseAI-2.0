@@ -40,7 +40,7 @@ test('real account bypass issues a normal cookie only after password and CAPTCHA
       findOne: async () => name === 'admin_accounts' ? account : null,
       insertOne: async () => { if (name === 'admin_sessions') sessions++; if (name === 'login_otps') assert.fail('Bypass should not create an OTP'); },
     }; } };
-    const handler = router.stack.find(layer => layer.route?.path === '/login').route.stack[0].handle;
+    const handler = router.stack.find(layer => layer.route?.path === '/login').route.stack.at(-1).handle;
     const response = () => ({ statusCode: 200, status(value) { this.statusCode = value; return this; }, json(value) { this.data = value; return this; }, setHeader() {}, append(name, value) { this.cookie = value; } });
     const login = async (password, answer, ip) => {
       const res = response();

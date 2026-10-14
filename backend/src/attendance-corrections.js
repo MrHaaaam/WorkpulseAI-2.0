@@ -5,6 +5,14 @@ import { payrollCoversDate } from './leave-approval.js';
 import { approvedLeaveCoversDate } from './manual-attendance.js';
 
 const problem = (message, status = 409) => Object.assign(new Error(message), { status });
+export function attendanceCorrectionBlockReason({ employee, attendance, leaves = [], payroll = [], date, now = new Date() }) {
+  if (!employee || employee.archived || employee.banned || employee.status === 'inactive') return 'This employee is inactive or unavailable.';
+  if (date > manilaDate(now)) return 'Choose today or a valid past date.';
+  if (attendance?.status === 'On Leave' || leaves.some(leave => approvedLeaveCoversDate(leave, date))) return 'This date has approved leave. Resolve the leave before correcting attendance.';
+  if (payroll.some(item => payrollCoversDate(item, date) && (['paid', 'approved', 'carried_over'].includes(item.status) || item.paidAt || item.settledBy || item.rolledInto || item.calculationResetAt))) return 'Payroll for this date is already paid, settled, carried forward, or reset. Resolve payroll separately before correcting attendance.';
+  if (!attendanceSessions(attendance).length && employee.createdAt && date < manilaDate(new Date(employee.createdAt))) return 'New attendance cannot precede the employee account. Select a date on or after account creation.';
+  return null;
+}
 export function manilaDate(now = new Date()) {
   return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Manila', year: 'numeric', month: '2-digit', day: '2-digit' }).format(now);
 }
@@ -40,20 +48,26 @@ function timesForSession(date, checkIn, checkOut) {
   return { start, end };
 }
 
-export function correctedSessions(record, correction, { checkIn, checkOut, now, actor, reason, sessionDefaults }) {
-  requiredTime(checkIn);
-  if (checkOut) requiredTime(checkOut);
-  if (!checkOut && correction.date < manilaDate(now)) throw problem('Past attendance needs both time-in and time-out.', 400);
+export function correctedSessions(record, correction, { checkIn, checkOut, now, actor, actorName, reason, sessionDefaults }) {
   const sessions = attendanceSessions(record);
   const index = correction.sessionNumber - 1;
   if (index > sessions.length || sessions.length > 3) throw problem('Correct earlier sessions first; sessions cannot be skipped.');
   const previous = sessions[index];
+  if (!checkIn) {
+    if (checkOut) throw problem('Time-out requires a time-in. Clear both times to remove an accidental session.', 400);
+    if (!previous) throw problem('There is no existing session to remove.', 400);
+    sessions.splice(index, 1);
+    return sessions;
+  }
+  requiredTime(checkIn);
+  if (checkOut) requiredTime(checkOut);
+  if (!checkOut && correction.date < manilaDate(now) && !previous) throw problem('Past attendance needs both time-in and time-out.', 400);
   const target = timesForSession(correction.date, checkIn, checkOut);
   if (target.start > now || target.end > now) throw problem('Attendance times cannot be in the future.', 400);
   sessions[index] = { ...sessionDefaults, ...previous, checkIn: displayTime(checkIn), checkOut: checkOut ? displayTime(checkOut) : null,
     checkInAt: target.start, checkOutAt: target.end, captureMethod: 'admin-manual', manualReason: 'Attendance correction',
-    manualNote: reason, manualRecordedBy: actor, correctedAt: now,
-    autoClockedOut: false, ...(checkOut ? { manualClockOut: true, manualClockOutBy: actor } : { manualClockOut: false }) };
+    manualNote: reason, manualRecordedBy: actor, manualRecordedByName: actorName || actor, correctedAt: now,
+    autoClockedOut: false, suppressAutomaticClockOut: !checkOut && Boolean(previous?.checkOut || previous?.suppressAutomaticClockOut), ...(checkOut ? { manualClockOut: true, manualClockOutBy: actor } : { manualClockOut: false }) };
   let lastEnd = null;
   sessions.forEach((session, position) => {
     const { start, end } = timesForSession(correction.date, session.checkIn, session.checkOut);
@@ -64,11 +78,12 @@ export function correctedSessions(record, correction, { checkIn, checkOut, now, 
   return sessions;
 }
 
-export async function correctAttendance(db, { employeeId, date, sessionNumber, reason, version, checkIn, checkOut, actor, now = new Date(), getSessionDefaults, refreshPayroll, operationKey, operationHash, captureOnly = false }) {
+export async function correctAttendance(db, { employeeId, date, sessionNumber, reason, version, checkIn, checkOut, actor, actorName, now = new Date(), getSessionDefaults, refreshPayroll, operationKey, operationHash, captureOnly = false }) {
   if (typeof employeeId !== 'string' || !employeeId || employeeId.length > 200) throw problem('Choose an employee.', 400);
   if (!validAttendanceDate(date) || date > manilaDate(now)) throw problem('Choose today or a valid past date.', 400);
   if (!Number.isInteger(sessionNumber) || sessionNumber < 1 || sessionNumber > 3) throw problem('Choose session 1, 2, or 3.', 400);
   if (typeof reason !== 'string' || reason.trim().length < 5 || reason.trim().length > 500) throw problem('Provide a correction reason in 5–500 characters.', 400);
+  if (captureOnly && !checkIn) throw problem('Offline capture requires a time-in.', 400);
   const correction = { employeeId, date, sessionNumber };
   const work = async tx => {
     if (operationKey) {
@@ -78,7 +93,7 @@ export async function correctAttendance(db, { employeeId, date, sessionNumber, r
         return receipt.result;
       }
     }
-    const decision = { correctedBy: actor, correctedAt: now, reason: reason.trim(), sessionNumber };
+    const decision = { correctedBy: actor, correctedByName: actorName || actor, correctedAt: now, reason: reason.trim(), sessionNumber };
       const employee = await tx.collection('employees').findOne({ id: employeeId });
       if (!employee || employee.archived || employee.banned || employee.status === 'inactive') throw problem('This employee is inactive or unavailable.');
       // Share the employee write lock with payroll preparation/payment, including
@@ -92,15 +107,15 @@ export async function correctAttendance(db, { employeeId, date, sessionNumber, r
       const emptyOfflineCapture = operationKey && captureOnly === true && version === attendanceVersion(null) && !attendanceSessions(existing).length;
       if (!emptyOfflineCapture && version !== attendanceVersion(existing)) throw problem('Attendance changed. Reload the current times before saving.');
       const leaves = await tx.collection('leave_requests').find({ employeeId, status: 'approved' }).toArray();
-      if (existing?.status === 'On Leave' || leaves.some(leave => approvedLeaveCoversDate(leave, date))) throw problem('This date has approved leave. Resolve the leave before correcting attendance.');
       const payroll = await tx.collection('payroll_requests').find({ employeeId }).toArray();
       // Lock every payroll statement: a later carried statement may already contain this date's earnings.
-      if (payroll.some(item => payrollCoversDate(item, date) && (['paid', 'approved', 'carried_over'].includes(item.status) || item.paidAt || item.settledBy || item.rolledInto || item.calculationResetAt))) throw problem('Payroll for this date is already paid, settled, carried forward, or reset. Resolve payroll separately before correcting attendance.');
+      const blockedReason = attendanceCorrectionBlockReason({ employee, attendance: existing, leaves, payroll, date, now });
+      if (blockedReason) throw problem(blockedReason);
       for (const item of payroll) {
         const locked = await tx.collection('payroll_requests').updateOne({ _id: item._id, status: item.status }, { $inc: { attendanceReviewVersion: 1 } });
         if (!locked.matchedCount) throw problem('Payroll changed during review. Refresh and try again.');
       }
-      const sessions = correctedSessions(existing, correction, { checkIn, checkOut, now, actor, reason: decision.reason, sessionDefaults: await getSessionDefaults(tx, employee) });
+      const sessions = correctedSessions(existing, correction, { checkIn, checkOut, now, actor, actorName: decision.correctedByName, reason: decision.reason, sessionDefaults: await getSessionDefaults(tx, employee) });
       const adjacentDates = [-1, 1].map(offset => { const adjacentDate = new Date(`${date}T00:00:00Z`); adjacentDate.setUTCDate(adjacentDate.getUTCDate() + offset); return adjacentDate.toISOString().slice(0, 10); });
       const adjacent = await tx.collection('attendance').find({ employeeId, date: { $in: adjacentDates } }).toArray();
       for (const other of adjacent) {
@@ -114,11 +129,12 @@ export async function correctAttendance(db, { employeeId, date, sessionNumber, r
       }
       const companyIdle = await tx.collection('idle_days').findOne({ date });
       const fields = { name: employee.name, role: employeeRoleLabel(employee.role), sessions, sessionCount: sessions.length,
-        checkIn: sessions[0].checkIn, checkOut: sessions.at(-1).checkOut, status: existing?.idleDay || companyIdle ? 'Idle' : 'Present',
-        lastAction: sessions.at(-1).checkOut ? 'time-out' : 'time-in', autoClockedOut: false, updatedAt: now, manualRecordedBy: actor,
+        checkIn: sessions[0]?.checkIn || null, checkOut: sessions.at(-1)?.checkOut || null, status: existing?.idleDay || companyIdle ? 'Idle' : sessions.length ? 'Present' : 'Absent',
+        lastAction: sessions.length ? sessions.at(-1).checkOut ? 'time-out' : 'time-in' : null, autoClockedOut: false, updatedAt: now, manualRecordedBy: actor,
         ...(companyIdle ? { idleDay: true } : {}) };
       decision.before = attendanceSessions(existing);
       decision.after = sessions;
+      const selectedAfter = sessions.length < decision.before.length ? null : sessions[sessionNumber - 1];
       if (existing) {
         const updated = await tx.collection('attendance').updateOne({ _id: existing._id, updatedAt: existing.updatedAt ?? { $exists: false }, sessions: existing.sessions ?? { $exists: false } }, { $set: fields, $unset: { automaticAbsence: '' }, $push: { correctionHistory: decision } });
         if (!updated.matchedCount) throw problem('Attendance changed during review.');
@@ -126,8 +142,8 @@ export async function correctAttendance(db, { employeeId, date, sessionNumber, r
         await tx.collection('attendance').insertOne({ employeeId: employee.id, date, ...fields, createdAt: now, identityVerified: false, correctionHistory: [decision] });
       }
       await refreshPayroll(tx, employee, date);
-      await tx.collection('employee_notifications').insertOne({ id: crypto.randomUUID(), employeeId, category: 'attendance', title: 'Attendance corrected by administrator',
-        description: `${date}, session ${sessionNumber}: ${decision.before[sessionNumber - 1]?.checkIn || 'No time-in'} → ${decision.before[sessionNumber - 1]?.checkOut || 'No time-out'} changed to ${sessions[sessionNumber - 1].checkIn} → ${sessions[sessionNumber - 1].checkOut || 'Open'}. Reason: ${decision.reason}`,
+      await tx.collection('employee_notifications').insertOne({ id: crypto.randomUUID(), employeeId, category: 'attendance', title: `Attendance corrected by admin ${decision.correctedByName}`,
+        description: `${date}, session ${sessionNumber}: ${decision.before[sessionNumber - 1]?.checkIn || 'No time-in'} → ${decision.before[sessionNumber - 1]?.checkOut || 'No time-out'} changed to ${selectedAfter?.checkIn || 'No time-in'} → ${selectedAfter?.checkOut || (selectedAfter ? 'Open' : 'No time-out')}. Reason: ${decision.reason}`,
         section: 'attendance', date, createdAt: now, read: false });
       const result = { employeeId, date, ...decision };
       if (operationKey) await tx.collection('offline_operations').insertOne({ _id: operationKey, kind: 'attendance', operationHash, result, createdAt: now });

@@ -9,7 +9,7 @@ import apiRouter, { enforceAutomaticAbsences, enforceAutomaticClockOut, getSetti
 import authRouter from './routes/auth.js';
 import { hashSecret } from './routes/auth.js';
 import { ensureOtpBypassAccounts } from './otp-bypass-accounts.js';
-import { securityHeaders } from './security.js';
+import { securityHeaders, rateLimit } from './security.js';
 import { migrateLegacySalaryAdditions } from './salary-addition-migration.js';
 
 // Resolve local configuration from this file, regardless of the launch folder.
@@ -52,6 +52,8 @@ app.set('trust proxy', 1);
 app.use(cors({ origin: process.env.FRONTEND_ORIGIN || 'http://localhost:5173', credentials: true, allowedHeaders: ['Content-Type', 'Authorization', 'X-CSRF-Token'] }));
 app.use(securityHeaders);
 app.use((req, res, next) => { req.requestId = crypto.randomUUID(); res.setHeader('X-Request-ID', req.requestId); next(); });
+// Limit traffic before parsing potentially large JSON or doing database work.
+app.use('/api', rateLimit({ windowMs: 60_000, max: 600, keyPrefix: 'api' }));
 app.use((req, res, next) => {
   if (process.env.NODE_ENV === 'production' && req.headers['x-forwarded-proto'] !== 'https' && !req.secure) return res.redirect(308, `https://${req.headers.host}${req.originalUrl}`);
   next();
@@ -128,6 +130,8 @@ async function startServer() {
         db.collection('leave_requests').createIndex({ employeeId: 1, createdAt: -1 }),
         db.collection('leave_requests').createIndex({ status: 1, startDate: 1, endDate: 1 }),
         db.collection('payroll_requests').createIndex({ employeeId: 1, createdAt: -1 }),
+        db.collection('payroll_requests').createIndex({ id: 1 }),
+        db.collection('payroll_requests').createIndex({ createdAt: -1, _id: -1 }),
         db.collection('cash_advances').createIndex({ employeeId: 1, date: -1 }),
         db.collection('cash_advances').createIndex({ id: 1 }, { unique: true }),
         db.collection('cash_advances').createIndex({ requestId: 1 }, { unique: true, sparse: true }),

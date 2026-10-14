@@ -10,12 +10,16 @@ function eventTime(date, clock) {
   return new Date(`${date}T${String(hour).padStart(2, '0')}:${match[2]}:${match[3] || '00'}+08:00`);
 }
 
-export function buildNotifications({ leaveRequests = [], attendance = [], insights, now = new Date() }) {
+export function buildNotifications({ employees = [], leaveRequests = [], attendance = [], insights, now = new Date() }) {
   const events = new Map();
   function add(id, category, title, description, occurredAt, employeeId) {
     const timestamp = occurredAt ? new Date(occurredAt).getTime() : NaN;
     if (!Number.isFinite(timestamp) || timestamp > now.getTime() || timestamp + NOTIFICATION_LIFETIME_MS <= now.getTime()) return;
     events.set(id, { id, category, title, description, employeeId, createdAt: new Date(timestamp), expiresAt: new Date(timestamp + NOTIFICATION_LIFETIME_MS) });
+  }
+  for (const employee of employees) {
+    add(`employee:${employee.id}:created`, 'employees', `${employee.name || employee.id}: employee account created`,
+      `Employee ${employee.id} was added${employee.createdByName || employee.createdBy ? ` by admin ${employee.createdByName || employee.createdBy}` : ''}. Open the employee directory to review the profile.`, employee.createdAt, employee.id);
   }
   for (const request of leaveRequests) {
     add(`leave:${request.id}`, 'leave', `${request.employeeName || 'Employee'} requested leave`, `${request.startDate} to ${request.endDate}`, request.createdAt, request.employeeId);
@@ -28,7 +32,7 @@ export function buildNotifications({ leaveRequests = [], attendance = [], insigh
       const before = correction.before?.[sessionIndex];
       const after = correction.after?.[sessionIndex];
       const times = session => `${session?.checkIn || 'No time-in'} → ${session?.checkOut || 'Open'}`;
-      add(`attendance:${key}:edit:${index}`, 'attendance', `${name}: attendance edited by admin`,
+      add(`attendance:${key}:edit:${index}`, 'attendance', `${name}: attendance edited by admin ${correction.correctedByName || correction.correctedBy || 'Administrator'}`,
         `${record.date}, session ${correction.sessionNumber}: ${times(before)} changed to ${times(after)}. Reason: ${correction.reason || 'Attendance correction'}`,
         correction.correctedAt, record.employeeId);
     }
@@ -66,7 +70,7 @@ export async function loadNotifications(db, now = new Date()) {
     db.collection('leave_requests').find({ employeeId: { $in: employeeIds }, $or: [{ createdAt: { $gt: new Date(now.getTime() - NOTIFICATION_LIFETIME_MS) } }, { status: 'approved', endDate: { $gte: start.toISOString().slice(0, 10) } }] }).toArray(),
   ]);
   const insights = buildAIInsights({ attendance, employees, leaveRequests, now });
-  const events = buildNotifications({ attendance, leaveRequests, insights, now });
+  const events = buildNotifications({ employees, attendance, leaveRequests, insights, now });
   const collection = db.collection('admin_notifications');
   // Stable IDs and insert-only timestamps prevent refreshes from renewing old alerts.
   if (events.length) await collection.bulkWrite(events.map(({ id, ...event }) => ({ updateOne: { filter: { _id: id }, update: { $setOnInsert: event }, upsert: true } })), { ordered: false });

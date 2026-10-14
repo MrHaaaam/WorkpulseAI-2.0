@@ -1,5 +1,7 @@
 # Direct attendance editing and employee notifications
 
+Employee attendance records include an **Admin attendance changes** section. My Attendance opens the full history, showing the action, affected session, administrator, Manila timestamp, reason, and original versus updated time-in/time-out. Recent attendance in Overview shows the latest reason with expandable history. Earlier corrections remain visible. Legacy corrected sessions show saved reasons and administrator details, with an explicit notice when original times were not retained. This uses the existing employee-owned attendance response and does not depend on opening notifications.
+
 Admins can open **Attendance → Edit attendance**, or select **Edit times** on a row. Choose the employee, date and session, change the time-in/time-out, enter a reason and the admin password, and save. Missing attendance can be added without an employee report. The existing **Record attendance** tool still records the current time for scanner outages.
 
 The employee portal has a **notification bell** for regular, extra, manager and supervisor accounts. It shows unread counts, category filters, individual updates and a **Mark all read** action. Selecting a notification opens the relevant attendance, calendar, leave, payroll or profile screen. The bell refreshes every 30 seconds while the portal is visible, on focus, when opened and when Refresh is selected. It shows the latest 200 notifications.

@@ -4,7 +4,7 @@ import { BoundedNumberInput } from "../components/ui/BoundedNumberInput";
 import { ADDITION_MAX, HOURLY_RATE_MAX, identifierInput, identifierLengths, identifiersValidationError, validBoundedNumber } from "../../shared/field-limits.js";
 import { nameInput, emailInput, validEmail } from '../../shared/input-format.js';
 import { AdminPageHeader } from "../components/AdminPageHeader";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Archive, BriefcaseBusiness, CalendarDays, Check, Clock, Contact, Fingerprint, Grid2X2, IdCard, KeyRound, List, Mail, MapPin, Pencil, Phone, Plus, ScanLine, Search, ShieldCheck, UserRound, Wallet, X } from "lucide-react";
 
 import { Badge } from "../components/ui/Badge";
@@ -112,6 +112,8 @@ export function EmployeeDirectoryView({ employees: initialEmployees }: Partial<E
   const [fingerprintDeviceUid, setFingerprintDeviceUid] = useState("");
   const [fingerprintEnrollmentKey, setFingerprintEnrollmentKey] = useState(0);
   const [saving, setSaving] = useState(false);
+  const verificationRevision = useRef(0);
+  const [verificationEmail, setVerificationEmail] = useState("");
   const [emailVerificationId, setEmailVerificationId] = useState("");
   const [emailVerificationCode, setEmailVerificationCode] = useState("");
   const [sendingVerification, setSendingVerification] = useState(false);
@@ -181,6 +183,10 @@ export function EmployeeDirectoryView({ employees: initialEmployees }: Partial<E
       const match = /^EMP-(\d+)$/i.exec(employee.id);
       return match ? Math.max(maximum, Number(match[1])) : maximum;
     }, 0) + 1;
+    verificationRevision.current += 1;
+    setVerificationEmail("");
+    setEmailVerificationId("");
+    setEmailVerificationCode("");
     setEditingId(null);
     setPasswordRetrySeconds(0);
     setInvalidField("");
@@ -200,6 +206,10 @@ export function EmployeeDirectoryView({ employees: initialEmployees }: Partial<E
   }
 
   function openEdit(employee: Employee) {
+    verificationRevision.current += 1;
+    setVerificationEmail("");
+    setEmailVerificationId("");
+    setEmailVerificationCode("");
     setEditingId(employee.id);
     setPasswordOpen(false);
     setAdminPassword("");
@@ -254,6 +264,9 @@ export function EmployeeDirectoryView({ employees: initialEmployees }: Partial<E
     setInvalidField("");
     setFormError("");
     if (field === 'email') {
+      verificationRevision.current += 1;
+      setVerificationEmail("");
+      if (!editingId && (emailVerificationId || emailVerificationCode || verificationEmail)) toast({ title: 'Email changed', description: 'Request a new verification code for the updated email. The previous code cannot be used.', variant: 'info' });
       setEmailVerificationId("");
       setEmailVerificationCode("");
     }
@@ -263,6 +276,9 @@ export function EmployeeDirectoryView({ employees: initialEmployees }: Partial<E
 
   async function sendEmailVerification() {
     if (sendingVerification || saving) return;
+    const revision = ++verificationRevision.current;
+    const email = (draft.email || "").trim().toLowerCase();
+    setVerificationEmail(email);
     setSendingVerification(true);
     setFormError("");
     setEmailVerificationId("");
@@ -270,13 +286,19 @@ export function EmployeeDirectoryView({ employees: initialEmployees }: Partial<E
     try {
       const response = await apiFetch('/api/employees/email-verification', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: draft.email }),
+        body: JSON.stringify({ email }),
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || 'Unable to send verification code');
+      if (revision !== verificationRevision.current) return;
+      setVerificationEmail(email);
       setEmailVerificationId(data.verificationId);
+      toast({ title: 'Verification code sent', description: `Enter the six-digit code sent to ${email}.`, variant: 'success' });
     } catch (reason) {
-      setFormError(reason instanceof Error ? reason.message : 'Unable to send verification code');
+      if (revision !== verificationRevision.current) return;
+      const message = reason instanceof Error ? reason.message : 'Unable to send verification code';
+      setFormError(message);
+      toast({ title: 'Verification code not sent', description: message, variant: 'error' });
     } finally { setSendingVerification(false); }
   }
 
@@ -288,6 +310,7 @@ export function EmployeeDirectoryView({ employees: initialEmployees }: Partial<E
   function showFieldError(field: string, message: string) {
     setFormError(message);
     setInvalidField(field);
+    toast({ title: 'Check employee details', description: message, variant: 'error' });
     requestAnimationFrame(() => {
       const input = document.querySelector<HTMLElement>(`[data-employee-field="${field}"]`);
       input?.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -295,10 +318,15 @@ export function EmployeeDirectoryView({ employees: initialEmployees }: Partial<E
     });
   }
 
+  function showCreationError(message: string) {
+    setFormError(message);
+    toast({ title: 'Account creation blocked', description: message, variant: 'error' });
+  }
+
   function saveEmployee(event: React.FormEvent) {
     event.preventDefault();
     if (saving || sendingVerification) return;
-    if (fingerprintRegistering) { setFormError("Complete fingerprint enrollment or choose Skip fingerprint for now before saving."); return; }
+    if (fingerprintRegistering) { showCreationError("Complete fingerprint enrollment or choose Skip fingerprint for now before saving."); return; }
     const identifierError = identifiersValidationError(draft.identifiers);
     if (identifierError) { const index = draft.identifiers?.findIndex(item => identifiersValidationError([item])) ?? -1; showFieldError(index >= 0 ? `identifier-${index}` : 'identifiers', identifierError); return; }
     if (!validBoundedNumber(draft.salaryAddition?.amount, 0, ADDITION_MAX)) { showFieldError('salaryAddition', 'Enter an amount from 0 to 1,000,000 with up to 2 decimal places.'); return; }
@@ -309,8 +337,8 @@ export function EmployeeDirectoryView({ employees: initialEmployees }: Partial<E
     if (!/^\+639\d{9}$/.test(draft.phone ?? '')) { showFieldError('phone', 'Phone number must use +639XXXXXXXXX.'); return; }
     if ((draft.address ?? '').trim().length < 5 || (draft.address ?? '').trim().length > 500) { showFieldError('address', 'Address must be 5 to 500 characters.'); return; }
     if (draft.hourlyRateOverride != null && !validBoundedNumber(draft.hourlyRateOverride, 1, HOURLY_RATE_MAX)) { showFieldError('hourlyRateOverride', 'Employee hourly rate must be from 1 to 10,000 with at most 2 decimal places.'); return; }
-    if (!editingId && (!emailVerificationId || !/^\d{6}$/.test(emailVerificationCode))) { setFormError('Request a verification code and enter the code received by the employee.'); return; }
-    if (!editingId && fingerprintSamples.length > 0 && fingerprintSamples.length !== REQUIRED_FINGERPRINT_SCANS) { setFormError('Complete fingerprint enrollment or skip it for now.'); return; }
+    if (!editingId && (!emailVerificationId || verificationEmail !== (draft.email || '').trim().toLowerCase() || !/^\d{6}$/.test(emailVerificationCode))) { showCreationError('Request a verification code and enter the code received by the employee.'); return; }
+    if (!editingId && fingerprintSamples.length > 0 && fingerprintSamples.length !== REQUIRED_FINGERPRINT_SCANS) { showCreationError('Complete fingerprint enrollment or skip it for now.'); return; }
     setInvalidField('');
     setFormError('');
     if (editingId) { setPasswordPurpose('save'); setPasswordOpen(true); return; }

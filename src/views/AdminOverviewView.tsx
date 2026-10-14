@@ -41,6 +41,7 @@ import { Button } from "../components/ui/Button";
 import { DateNavigator } from "../components/DateNavigator";
 import { PaginationControls } from "../components/ui/Pagination";
 import { usePagination } from "../hooks/usePagination";
+import { useInsightsAttention } from "../hooks/useInsightsAttention";
 import { leaveDateProgress } from '../../shared/calendar-leave.js';
 
 type ViewMode = "daily" | "weekly" | "monthly";
@@ -132,6 +133,7 @@ export function AdminOverviewView({
   onAuditDateChange,
 }: AdminOverviewProps) {
   const auditPage = usePagination(auditTrail, auditDate);
+  const insightsAttention = useInsightsAttention();
   const chartData = attendanceTrends?.[viewMode] || [];
   const chartHasData = chartData.some((item) => item.present > 0 || item.absent > 0);
   const chartSummary = chartData.map((item) => `${item.label}: ${item.present} present, ${item.absent} recorded absent`).join("; ");
@@ -171,8 +173,8 @@ export function AdminOverviewView({
   const leavesInRange = leaveRequests.filter((leave) => leave.startDate <= performanceDate && leave.endDate >= chartRangeStart).map(leave => ({ ...leave, ...leaveDateProgress(leave, leaveToday) }));
   const leaveStatusData = [
     { label: "Pending", count: leavesInRange.filter((leave) => leave.status === 'pending' && !leave.passedDates.length).length, fill: "#f59e0b" },
-    { label: "Pending + passed dates", count: leavesInRange.filter((leave) => leave.status === 'pending' && leave.passedDates.length > 0).length, fill: "#a78bfa" },
-    { label: "Passed", count: leavesInRange.filter((leave) => leave.status === 'passed').length, fill: "#94a3b8" },
+    { label: "Pending with past dates", count: leavesInRange.filter((leave) => leave.status === 'pending' && leave.passedDates.length > 0).length, fill: "#a78bfa" },
+    { label: "Past dates (unapproved)", count: leavesInRange.filter((leave) => leave.status === 'passed').length, fill: "#94a3b8" },
     { label: "Approved", count: leavesInRange.filter((leave) => leave.status.toLowerCase() === "approved").length, fill: "#10b981" },
     { label: "Rejected", count: leavesInRange.filter((leave) => leave.status.toLowerCase() === "rejected").length, fill: "#ef4444" },
   ];
@@ -401,9 +403,9 @@ export function AdminOverviewView({
                 <span className="text-3xl font-semibold tracking-tight text-slate-900">{totalLeaveRequests}</span>
                 <span className="text-xs text-slate-500">total requests</span>
               </div>
-              {totalLeaveRequests > 0 ? <div className="flex h-[205px] flex-col justify-center gap-6" role="img" aria-label={`Leave request status. ${leaveStatusSummary}`}>
+              {totalLeaveRequests > 0 ? <div className="flex min-h-[205px] flex-col gap-5" role="img" aria-label={`Leave request status. ${leaveStatusSummary}`}>
                 {leaveStatusData.map((item) => <div key={item.label}>
-                  <div className="mb-2 flex items-center justify-between text-sm"><span className="font-medium text-slate-700">{item.label}</span><span className="tabular-nums font-semibold text-slate-900">{item.count}<span className="ml-2 text-xs font-normal text-slate-400">{Math.round(item.count / totalLeaveRequests * 100)}%</span></span></div>
+                  <div className="mb-2 flex items-start justify-between gap-3 text-sm"><span className="min-w-0 font-medium text-slate-700">{item.label}</span><span className="shrink-0 tabular-nums font-semibold text-slate-900">{item.count}<span className="ml-2 text-xs font-normal text-slate-400">{Math.round(item.count / totalLeaveRequests * 100)}%</span></span></div>
                   <div className="h-1.5 overflow-hidden rounded-full bg-slate-100"><div className="h-full rounded-full" style={{ width: `${item.count / totalLeaveRequests * 100}%`, backgroundColor: item.fill }} /></div>
                 </div>)}
               </div> : <div className="grid h-[205px] place-items-center border-t border-slate-100 text-center text-sm text-slate-500">No leave requests are available.</div>}
@@ -422,6 +424,11 @@ export function AdminOverviewView({
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-3">
+              {insightsAttention.loading && <p role="status" className="text-xs text-slate-500">Checking Insights for items to review...</p>}
+              {insightsAttention.items.map(item => <div key={item.title} className={`flex items-center justify-between gap-3 rounded-lg border p-3 ${item.critical ? 'border-red-200 bg-red-50/70' : 'border-amber-200 bg-amber-50/70'}`}>
+                <div className="flex items-center gap-3"><div className={`rounded-full p-2 ${item.critical ? 'bg-red-100 text-red-700' : 'bg-amber-100 text-amber-700'}`}><AlertCircle className="h-4 w-4" /></div><div><h4 className="text-xs font-semibold text-slate-900">{item.title}</h4><p className="text-[11px] leading-5 text-slate-600">{item.description}</p></div></div>
+                <Button size="sm" variant="outline" onClick={() => onNavigate?.('insights')} className="h-7 shrink-0 text-xs">Insights</Button>
+              </div>)}
               {attendanceReviewCount > 0 && <div className="flex items-center justify-between gap-3 rounded-lg border border-red-200 bg-red-50/70 p-3">
                 <div className="flex items-center gap-3"><div className="rounded-full bg-red-100 p-2 text-red-700"><AlertCircle className="h-4 w-4" /></div><div><h4 className="text-xs font-semibold text-red-950">Attendance records to review</h4><p className="text-[11px] leading-5 text-red-800">{attendanceReviewCount} expected {attendanceReviewCount === 1 ? "employee has" : "employees have"} no recorded attendance. This is not automatically a confirmed absence.</p></div></div>
                 <Button size="sm" variant="outline" onClick={() => onNavigate?.("attendance")} className="h-7 shrink-0 text-xs">Review</Button>
@@ -451,7 +458,7 @@ export function AdminOverviewView({
                 </div>
                 <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => document.getElementById("overview-audit-trail")?.scrollIntoView({ behavior: "smooth" })}>Logs</Button>
               </div>}
-              {attendanceReviewCount === 0 && metrics.pendingPayrollCount === 0 && failedAuditEvents === 0 && <div className="flex items-center gap-3 rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-900"><CheckCircle2 className="h-5 w-5 shrink-0" /><span>No attendance, payroll, or audit items currently require review.</span></div>}
+              {!insightsAttention.loading && insightsAttention.items.length === 0 && attendanceReviewCount === 0 && metrics.pendingPayrollCount === 0 && failedAuditEvents === 0 && <div className="flex items-center gap-3 rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-900"><CheckCircle2 className="h-5 w-5 shrink-0" /><span>No attendance, payroll, audit, or Insights items currently require review.</span></div>}
             </CardContent>
           </Card>
 

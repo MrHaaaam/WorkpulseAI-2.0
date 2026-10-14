@@ -1,7 +1,7 @@
 import mongoose from 'mongoose';
 import { requireRole } from '../security.js';
 import { verifyAdminPassword } from './auth.js';
-import { attendanceSessions, attendanceVersion, correctAttendance, validAttendanceDate } from '../attendance-corrections.js';
+import { attendanceCorrectionBlockReason, attendanceSessions, attendanceVersion, correctAttendance, validAttendanceDate } from '../attendance-corrections.js';
 
 const employeeAccess = requireRole('regular', 'extra', 'manager', 'supervisor');
 function fail(res, error) {
@@ -31,11 +31,16 @@ export function registerEmployeeUpdates(router, { getSettings, configuredHourlyR
       const date = String(req.query.date || ''); const employeeId = String(req.query.employeeId || '');
       if (!validAttendanceDate(date) || !employeeId) return res.status(400).json({ error: 'Choose an employee and valid date.' });
       const db = mongoose.connection.db;
-      const employee = await db.collection('employees').findOne({ id: employeeId, archived: { $ne: true } }, { projection: { id: 1, name: 1 } });
+      const employee = await db.collection('employees').findOne({ id: employeeId, archived: { $ne: true } });
       if (!employee) return res.status(404).json({ error: 'Employee not found.' });
       await enforceAutomaticClockOut(db, await getSettings(db));
       const attendance = await db.collection('attendance').findOne({ employeeId, date });
-      res.json({ employee: { id: employee.id, name: employee.name }, date, sessions: attendanceSessions(attendance).map(item => ({ checkIn: item.checkIn, checkOut: item.checkOut })), version: attendanceVersion(attendance) });
+      const [leaves, payroll] = await Promise.all([
+        db.collection('leave_requests').find({ employeeId, status: 'approved' }).toArray(),
+        db.collection('payroll_requests').find({ employeeId }).toArray(),
+      ]);
+      const blockedReason = attendanceCorrectionBlockReason({ employee, attendance, leaves, payroll, date });
+      res.json({ employee: { id: employee.id, name: employee.name }, date, blockedReason, sessions: attendanceSessions(attendance).map(item => ({ checkIn: item.checkIn, checkOut: item.checkOut })), version: attendanceVersion(attendance) });
     } catch (error) { fail(res, error); }
   });
   router.patch('/attendance/correction', requireRole('admin'), async (req, res) => {
@@ -48,7 +53,7 @@ export function registerEmployeeUpdates(router, { getSettings, configuredHourlyR
       const db = mongoose.connection.db;
       await enforceAutomaticClockOut(db, await getSettings(db));
       const result = await correctAttendance(db, { employeeId: req.body?.employeeId, date: req.body?.date, sessionNumber: req.body?.sessionNumber, reason: req.body?.reason,
-        version: req.body?.version, checkIn: req.body?.checkIn, checkOut: req.body?.checkOut || '', actor: req.auth.actor.email,
+        version: req.body?.version, checkIn: req.body?.checkIn, checkOut: req.body?.checkOut || '', actor: req.auth.actor.email, actorName: req.auth.actor.name || req.auth.actor.fullName || req.auth.actor.email,
         getSessionDefaults: async (tx, employee) => { const current = await getSettings(tx); return { hourlyRate: configuredHourlyRate(employee, current), workStartTime: current.shift.startTime, workStopTime: current.shift.workStopTime, overtimeStopTime: current.shift.autoClockOutTime }; },
         refreshPayroll: async (tx, employee, date) => preparePayrollRecord(tx, employee, payrollPeriodKey(new Date(`${date}T12:00:00+08:00`)), await getSettings(tx)),
       });

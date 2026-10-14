@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
-import { Bell, CalendarDays, Clock, LogOut, Menu, Sparkles } from 'lucide-react';
+import { Bell, CalendarDays, Clock, LogOut, Menu, Sparkles, Users } from 'lucide-react';
 import { Dialog, DialogHeader } from '../components/ui/Dialog';
 import { Button } from '../components/ui/Button';
 import { AdminSidebar, type ViewKey } from '../components/AdminSidebar';
@@ -232,8 +232,8 @@ export function AppRoutes() {
   const [loggingOut, setLoggingOut] = useState(false);
   const [logoutError, setLogoutError] = useState('');
   const [notificationsOpen, setNotificationsOpen] = useState(false);
-  const [notifications, setNotifications] = useState<{ id: string; category: 'leave' | 'attendance' | 'insights'; title: string; description: string; createdAt: string; expiresAt: string; read: boolean }[]>([]);
-  const [notificationCategory, setNotificationCategory] = useState<'all' | 'leave' | 'attendance' | 'insights'>('all');
+  const [notifications, setNotifications] = useState<{ id: string; category: 'leave' | 'attendance' | 'insights' | 'employees'; title: string; description: string; createdAt: string; expiresAt: string; read: boolean }[]>([]);
+  const [notificationCategory, setNotificationCategory] = useState<'all' | 'leave' | 'attendance' | 'insights' | 'employees'>('all');
   const [newNotificationIds, setNewNotificationIds] = useState<string[]>([]);
   const [notificationNow, setNotificationNow] = useState(Date.now);
   const visibleNotifications = notifications.filter((item) => new Date(item.expiresAt).getTime() > notificationNow).sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
@@ -241,6 +241,7 @@ export function AppRoutes() {
   const notificationCategories = [
     { key: 'all', label: 'All', icon: Bell },
     { key: 'leave', label: 'Leave Requests', icon: CalendarDays },
+    { key: 'employees', label: 'Employees', icon: Users },
     { key: 'attendance', label: 'Attendance', icon: Clock },
     { key: 'insights', label: 'Insights', icon: Sparkles },
   ] as const;
@@ -558,7 +559,7 @@ export function AppRoutes() {
         <div className="flex h-full min-h-0 flex-col" role="dialog" aria-modal="true" aria-labelledby="notifications-title" onKeyDown={(event) => { if (event.key === 'Escape') setNotificationsOpen(false); }}>
           <DialogHeader><div><h2 id="notifications-title" className="text-lg font-bold text-slate-900">Notifications</h2><p className="mt-1 text-sm text-slate-500">Latest updates from the last 3 days. Opening this panel marks them as read.</p></div></DialogHeader>
           {notificationReadError && <p role="alert" className="shrink-0 px-4 pt-3 text-xs text-amber-700 sm:px-6">{notificationReadError}</p>}
-          <div className="grid shrink-0 grid-cols-2 gap-2 px-4 pt-3 sm:grid-cols-4 sm:px-6" aria-label="Notification categories">
+          <div className="grid shrink-0 grid-cols-2 gap-2 px-4 pt-3 sm:grid-cols-5 sm:px-6" aria-label="Notification categories">
             {notificationCategories.map(({ key, label, icon: Icon }) => <button key={key} type="button" aria-pressed={notificationCategory === key} onClick={() => setNotificationCategory(key)} className={`inline-flex min-h-11 min-w-0 items-center justify-center gap-1.5 rounded-lg px-2 py-2 text-xs font-semibold transition ${notificationCategory === key ? 'bg-violet-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-violet-50'}`}><Icon className="h-3.5 w-3.5" />{label}<span className="rounded-full bg-white/20 px-1.5">{visibleNotifications.filter((item) => key === 'all' || item.category === key).length}</span></button>)}
           </div>
           <div className="min-h-0 flex-1 space-y-2 overflow-y-auto overscroll-contain px-4 py-4 sm:px-6">

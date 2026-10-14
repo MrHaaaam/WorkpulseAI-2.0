@@ -1,5 +1,7 @@
 # WorkPulse Security Implementation
 
+Historical implementation notes. For the October 12, 2026 changes, current test evidence, and deployment limitations, see [Security review results](SECURITY_REVIEW_RESULTS.md). Some descriptions below predate employee authentication and the current five-hour session lifetime.
+
 ## Scope
 
 This document describes the controls implemented in the WorkPulse source tree. Generated output and dependencies under `dist` and `node_modules` were excluded from review.

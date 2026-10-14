@@ -25,6 +25,10 @@
     "recharts": "^3.9.2",
     "tailwind-merge": "^3.6.0"
   },
+  "overrides": {
+    "exceljs": { "uuid": "^11.1.1" },
+    "source-map-js": "^1.2.2"
+  },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
     "@types/node": "^24.13.2",

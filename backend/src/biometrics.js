@@ -15,6 +15,23 @@ export class BiometricError extends Error {
   }
 }
 
+export const DUPLICATE_FINGERPRINT_MESSAGE = 'This fingerprint belongs to an existing or archived employee account. Ask an administrator to review the registration.';
+
+export function fingerprintAccountProblem(employee) {
+  if (!employee) return 'This fingerprint has a saved registration, but its employee record is unavailable. Please contact an administrator.';
+  if (employee.archived || employee.banned || employee.status === 'inactive') return 'Your employee account is inactive. Please contact an administrator.';
+  return null;
+}
+
+export async function registeredFingerprintDecision(db, probe, activeTemplates, match = findFingerprintDecision) {
+  const decision = await match(probe, activeTemplates);
+  if (decision.accepted) return decision;
+  const retained = await db.collection('biometric_templates').find({ employeeId: { $nin: activeTemplates.map(template => template.employeeId) } }).toArray();
+  if (!retained.length) return decision;
+  const retainedDecision = await match(probe, retained);
+  return retainedDecision.accepted ? retainedDecision : decision;
+}
+
 export function normalizeFingerprintSamples(value, requiredCount = 1) {
   if (!Array.isArray(value) || value.length !== requiredCount) {
     throw new BiometricError(requiredCount === 1 ? 'One fingerprint scan is required' : `Capture the same finger ${requiredCount} times`);
@@ -139,7 +156,7 @@ export async function validateEnrollmentSamples(samples) {
     throw new BiometricError('The reader sample format is not supported by the installed HID FingerJet matcher. Recapture using a supported reader.', 422);
   }
 
-  if (!matchingPairs.length) throw new BiometricError('The enrollment scans did not match. Use the same finger for all three scans.');
+  if (!matchingPairs.length) throw new BiometricError('The scans did not match each other. Lift and scan the same finger for all three scans.');
 
   // All three impressions must agree. This keeps three useful reference
   // templates without allowing unrelated fingers under one employee identity.
@@ -179,6 +196,6 @@ export async function rejectDuplicateEnrollment(db, enrollmentTemplates) {
   if (!storedTemplates.length) return;
   for (const enrollmentTemplate of enrollmentTemplates) {
     const duplicate = await findFingerprintMatch(enrollmentTemplate, storedTemplates);
-    if (duplicate) throw new BiometricError('This fingerprint is already registered. Use a different finger that is not saved in the system.', 409);
+    if (duplicate) throw new BiometricError(DUPLICATE_FINGERPRINT_MESSAGE, 409);
   }
 }

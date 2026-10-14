@@ -2,10 +2,31 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import mongoose from 'mongoose';
 import router from './routes/api.js';
+import { registerEmployeeUpdates } from './routes/employee-updates.js';
 
 const route = (path, method) => router.stack.find(layer => layer.route?.path === path && layer.route.methods[method]).route.stack;
 const response = () => ({ code: 200, locals: {}, status(code) { this.code = code; return this; }, json(body) { this.body = body; return this; }, setHeader() {} });
 const request = role => ({ auth: { actor: { role, employeeId: 'E1', email: 'test@example.test' } } });
+test('correction preview returns the leave restriction even when no attendance session exists', async () => {
+  const original = mongoose.connection.db;
+  const handlers = new Map();
+  const previewRouter = Object.fromEntries(['get', 'post', 'patch'].map(method => [method, (path, ...stack) => handlers.set(`${method}:${path}`, stack.at(-1))]));
+  registerEmployeeUpdates(previewRouter, { getSettings: async () => ({}), enforceAutomaticClockOut: async () => {} });
+  mongoose.connection.db = { collection(name) { return {
+    findOne: async () => name === 'employees' ? { id: 'E1', name: 'Alex', status: 'active' } : null,
+    find: filter => ({ toArray: async () => {
+      assert.equal(filter.employeeId, 'E1');
+      return name === 'leave_requests' ? [{ status: 'approved', approvedDates: ['2026-10-09'] }] : [];
+    } }),
+  }; } };
+  try {
+    const res = response();
+    await handlers.get('get:/attendance/correction')({ ...request('admin'), query: { employeeId: 'E1', date: '2026-10-09' } }, res);
+    assert.equal(res.code, 200);
+    assert.deepEqual(res.body.sessions, []);
+    assert.match(res.body.blockedReason, /approved leave/);
+  } finally { mongoose.connection.db = original; }
+});
 test('all employee roles can access their inbox but cannot edit attendance', () => {
   for (const role of ['regular', 'extra', 'manager', 'supervisor']) {
     let allowed = false;

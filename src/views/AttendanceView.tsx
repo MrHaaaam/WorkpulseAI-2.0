@@ -26,7 +26,9 @@ export interface AttendanceRecord {
   sessions?: { checkIn: string; checkOut?: string | null }[];
   sessionCount?: number;
   manualRecorded?: boolean;
+  manualRecordedByName?: string;
   editedByAdmin?: boolean;
+  editedByAdminName?: string;
   status: "Present" | "Absent" | "On Leave" | "Idle";
 }
 
@@ -224,8 +226,8 @@ export function AttendanceView(props: {
                         <div className="font-medium text-slate-900">{record.name}</div>
                         <div className="text-xs text-slate-400">{employeeRoleLabel(record.role)}</div>
                         {props.role === "admin" && <button type="button" onClick={() => setCorrection({ employeeId: record.employeeId, date: record.date })} className="mt-2 inline-flex items-center gap-1 text-xs font-semibold text-violet-700 hover:underline"><Pencil className="h-3 w-3" />Edit times</button>}
-                        {record.manualRecorded && <span className="mt-1 inline-flex items-center gap-1 rounded-full bg-violet-100 px-2 py-0.5 text-[11px] font-semibold text-violet-700"><ShieldCheck className="h-3 w-3" />Recorded by admin</span>}
-                        {record.editedByAdmin && <span className="ml-1 mt-1 inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-semibold text-amber-700"><Pencil className="h-3 w-3" />Edited by admin</span>}
+                        {record.manualRecorded && <span className="mt-1 inline-flex items-center gap-1 rounded-full bg-violet-100 px-2 py-0.5 text-[11px] font-semibold text-violet-700"><ShieldCheck className="h-3 w-3" />Recorded by admin {record.manualRecordedByName || 'Administrator'}</span>}
+                        {record.editedByAdmin && <span className="ml-1 mt-1 inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-semibold text-amber-700"><Pencil className="h-3 w-3" />Edited by admin {record.editedByAdminName || 'Administrator'}</span>}
                       </TableCell>
                       <TableCell className="whitespace-nowrap text-slate-600">{displayWorkforceDate(record.date)}</TableCell>
                       <TableCell>

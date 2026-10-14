@@ -1,8 +1,9 @@
 import { employeeRoleLabel } from '../../shared/employee-roles.js';
 import { type AttendanceSource } from '../components/AttendanceSourceLabels';
+import { AttendanceCorrectionHistory, type AttendanceCorrection, type CorrectionSession } from '../components/AttendanceCorrectionHistory';
 import { Input } from "../components/ui/Input";
 import { Textarea } from "../components/ui/Input";
-import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react'
+import { Fragment, useCallback, useEffect, useMemo, useState, type FormEvent } from 'react'
 import {
   ArrowRight, CalendarDays, CheckCircle2, ChevronRight, Clock3, Fingerprint, LayoutDashboard, LogOut,
   AlertTriangle, Eye, Mail, MapPin, Menu, Pencil, Phone, Printer, RefreshCw, Save, Send, ShieldCheck, UserRound, WalletCards, X,
@@ -25,8 +26,8 @@ type EmployeeProfile = {
   role: 'regular' | 'extra' | 'manager' | 'supervisor'; status: string; biometricStatus: string;
   hourlyRate?: number; grossSalary?: number;
 }
-type AttendanceSession = AttendanceSource & { checkIn: string }
-type Attendance = AttendanceSource & { date: string; checkIn?: string; sessions?: AttendanceSession[]; status: string }
+type AttendanceSession = AttendanceSource & CorrectionSession & { checkIn: string }
+type Attendance = AttendanceSource & CorrectionSession & { date: string; checkIn?: string; sessions?: AttendanceSession[]; status: string; correctionHistory?: AttendanceCorrection[] }
 type Leave = { id: string; leaveType: string; startDate: string; endDate: string; requestedDates?: string[]; approvedDates?: string[]; totalDays: number; reason: string; status: string }
 type Payroll = { id: string; amount?: number; advanceDeduction?: number; advanceDeductionPeriods?: { periodStart: string; amount: number }[]; grossAmount?: number; currentAmount?: number; carryOverAmount?: number; rolledInto?: string; additions?: { label: string; value: number }[]; carriedQuarterlyAdditions?: { label: string; value: number }[]; hoursWorked?: number; hourlyRate?: number; rateBreakdown?: { rate: number; hours: number; amount: number }[]; status: string; periodStart?: string; paidAt?: string; warnings?: string[] }
 type AttendanceFlag = { tier: 'green' | 'orange' | 'red'; absenceDays: number; periodStart: string; periodEnd: string }
@@ -322,13 +323,13 @@ function AttendanceRows({ records, showDate = true }: { records: Attendance[]; s
     <thead className="border-b border-slate-100 bg-slate-50/70 text-xs font-medium uppercase tracking-wide text-slate-500"><tr><th className="px-4 py-3">{showDate ? 'Date' : 'Attendance'}</th><th className="px-4 py-3">Sessions</th><th className="px-4 py-3">Status</th></tr></thead>
     <tbody>{records.map(record => {
       const sessions = attendanceSessions(record)
-      const edited = sessions.some(session => Boolean(session.correctedAt))
+      const edited = Boolean(record.correctionHistory?.length) || sessions.some(session => Boolean(session.correctedAt))
       const manual = sessions.some(session => session.captureMethod === 'admin-manual' || session.manualClockOut || session.forcedClockOut || session.correctedAt)
-      return <tr key={record.date} className="border-b border-slate-100 last:border-0">
-        <td className="px-4 py-5 align-middle"><p className="whitespace-nowrap text-slate-600">{formatDate(record.date)}</p>{manual && <span className="mt-2 inline-flex items-center gap-1 rounded-full bg-violet-100 px-2 py-0.5 text-[11px] font-semibold text-violet-700"><ShieldCheck className="h-3 w-3" />Recorded by admin</span>}{edited && <span className="ml-1 mt-2 inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-semibold text-amber-700"><Pencil className="h-3 w-3" />Edited by admin</span>}</td>
+      return <Fragment key={record.date}><tr className="border-b border-slate-100 last:border-0">
+        <td className="px-4 py-5 align-middle"><p className="whitespace-nowrap text-slate-600">{formatDate(record.date)}</p>{manual && <span className="mt-2 inline-flex items-center gap-1 rounded-full bg-violet-100 px-2 py-0.5 text-[11px] font-semibold text-violet-700"><ShieldCheck className="h-3 w-3" />Recorded by admin {[...new Set(sessions.flatMap(session => [session.captureMethod === 'admin-manual' ? session.manualRecordedByName || session.manualRecordedBy : null, session.manualClockOut || session.forcedClockOut ? session.manualClockOutByName || session.manualClockOutBy : null]).filter(Boolean))].join(', ') || 'Administrator'}</span>}{edited && <span className="ml-1 mt-2 inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-semibold text-amber-700"><Pencil className="h-3 w-3" />Edited by admin {record.correctionHistory?.at(-1)?.correctedByName || record.correctionHistory?.at(-1)?.correctedBy || sessions.filter(session => session.correctedAt).at(-1)?.manualRecordedByName || sessions.filter(session => session.correctedAt).at(-1)?.manualRecordedBy || 'Administrator'}</span>}</td>
         <td className="px-4 py-5 align-middle">{record.status === 'On Leave' ? <p className="text-indigo-600">Approved leave: no time-in required</p> : !sessions.length ? <p className="text-slate-400">No attendance session recorded</p> : <div className="flex flex-wrap gap-2">{sessions.map((session, index) => <div key={index} className="min-w-36 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2"><p className="mb-1 text-[10px] font-bold uppercase tracking-wide text-violet-600">Session {index + 1}</p><p className="whitespace-nowrap text-xs font-medium text-slate-700">{formatTime(session.checkIn)} <ArrowRight aria-hidden="true" className="mx-1 inline-block h-3 w-3 text-slate-300" /> {session.checkOut ? formatTime(session.checkOut) : <span className="text-amber-600">Open</span>}</p></div>)}</div>}</td>
         <td className="px-4 py-5 align-middle"><Status value={record.status} /></td>
-      </tr>
+      </tr>{edited && <tr className="border-b border-slate-100 last:border-0"><td colSpan={3} className="px-4 pb-5 pt-1"><AttendanceCorrectionHistory history={record.correctionHistory} sessions={sessions} expanded={!showDate} /></td></tr>}</Fragment>
     })}</tbody>
   </table></div>
 }

@@ -5,7 +5,6 @@ import { getSystemControls } from './system-controls.js';
 
 const SESSION_COOKIE = 'workpulse_session';
 export const SESSION_LIFETIME_MS = 5 * 60 * 60_000;
-const rateBuckets = new Map();
 
 function digest(value) {
   return crypto.createHash('sha256').update(String(value)).digest('hex');
@@ -36,11 +35,22 @@ export function getRequestToken(req) {
 }
 
 export function rateLimit({ windowMs, max, keyPrefix }) {
+  const rateBuckets = new Map();
+  let lastCleanup = 0;
   return (req, res, next) => {
     const now = Date.now();
-    const identity = `${keyPrefix}:${req.ip}:${String(req.body?.email ?? '').trim().toLowerCase()}`;
+    // A caller must not evade an IP budget by changing a body field such as email.
+    const identity = `${keyPrefix}:${req.ip}`;
+    if (now - lastCleanup >= Math.min(windowMs, 60_000)) {
+      for (const [key, value] of rateBuckets) if (value.resetAt <= now) rateBuckets.delete(key);
+      lastCleanup = now;
+    }
     const bucket = rateBuckets.get(identity);
     if (!bucket || bucket.resetAt <= now) {
+      if (!bucket && rateBuckets.size >= 10_000) {
+        res.setHeader('Retry-After', String(Math.ceil(windowMs / 1000)));
+        return res.status(429).json({ error: 'Request capacity exceeded. Try again later.', retryAfterSeconds: Math.ceil(windowMs / 1000) });
+      }
       rateBuckets.set(identity, { count: 1, resetAt: now + windowMs });
       return next();
     }

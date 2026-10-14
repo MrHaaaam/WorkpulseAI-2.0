@@ -30,6 +30,9 @@ import { getSystemControls, updateSystemControls } from '../system-controls.js';
 import { auditEvent, auditScreenName, authenticate, csrfProtection, pick, requireRole, rateLimit } from '../security.js';
 import {
   BiometricError,
+  DUPLICATE_FINGERPRINT_MESSAGE,
+  fingerprintAccountProblem,
+  registeredFingerprintDecision,
   encryptFingerprintSamples,
   fingerprintMatchStrength,
   fingerprintMatchThreshold,
@@ -172,6 +175,14 @@ export async function reconcileIdleDaysWithSchedule(db, settings, today) {
 }
 
 router.use(authenticate, csrfProtection);
+const biometricLimit = rateLimit({ windowMs: 60_000, max: 30, keyPrefix: 'biometric' });
+router.use((req, res, next) => {
+  const matchingRoute = req.path.startsWith('/fingerprints/') || req.path === '/attendance/kiosk'
+    || (req.method === 'PUT' && /^\/employees\/[^/]+\/fingerprint$/.test(req.path))
+    || (req.method === 'POST' && req.path === '/employees' && req.body?.fingerprintSamples?.length);
+  if (req.method !== 'GET' && matchingRoute) return biometricLimit(req, res, next);
+  next();
+});
 router.use(employeeNotificationMiddleware);
 router.use((req, res, next) => {
   if (!['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method)) return next();
@@ -463,7 +474,7 @@ router.post('/offline/sync', async (req, res) => {
       getSessionDefaults: async (tx, employee) => { const settings = await getSettings(tx); return { hourlyRate: configuredHourlyRate(employee, settings), workStartTime: settings.shift.startTime, workStopTime: settings.shift.workStopTime, overtimeStopTime: settings.shift.autoClockOutTime }; },
       refreshPayroll: async (tx, employee, date) => preparePayrollRecord(tx, employee, payrollPeriodKey(new Date(`${date}T12:00:00+08:00`)), await getSettings(tx)),
     });
-    invalidateInsights();
+    aiInsightsCache = { expiresAt: 0, value: null };
     res.locals.auditMetadata = { offlineAction: operation.kind, employeeId: result.employeeId, date: result.date, operationId: operation.id };
     res.json(result);
   } catch (error) {
@@ -1264,7 +1275,7 @@ export async function enforceAutomaticClockOut(db, settings) {
   await Promise.all(openRecords.map(async (record) => {
     const sessions = attendanceSessions(record);
     const openSessionIndex = sessions.findLastIndex((session) => !session.checkOut);
-    if (openSessionIndex < 0) return;
+    if (openSessionIndex < 0 || sessions[openSessionIndex].suppressAutomaticClockOut) return;
     const checkIn = parseAttendanceTime(record.date, sessions[openSessionIndex].checkIn);
     if (!checkIn) return;
     const automaticOut = parseAttendanceTime(record.date, sessions[openSessionIndex].overtimeStopTime || settings.shift.autoClockOutTime);
@@ -1434,7 +1445,7 @@ router.post('/fingerprints/check-scan', async (req, res) => {
     const [fingerprintSample] = normalizeFingerprintSamples(req.body?.fingerprintSamples, 1);
     const storedTemplates = await db.collection('biometric_templates').find({}).toArray();
     const duplicate = storedTemplates.length ? await findFingerprintMatch(fingerprintSample, storedTemplates) : null;
-    if (duplicate) return res.status(409).json({ error: 'This fingerprint is already registered. Use a different finger that is not saved in the system.' });
+    if (duplicate) return res.status(409).json({ error: DUPLICATE_FINGERPRINT_MESSAGE });
     res.json({ available: true });
   } catch (error) {
     if (error instanceof BiometricError) return res.status(error.status).json({ error: error.message });
@@ -1450,7 +1461,7 @@ router.post('/fingerprints/identify', async (req, res) => {
     const deviceUid = String(req.body?.deviceUid ?? '').trim().slice(0, 200);
     const templates = await activeBiometricTemplates(db);
     const startedAt = Date.now();
-    const decision = await findFingerprintDecision(fingerprintSample, templates);
+    const decision = await registeredFingerprintDecision(db, fingerprintSample, templates);
     const responseTimeMs = Date.now() - startedAt;
     if (!decision.accepted || !decision.best?.employeeId) {
       await db.collection('biometric_evaluation_trials').insertOne({
@@ -1464,10 +1475,11 @@ router.post('/fingerprints/identify', async (req, res) => {
       return res.json({ recognized: false, employeeId: null, employeeName: null, matchStrength: fingerprintMatchStrength(decision.best?.score, decision.threshold) });
     }
     const employee = await db.collection('employees').findOne(
-      { id: decision.best.employeeId, archived: { $ne: true }, banned: { $ne: true }, status: { $ne: 'inactive' } },
-      { projection: { _id: 0, id: 1, name: 1 } },
+      { id: decision.best.employeeId },
+      { projection: { _id: 0, id: 1, name: 1, archived: 1, banned: 1, status: 1 } },
     );
-    if (!employee) return res.status(404).json({ error: 'The matching employee account is not active.' });
+    const accountProblem = fingerprintAccountProblem(employee);
+    if (accountProblem) return res.status(employee ? 403 : 404).json({ error: accountProblem });
     await db.collection('biometric_evaluation_trials').insertOne({
       id: crypto.randomUUID(), mode: 'automatic-identification', expectedType: 'automatic',
       expectedEmployeeId: null, expectedEmployeeName: null, actualEmployeeId: employee.id, actualEmployeeName: employee.name,
@@ -1574,7 +1586,7 @@ router.post('/employees', async (req, res) => {
       await session.withTransaction(async () => {
         const consumed = await db.collection('employee_email_verifications').deleteOne({ _id: verification._id, expiresAt: { $gt: new Date() } }, { session });
         if (consumed.deletedCount !== 1) throw new Error('Email verification expired or was already used. Request a new code.');
-        await db.collection('employees').insertOne({ ...employee, biometricStatus, createdAt, updatedAt: createdAt }, { session });
+        await db.collection('employees').insertOne({ ...employee, biometricStatus, createdBy: req.auth.actor.email, createdByName: req.auth.actor.name || req.auth.actor.fullName || req.auth.actor.email, createdAt, updatedAt: createdAt }, { session });
         await db.collection('employee_accounts').insertOne({
           employeeId: employee.id, email: employee.email, passwordHash,
           role: employeeRole(employee.role), active: true, mustChangePassword: true, emailVerifiedAt: createdAt, createdAt, updatedAt: createdAt,
@@ -1891,7 +1903,7 @@ router.get('/payroll-requests', async (req, res) => {
     if (!db) return res.status(500).json({ error: 'MongoDB connection not ready' });
 
     const employeeIds = await visibleEmployeeIds(db);
-    const payrollRequests = await db.collection('payroll_requests').find({ employeeId: { $in: employeeIds } }).sort({ createdAt: -1, _id: -1 }).limit(2_000).toArray();
+    const payrollRequests = await db.collection('payroll_requests').find({ employeeId: { $in: employeeIds } }, { projection: { id: 1, employeeId: 1, employeeName: 1, amount: 1, status: 1, currentAmount: 1, carryOverAmount: 1, periodStart: 1, grossAmount: 1, advanceDeduction: 1, advanceDeductionPeriods: 1, rateBreakdown: 1, additions: 1, quarterlyAdditions: 1, quarterlyKeys: 1, carriedQuarterlyAdditions: 1, bonusAmount: 1, hoursWorked: 1, regularHours: 1, overtimeHours: 1, hourlyRate: 1, createdAt: 1, paidAt: 1, paymentActionId: 1, settledBy: 1, rolledInto: 1, rejectedAt: 1, warnings: 1 } }).sort({ createdAt: -1, _id: -1 }).limit(2_000).toArray();
 
     res.json(
       payrollRequests.map((p) => ({
@@ -2371,6 +2383,9 @@ router.patch('/payroll-requests/undo-last-payment', async (req, res) => {
 
 router.post('/payroll-requests', async (req, res) => {
   try {
+    if (typeof req.body?.employeeId !== 'string' || !/^[A-Za-z0-9_-]{1,100}$/.test(req.body.employeeId)) {
+      return res.status(400).json({ error: 'Choose a valid employee ID.' });
+    }
     const db = mongoose.connection.db;
     const employee = await db.collection('employees').findOne({ id: req.body?.employeeId, archived: { $ne: true } });
     if (!employee) return res.status(404).json({ error: 'Employee not found' });
@@ -2560,42 +2575,6 @@ router.get('/leave-requests', async (req, res) => {
   }
 });
 
-router.patch('/payroll-requests/:id/reset', async (req, res) => {
-  try {
-    const verification = await verifyAdminPassword(req, req.body?.password);
-    if (!verification.valid) {
-      if (verification.retryAfterSeconds) res.setHeader('Retry-After', String(verification.retryAfterSeconds));
-      return res.status(verification.forbidden ? 403 : verification.retryAfterSeconds ? 429 : 401).json({ error: verification.forbidden ? 'Administrator access required' : verification.retryAfterSeconds ? `Incorrect admin password. Try again in ${verification.retryAfterSeconds} seconds.` : 'Incorrect admin password' });
-    }
-    const db = mongoose.connection.db;
-    const existing = await db.collection('payroll_requests').findOne({ id: req.params.id });
-    if (!existing) return res.status(404).json({ error: 'Payroll record not found' });
-    if (existing.status === 'carried_over' || existing.rolledInto) return res.status(409).json({ error: 'This payroll was carried forward. Review the destination payroll instead.' });
-    const quarterlySource = await db.collection('payroll_requests').findOne({ employeeId: existing.employeeId, $or: [{ id: existing.id }, { settledBy: existing.id }, { rolledInto: existing.id }], 'quarterlyKeys.0': { $exists: true } });
-    if (existing.carriedQuarterlyAdditions?.length || (quarterlySource && (['paid', 'approved'].includes(existing.status) || quarterlySource.id !== existing.id))) return res.status(409).json({ error: 'Quarterly additions are linked to this payment. Undo a paid payment first; carried quarterly balances must be settled through their destination payroll.' });
-    if (['paid', 'approved'].includes(existing.status)) return res.status(409).json({ error: 'Paid payroll cannot be reset. Use Undo Payment with a reason only if payment was not made or was returned.' });
-    const resetAt = new Date();
-    const result = await db.collection('payroll_requests').findOneAndUpdate(
-      { _id: existing._id, status: existing.status, updatedAt: existing.updatedAt ?? { $exists: false } },
-      {
-        $set: {
-          hoursWorked: 0, regularHours: 0, overtimeHours: 0, hourlyRate: 0, rateBreakdown: [], grossAmount: 0, bonusAmount: 0, additions: [], advanceDeduction: 0, currentAmount: 0,
-          carryOverAmount: 0, amount: 0, warnings: [], status: 'processing',
-          calculationResetAt: resetAt, resetBy: req.auth.actor.email, updatedAt: resetAt,
-        },
-        $unset: { quarterlyKeys: '', quarterlyAdditions: '', carriedQuarterlyAdditions: '', paidAt: '', approvedBy: '', paymentActionId: '', rejectedAt: '', rejectedBy: '', settledBy: '', undoneAt: '', undoneBy: '' },
-      },
-      { returnDocument: 'after' },
-    );
-    if (!result) return res.status(409).json({ error: 'Payroll changed. Refresh before resetting.' });
-    res.locals.auditMetadata = { payrollAction: 'reset', targetName: existing.employeeName, employeeId: existing.employeeId, periodStart: existing.periodStart, recordCount: 1 };
-    res.json(result);
-  } catch (error) {
-    console.error('Payroll reset failed:', error instanceof Error ? error.message : error);
-    res.status(500).json({ error: 'Payroll could not be reset' });
-  }
-});
-
 router.post('/attendance/audit-export', async (req, res) => {
   res.locals.auditMetadata = {
     attendanceAction: 'exported', exportFormat: req.body?.format === 'csv' ? 'csv' : 'unknown',
@@ -2711,7 +2690,7 @@ router.get('/attendance', async (req, res) => {
     if (/^\d{4}-\d{2}-\d{2}$/.test(String(req.query.to || ''))) dateFilter.$lte = String(req.query.to);
     const attendance = await db.collection('attendance').find(
       { employeeId: { $in: employeeIds }, ...(Object.keys(dateFilter).length ? { date: dateFilter } : {}) },
-      { projection: { employeeId: 1, name: 1, role: 1, date: 1, checkIn: 1, checkOut: 1, sessions: 1, status: 1, idleDay: 1, autoClockedOut: 1 } },
+      { projection: { employeeId: 1, name: 1, role: 1, date: 1, checkIn: 1, checkOut: 1, sessions: 1, status: 1, idleDay: 1, autoClockedOut: 1, correctionHistory: 1 } },
     ).sort({ date: -1 }).limit(limit).toArray();
 
     res.json(
@@ -2724,8 +2703,10 @@ router.get('/attendance', async (req, res) => {
         checkOut: a.checkOut,
         sessions: attendanceSessions(a),
         sessionCount: attendanceSessions(a).length,
+        manualRecordedByName: [...new Set(attendanceSessions(a).flatMap(session => [session.captureMethod === 'admin-manual' ? session.manualRecordedByName || session.manualRecordedBy : null, session.manualClockOut || session.forcedClockOut ? session.manualClockOutByName || session.manualClockOutBy : null]).filter(Boolean))].join(', '),
         manualRecorded: attendanceSessions(a).some((session) => session.captureMethod === 'admin-manual' || session.manualClockOut === true),
-        editedByAdmin: attendanceSessions(a).some((session) => Boolean(session.correctedAt)),
+        editedByAdmin: Boolean(a.correctionHistory?.length) || attendanceSessions(a).some((session) => Boolean(session.correctedAt)),
+        editedByAdminName: a.correctionHistory?.at(-1)?.correctedByName || a.correctionHistory?.at(-1)?.correctedBy || attendanceSessions(a).filter(session => session.correctedAt).at(-1)?.manualRecordedByName || attendanceSessions(a).filter(session => session.correctedAt).at(-1)?.manualRecordedBy,
         status: attendanceArrivalStatus(a, settings),
         autoClockedOut: a.autoClockedOut ?? false,
       }))
@@ -2865,7 +2846,7 @@ function manualAttendanceFailure(message, status = 409) {
   return error;
 }
 
-async function recordManualAttendance(db, { employeeId, action, stamp, settings, actor, note, firstSessionOnly = false }) {
+async function recordManualAttendance(db, { employeeId, action, stamp, settings, actor, actorName, note, firstSessionOnly = false }) {
   const employee = await db.collection('employees').findOne({ id: employeeId, archived: { $ne: true }, banned: { $ne: true }, status: { $ne: 'inactive' } });
   if (!employee) throw manualAttendanceFailure('This employee is inactive or unavailable.', 404);
   const existing = await db.collection('attendance').findOne({ employeeId, date: stamp.date });
@@ -2880,7 +2861,7 @@ async function recordManualAttendance(db, { employeeId, action, stamp, settings,
   }
   const problem = manualAttendanceProblem({ action, sessions, workday: scheduledWorkStatus(settings, stamp.date), approvedLeave, maxSessions: MAX_DAILY_ATTENDANCE_SESSIONS });
   if (problem) throw manualAttendanceFailure(problem);
-  const details = { captureMethod: 'admin-manual', manualReason: 'Scanner unavailable', manualNote: note, manualRecordedBy: actor };
+  const details = { captureMethod: 'admin-manual', manualReason: 'Scanner unavailable', manualNote: note, manualRecordedBy: actor, manualRecordedByName: actorName || actor };
   if (action === 'time-in' && !existing) {
     const record = { employeeId, name: employee.name, role: employeeRoleLabel(employee.role), date: stamp.date, checkIn: stamp.time, checkOut: null,
       sessions: [{ checkIn: stamp.time, checkOut: null, checkInAt: stamp.now, hourlyRate: configuredHourlyRate(employee, settings), workStartTime: settings.shift.startTime, workStopTime: settings.shift.workStopTime, overtimeStopTime: settings.shift.autoClockOutTime, ...details }],
@@ -2891,12 +2872,12 @@ async function recordManualAttendance(db, { employeeId, action, stamp, settings,
   } else {
     if (action === 'time-out') {
       if (!checkoutIsChronological(stamp.date, last, stamp.now)) throw manualAttendanceFailure('Time-out must be after time-in.');
-      sessions[sessions.length - 1] = { ...last, checkOut: stamp.time, checkOutAt: stamp.now, manualClockOut: true, manualClockOutBy: actor, manualClockOutReason: 'Scanner unavailable', manualClockOutNote: note };
+      sessions[sessions.length - 1] = { ...last, checkOut: stamp.time, checkOutAt: stamp.now, manualClockOut: true, manualClockOutBy: actor, manualClockOutByName: actorName || actor, manualClockOutReason: 'Scanner unavailable', manualClockOutNote: note };
     } else {
       sessions.push({ checkIn: stamp.time, checkOut: null, checkInAt: stamp.now, hourlyRate: configuredHourlyRate(employee, settings), workStartTime: settings.shift.startTime, workStopTime: settings.shift.workStopTime, overtimeStopTime: settings.shift.autoClockOutTime, ...details });
     }
     const update = { sessions, sessionCount: sessions.length, checkIn: sessions[0].checkIn, checkOut: action === 'time-out' ? stamp.time : null, lastAction: action, updatedAt: stamp.now,
-      ...(action === 'time-in' ? { status: existing.idleDay || companyIdleDay ? 'Idle' : 'Present', ...(companyIdleDay ? { idleDay: true } : {}), ...(!existing.checkIn ? { ...details, identityVerified: false } : {}) } : { manualClockOutBy: actor, manualClockOutAt: stamp.now }) };
+      ...(action === 'time-in' ? { status: existing.idleDay || companyIdleDay ? 'Idle' : 'Present', ...(companyIdleDay ? { idleDay: true } : {}), ...(!existing.checkIn ? { ...details, identityVerified: false } : {}) } : { manualClockOutBy: actor, manualClockOutByName: actorName || actor, manualClockOutAt: stamp.now }) };
     const updated = await db.collection('attendance').findOneAndUpdate(
       { _id: existing._id, updatedAt: existing.updatedAt ?? { $exists: false }, sessions: existing.sessions ?? { $exists: false } },
       { $set: update, $unset: { automaticAbsence: '' } }, { returnDocument: 'after' },
@@ -2926,7 +2907,7 @@ router.post('/attendance/manual', async (req, res) => {
     const settings = await getSettings(db);
     await enforceAutomaticClockOut(db, settings);
     const note = String(req.body?.note ?? '').trim().slice(0, 500);
-    const result = await recordManualAttendance(db, { employeeId, action, stamp, settings, actor: req.auth.actor.email, note });
+    const result = await recordManualAttendance(db, { employeeId, action, stamp, settings, actor: req.auth.actor.email, actorName: req.auth.actor.name || req.auth.actor.fullName || req.auth.actor.email, note });
     res.locals.auditMetadata = { attendanceAction: action, captureMethod: 'admin-manual', employeeId, targetName: result.name, eventTime: stamp.time, date: stamp.date, manualReason: 'Scanner unavailable', manualNote: note };
     res.json(result);
   } catch (error) {
@@ -2958,7 +2939,7 @@ router.post('/attendance/manual/bulk', async (req, res) => {
     const results = [];
     for (const employeeId of ids) {
       const employeeAction = action === 'mixed' ? employeeActions.find(item => item.employeeId === employeeId).action : action;
-      try { results.push({ ok: true, ...await recordManualAttendance(db, { employeeId, action: employeeAction, stamp, settings, actor: req.auth.actor.email, note, firstSessionOnly: employeeAction === 'time-in' && req.body?.selectionMode === 'all' }) }); }
+      try { results.push({ ok: true, ...await recordManualAttendance(db, { employeeId, action: employeeAction, stamp, settings, actor: req.auth.actor.email, actorName: req.auth.actor.name || req.auth.actor.fullName || req.auth.actor.email, note, firstSessionOnly: employeeAction === 'time-in' && req.body?.selectionMode === 'all' }) }); }
       catch (error) { results.push({ ok: false, employeeId, error: error?.status ? error.message : 'Could not record attendance. Review this employee.' }); }
     }
     const recorded = results.filter((result) => result.ok).length;
@@ -2998,7 +2979,8 @@ router.post('/attendance/kiosk', async (req, res) => {
     const deviceUid = String(req.body?.deviceUid ?? '').trim().slice(0, 200);
     const templates = await activeBiometricTemplates(db);
     const matchStartedAt = Date.now();
-    const decision = await findFingerprintDecision(probe, templates);
+    // Retained registrations explain account restrictions without authorizing attendance.
+    const decision = await registeredFingerprintDecision(db, probe, templates);
     const matched = decision.accepted ? decision.best : null;
     const attemptTime = new Date();
     let verificationAttemptId = null;
@@ -3013,10 +2995,14 @@ router.post('/attendance/kiosk', async (req, res) => {
     } catch (attemptError) {
       console.error('Fingerprint verification attempt could not be logged:', attemptError instanceof Error ? attemptError.message : attemptError);
     }
-    if (!matched) return rejectScan(404, 'no-match', 'Fingerprint not recognized. Use a registered finger.');
+    if (!matched) return rejectScan(404, 'no-match', 'Fingerprint not recognized. Scan again or ask a supervisor for help.');
     const employeeId = matched.employeeId;
-    const employee = await db.collection('employees').findOne({ id: employeeId, archived: { $ne: true }, banned: { $ne: true }, status: { $ne: 'inactive' } });
-    if (!employee) return rejectScan(404, 'employee-unavailable', 'Active employee not found');
+    const employee = await db.collection('employees').findOne({ id: employeeId });
+    const accountProblem = fingerprintAccountProblem(employee);
+    if (accountProblem) {
+      if (verificationAttemptId) await db.collection('biometric_verification_attempts').updateOne({ _id: verificationAttemptId }, { $set: { action: 'employee-unavailable' } });
+      return rejectScan(employee ? 403 : 404, 'employee-unavailable', accountProblem);
+    }
     res.locals.auditMetadata = { ...res.locals.auditMetadata, targetName: employee.name, employeeId };
 
     const stamp = kioskTimestamp();
