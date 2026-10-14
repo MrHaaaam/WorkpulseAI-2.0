@@ -60,6 +60,10 @@ export function AttendanceCorrectionDialog({ initialEmployeeId = '', initialDate
     event.preventDefault(); if (!preview || preview.blockedReason || saving) return;
     setSaving(true); setError('');
     try {
+      if (!checkIn && checkOut) {
+        const session = preview.sessions[sessionNumber - 1];
+        if (!session?.checkIn || session.checkOut) throw new Error(`Session ${sessionNumber} ${session?.checkOut ? `is already closed (${session.checkIn} to ${session.checkOut})` : 'has no recorded time-in'}. A time-out-only request requires an open session. Nothing was saved.`);
+      }
       const windowError = attendanceWindowError(checkIn, checkOut, { ...preview.schedule, ...preview.sessions[sessionNumber - 1] });
       if (windowError) throw new Error(windowError);
       const result = await read(await apiFetch('/api/attendance/correction', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ employeeId, date, sessionNumber, checkIn, checkOut, reason, password, version: preview.version }) }));
@@ -95,7 +99,7 @@ export function AttendanceCorrectionDialog({ initialEmployeeId = '', initialDate
       <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4"><div className="mb-3 flex items-center gap-2 text-sm font-semibold text-slate-800"><ShieldCheck className="h-4 w-4 text-violet-600" />Administrator verification</div><label className="block text-xs font-medium text-slate-600">Admin password<Input required={!isOffline()} type="password" autoComplete="current-password" disabled={saving || Boolean(preview?.blockedReason)} value={password} onChange={event => setPassword(event.target.value)} placeholder="Enter your password to authorize changes" className="mt-1.5" /></label></div>
       {error && <div role="alert" className="rounded-xl bg-rose-50 p-3 text-sm text-rose-700">{error}{employeeId && date && <button type="button" disabled={saving} onClick={() => setReload(key => key + 1)} className="ml-2 underline">Reload current times</button>}</div>}
     </div>
-      <div className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-t border-slate-200 bg-white px-5 py-4 sm:px-6"><p className="flex items-center gap-2 text-xs text-slate-500"><Bell className="h-4 w-4 text-violet-500" />Employee notified after server synchronization</p><div className="flex gap-2"><Button type="button" variant="outline" disabled={saving} onClick={onClose}>Cancel</Button><Button type="submit" disabled={!preview || Boolean(preview?.blockedReason) || loading || saving || Boolean(!checkIn && checkOut) || (!isOffline() && !password) || reason.trim().length < 5}>{saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}{saving ? 'Saving...' : isOffline() ? 'Save locally' : 'Save changes'}</Button></div></div>
+      <div className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-t border-slate-200 bg-white px-5 py-4 sm:px-6"><p className="flex items-center gap-2 text-xs text-slate-500"><Bell className="h-4 w-4 text-violet-500" />Employee notified after server synchronization</p><div className="flex gap-2"><Button type="button" variant="outline" disabled={saving} onClick={onClose}>Cancel</Button><Button type="submit" disabled={!preview || Boolean(preview?.blockedReason) || loading || saving || (!isOffline() && !password) || reason.trim().length < 5}>{saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}{saving ? 'Saving...' : isOffline() ? 'Save locally' : 'Save changes'}</Button></div></div>
     </form>
   </Dialog>;
 }

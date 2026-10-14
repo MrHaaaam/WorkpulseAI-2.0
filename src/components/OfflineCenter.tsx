@@ -10,6 +10,7 @@ import { attendanceWindowError } from '../../shared/attendance-window.js';
 
 const manilaDate = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Manila', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
 const manilaTime = () => new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Manila', hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date());
+const timeMinutes = (value: string) => { const match = /^(\d{1,2}):(\d{2})\s*(AM|PM)?$/i.exec(value); if (!match) return NaN; const hour = match[3] ? Number(match[1]) % 12 + (match[3].toUpperCase() === 'PM' ? 12 : 0) : Number(match[1]); return hour * 60 + Number(match[2]); };
 export function OfflineCenter() {
   const { toast } = useToast();
   const [items, setItems] = useState<OfflineItem[]>([]); const [open, setOpen] = useState(false);
@@ -23,6 +24,7 @@ export function OfflineCenter() {
   const [statusFilter, setStatusFilter] = useState('all');
   const [recordDate, setRecordDate] = useState('');
   const [captureOpen, setCaptureOpen] = useState(false);
+  const [captureError, setCaptureError] = useState('');
   const [discardItem, setDiscardItem] = useState<OfflineItem | null>(null);
   const [discardError, setDiscardError] = useState('');
   const [discarding, setDiscarding] = useState(false);
@@ -97,41 +99,62 @@ export function OfflineCenter() {
     return () => navigator.serviceWorker?.removeEventListener('controllerchange', ready);
   }, []);
   async function capture(event: React.FormEvent) {
-    event.preventDefault(); setBusy(true);
+    event.preventDefault(); setBusy(true); setCaptureError('');
     try {
-      if (!employeeId.trim() || !checkIn || reason.trim().length < 5) throw new Error('Enter employee ID, time-in and a reason.');
+      if (!employeeId.trim() || (!checkIn && !checkOut) || reason.trim().length < 5) throw new Error('Enter employee ID, a time-in or time-out, and a reason. Leave time-in blank to complete an existing open session.');
+      const timeOutOnly = !checkIn && Boolean(checkOut);
       const capturedNow = new Date();
       const today = manilaDate();
       if (date !== today) { setDate(today); throw new Error('The Manila date changed. Review the attendance times and save again for today.'); }
       if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || Number.isNaN(Date.parse(date + 'T00:00:00Z')) || new Date(date + 'T00:00:00Z').toISOString().slice(0, 10) !== date || date > today) throw new Error('Choose today or a valid past date.');
-      if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(checkIn) || (checkOut && !/^([01]\d|2[0-3]):[0-5]\d$/.test(checkOut))) throw new Error('Enter valid attendance times.');
+      if ((checkIn && !/^([01]\d|2[0-3]):[0-5]\d$/.test(checkIn)) || (checkOut && !/^([01]\d|2[0-3]):[0-5]\d$/.test(checkOut))) throw new Error('Enter valid attendance times.');
       if (date < today && !checkOut) throw new Error('Past attendance needs both time-in and time-out.');
       const start = new Date(date + 'T' + checkIn + ':00+08:00');
       const end = checkOut ? new Date(date + 'T' + checkOut + ':00+08:00') : null;
       if (end && end < start) end.setUTCDate(end.getUTCDate() + 1);
       if (end && end.getTime() === start.getTime()) throw new Error('Time-out must be after time-in.');
       if (start > capturedNow || (end && end > capturedNow)) throw new Error('Attendance times cannot be in the future.');
-      if ((await offlineItems()).some(item => item.kind === 'attendance' && item.status !== 'synced' && item.payload.employeeId === employeeId.trim() && item.payload.date === date)) throw new Error('A local attendance record already exists for this employee and date. Review it before adding another.');
+      const queued = (await offlineItems()).find(item => item.kind === 'attendance' && item.status !== 'synced' && item.payload.employeeId === employeeId.trim() && item.payload.date === date);
+      if (queued && timeOutOnly && queued.payload.checkIn && !queued.payload.checkOut && !queued.attemptedAt && queued.status === 'pending') {
+        if (timeMinutes(checkOut) <= timeMinutes(String(queued.payload.checkIn))) throw new Error(`Time-out ${checkOut} must be later than the queued time-in ${queued.payload.checkIn}. This local record was not changed.`);
+        await updateOfflineItem({ ...queued, payload: { ...queued.payload, checkOut } });
+        setCheckOut(''); toast({ title: 'Local time-out saved', description: `Added ${checkOut} to the existing queued Session ${queued.payload.sessionNumber}. Pending sync.`, variant: 'success' }); return;
+      }
+      if (queued) throw new Error(`${employeeId.trim()} already has an unsynced Session ${queued.payload.sessionNumber} for ${date}: ${queued.payload.checkIn} to ${queued.payload.checkOut || 'Open (no time-out)'}. ${queued.status === 'review' ? 'Resolve the error on that local record before adding another entry.' : !queued.payload.checkOut ? 'Add the time-out to that same local record below; do not submit a second time-in.' : 'Both times are already queued. Sync that record before starting another session.'} This new entry was not saved.`);
       let version = Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode('null')))).map(byte => byte.toString(16).padStart(2, '0')).join('');
       let sessionNumber = 1;
+      let sessionUnverified = true;
       try {
         const response = await apiFetch(`/api/attendance/correction?employeeId=${encodeURIComponent(employeeId.trim())}&date=${date}`);
-        if (!response.ok) throw new Error('Employee unavailable.');
+        if (!response.ok) { const failure = await response.json().catch(() => ({})); throw new Error(`${employeeId.trim()}: ${failure.error || 'Employee attendance is unavailable.'} This entry was not queued.`); }
         const preview = await response.json();
         const windowError = attendanceWindowError(checkIn, checkOut, preview.schedule);
         if (windowError) throw new Error(windowError);
-        version = preview.version; sessionNumber = preview.sessions.length + 1;
+        version = preview.version; sessionNumber = preview.sessions.length + 1; sessionUnverified = false;
+        if (preview.blockedReason) throw new Error(`${employeeId.trim()} on ${date}: ${preview.blockedReason} This entry was not queued.`);
         const openSession = preview.sessions.findIndex((session: { checkOut?: string }) => !session.checkOut);
-        if (openSession >= 0) throw new Error(`${employeeId.trim()} is already timed in for Session ${openSession + 1} on ${date} at ${preview.sessions[openSession].checkIn} and has not timed out. An existing session is still open. This entry was not queued. Use Edit Attendance to complete or correct Session ${openSession + 1}; a new session can start only after it closes.`);
-        if (sessionNumber > 3) throw new Error('This date already has three sessions.');
+        if (timeOutOnly) {
+          if (openSession < 0) throw new Error(`${employeeId.trim()} has no open session on ${date}. A time-out requires an existing time-in without time-out. This entry was not queued.`);
+          sessionNumber = openSession + 1;
+          const open = preview.sessions[openSession];
+          const error = attendanceWindowError(`${String(Math.floor(timeMinutes(open.checkIn) / 60)).padStart(2, '0')}:${String(timeMinutes(open.checkIn) % 60).padStart(2, '0')}`, checkOut, { ...preview.schedule, ...open });
+          if (error) throw new Error(error);
+        } else if (openSession >= 0) throw new Error(`${employeeId.trim()} is already timed in for Session ${openSession + 1} on ${date} at ${preview.sessions[openSession].checkIn}. An existing session is still open. Leave time-in blank and enter only time-out to complete it. This entry was not queued.`);
+        if (!timeOutOnly && sessionNumber > 3) throw new Error(`${employeeId.trim()} already has three sessions on ${date}. Session 4 is not allowed. This entry was not queued.`);
+        const previous = preview.sessions.at(-1);
+        if (!timeOutOnly && previous?.checkOut) {
+          let previousEnd = timeMinutes(previous.checkOut);
+          if (previousEnd < timeMinutes(previous.checkIn)) previousEnd += 1440;
+          if (timeMinutes(checkIn) < previousEnd) throw new Error(`${employeeId.trim()}: Session ${sessionNumber} cannot start at ${checkIn}. Session ${sessionNumber - 1} is ${previous.checkIn} to ${previous.checkOut}. Start at or after the previous time-out; sessions cannot overlap. This entry was not queued.`);
+        }
       } catch (cause) {
         // With no cached preview, server validation must confirm this is a new day.
         if (!isOffline()) throw cause;
-        if (cause instanceof Error && /existing session|three sessions|Allowed attendance window/.test(cause.message)) throw cause;
+        if (cause instanceof Error && /existing session|three sessions|Allowed attendance window|This entry was not queued/.test(cause.message)) throw cause;
       }
-      await queueOffline('attendance', { employeeId: employeeId.trim(), date, sessionNumber, checkIn, checkOut, reason: reason.trim(), version, captureOnly: true });
+      await queueOffline('attendance', { employeeId: employeeId.trim(), date, sessionNumber, sessionUnverified, checkIn, checkOut, reason: reason.trim(), version, captureOnly: true });
       setCheckIn(''); setCheckOut('');
-    } catch (cause) { toast({ title: 'Attendance not saved locally', description: cause instanceof Error ? cause.message : 'Try again.', variant: 'error' }); }
+    } catch (cause) { const message = cause instanceof Error ? cause.message : 'Unable to save attendance. Try again.'; setCaptureError(message); toast({ title: 'Attendance not saved locally', description: 'Review the error in the attendance form.', variant: 'error' }); }
     finally { setBusy(false); }
   }
   const filteredItems = items.filter(item => {
@@ -159,7 +182,8 @@ export function OfflineCenter() {
         {role === 'admin' && captureOpen && <form onSubmit={capture} className="space-y-3 rounded-xl border border-slate-200 bg-slate-50 p-5"><h3 className="font-semibold text-slate-900">Add manual attendance</h3><p className="text-xs text-slate-500">Record actual times. An open session from a past date needs time-out before it can sync. Existing records are never silently overwritten.</p>
           <label className="block text-xs font-medium text-slate-700">Employee ID<Input required disabled={busy} list="offline-employees" value={employeeId} onChange={event => setEmployeeId(event.target.value)} placeholder="Type employee ID or choose from saved directory" /><datalist id="offline-employees">{employees.map(employee => <option key={employee.id} value={employee.id}>{employee.name}</option>)}</datalist></label>
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2"><label className="text-xs text-slate-700">Date<Input disabled type="date" value={date} /></label><label className="text-xs text-slate-700">Reason<Input required disabled={busy} minLength={5} maxLength={500} value={reason} onChange={event => setReason(event.target.value)} /></label></div>
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2"><label className="text-xs text-slate-700">Time-in<Input required disabled={busy} type="time" value={checkIn} onChange={event => setCheckIn(event.target.value)} /><button type="button" disabled={busy} onClick={() => { setDate(manilaDate()); setCheckIn(manilaTime()); }} className="mt-1 text-xs font-semibold text-violet-700">Use current Manila time</button></label><label className="text-xs text-slate-700">Time-out (optional today)<Input disabled={busy} type="time" value={checkOut} onChange={event => setCheckOut(event.target.value)} /><button type="button" disabled={busy} onClick={() => setCheckOut(manilaTime())} className="mt-1 text-xs font-semibold text-violet-700">Use current Manila time</button></label></div>
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2"><label className="text-xs text-slate-700">Time-in (leave blank for time-out only)<Input disabled={busy} type="time" value={checkIn} onChange={event => setCheckIn(event.target.value)} /><button type="button" disabled={busy} onClick={() => { setDate(manilaDate()); setCheckIn(manilaTime()); }} className="mt-1 text-xs font-semibold text-violet-700">Use current Manila time</button></label><label className="text-xs text-slate-700">Time-out (optional today)<Input disabled={busy} type="time" value={checkOut} onChange={event => setCheckOut(event.target.value)} /><button type="button" disabled={busy} onClick={() => setCheckOut(manilaTime())} className="mt-1 text-xs font-semibold text-violet-700">Use current Manila time</button></label></div>
+          {captureError && <div role="alert" className="rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm text-rose-800"><p className="mb-1 font-semibold">Attendance not saved</p>{captureError}</div>}
           <Button type="submit" disabled={busy}>Save locally</Button>
         </form>}
         <div className="space-y-3 rounded-xl border border-slate-200 bg-slate-50 p-4">
@@ -172,8 +196,9 @@ export function OfflineCenter() {
         </div>
         <p role="status" className="text-xs text-slate-500">Showing {filteredItems.length} of {items.length} records</p>
         {filteredItems.map(item => <div key={item.id} className="space-y-3 rounded-xl border border-slate-200 bg-white p-4"><div className="flex justify-between gap-2"><strong className="text-sm capitalize text-slate-900">{item.kind === 'cash-advance' ? 'Cash advance request' : item.kind === 'leave' ? 'Leave request' : 'Attendance'}</strong><span className={`rounded-full px-2 py-1 text-xs ${item.status === 'synced' ? 'bg-emerald-50 text-emerald-700' : item.status === 'review' ? 'bg-rose-50 text-rose-700' : 'bg-amber-50 text-amber-700'}`}>{item.status === 'review' ? 'Needs review' : item.status === 'synced' ? 'Synced' : 'Pending sync'}</span></div>
-          <p className="text-xs text-slate-600">{item.kind === 'attendance' ? `${item.payload.employeeId} · ${item.payload.date} · ${item.payload.checkIn} to ${item.payload.checkOut || 'Open'}` : item.kind === 'leave' ? `${item.payload.leaveType} · ${(item.payload.requestedDates as string[]).join(', ')}` : `PHP ${item.payload.amount} · ${item.payload.requestPeriod}`}</p>
+          <p className="text-xs text-slate-600">{item.kind === 'attendance' ? `${item.payload.employeeId} · ${item.payload.date} · ${item.payload.checkIn || 'Existing open time-in'} to ${item.payload.checkOut || 'Open'}` : item.kind === 'leave' ? `${item.payload.leaveType} · ${(item.payload.requestedDates as string[]).join(', ')}` : `PHP ${item.payload.amount} · ${item.payload.requestPeriod}`}</p>
           <p className="text-xs text-slate-500">{String(item.payload.reason || 'No reason entered')}</p>
+          {item.kind === 'attendance' && <p className="text-sm font-medium text-slate-700">{!item.payload.checkIn ? `Time-out only · ${item.payload.sessionUnverified ? 'Sync will identify the current open session' : `Complete Session ${item.payload.sessionNumber}`} · Existing time-in will be preserved` : item.payload.sessionUnverified ? 'Session unverified: no saved attendance preview was available. Sync must confirm this is a new Session 1; it will not automatically move this entry to Session 2.' : `Session ${item.payload.sessionNumber} · ${item.payload.checkOut ? 'Time-in and time-out recorded' : 'Open — add time-out to this same local record'}`}</p>}
           {item.error && <div role="alert" className="rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm text-rose-800"><p className="mb-1 font-semibold">Record not applied</p><p>{item.error}</p></div>}
           {item.status === 'pending' && item.attemptedAt && <p className="text-xs text-amber-700">A sync was attempted without confirmation. Retry the original record before changing its details.</p>}
           {item.kind === 'attendance' && item.status !== 'synced' && (!item.attemptedAt || item.status === 'review' && /Past attendance needs both/.test(item.error || '')) && !item.payload.checkOut && <label className="block text-xs text-slate-700">Complete local time-out<Input type="time" disabled={busy} onChange={event => { void updateOfflineItem({ ...item, payload: { ...item.payload, checkOut: event.target.value }, status: 'pending', attemptedAt: undefined, error: undefined }).catch(cause => toast({ title: 'Time-out not saved', description: cause.message, variant: 'error' })); }} /></label>}

@@ -74,7 +74,10 @@ export function correctedSessions(record, correction, { checkIn, checkOut, now, 
   let lastEnd = null;
   sessions.forEach((session, position) => {
     const { start, end } = timesForSession(correction.date, session.checkIn, session.checkOut);
-    if (position && (!lastEnd || start < lastEnd)) throw problem('Attendance sessions must be chronological and cannot overlap.', 400);
+    if (position && (!lastEnd || start < lastEnd)) {
+      const previousSession = sessions[position - 1];
+      throw problem(`Session ${position + 1} cannot start at ${session.checkIn}: Session ${position} is ${previousSession.checkIn} to ${previousSession.checkOut || 'Open (no time-out)'}. ${lastEnd ? `Start Session ${position + 1} at or after Session ${position}'s time-out ${previousSession.checkOut}. Sessions cannot overlap or run in reverse order.` : `Complete Session ${position}'s time-out before starting another session.`} No attendance changes were saved.`, 400);
+    }
     if (!end && position !== sessions.length - 1) throw problem('Only the last session can remain open.', 400);
     lastEnd = end;
   });
@@ -86,7 +89,9 @@ export async function correctAttendance(db, { employeeId, date, sessionNumber, r
   if (!validAttendanceDate(date) || date > manilaDate(now)) throw problem('Choose today or a valid past date.', 400);
   if (!Number.isInteger(sessionNumber) || sessionNumber < 1 || sessionNumber > 3) throw problem('Choose session 1, 2, or 3.', 400);
   if (typeof reason !== 'string' || reason.trim().length < 5 || reason.trim().length > 500) throw problem('Provide a correction reason in 5–500 characters.', 400);
-  if (captureOnly && !checkIn) throw problem('Offline capture requires a time-in.', 400);
+  const timeOutOnly = Boolean(operationKey && captureOnly && !checkIn && checkOut);
+  const preserveTimeIn = Boolean(!checkIn && checkOut);
+  if (captureOnly && !checkIn && !timeOutOnly) throw problem('Enter a time-in or a time-out to capture offline attendance.', 400);
   const correction = { employeeId, date, sessionNumber };
   const work = async tx => {
     if (operationKey) {
@@ -104,11 +109,27 @@ export async function correctAttendance(db, { employeeId, date, sessionNumber, r
       const employeeLock = await tx.collection('employees').updateOne({ id: employeeId }, { $inc: { attendanceReviewVersion: 1 } });
       if (!employeeLock.matchedCount) throw problem('Employee changed during review. Refresh and try again.');
       const existing = await tx.collection('attendance').findOne({ employeeId, date });
+      if (!captureOnly && !checkIn && checkOut) {
+        const selected = attendanceSessions(existing)[sessionNumber - 1];
+        if (!selected?.checkIn || selected.checkOut) throw problem(`Time-out ${checkOut} cannot be saved for ${employeeId} on ${date}: Session ${sessionNumber} ${selected?.checkOut ? `is already closed (${selected.checkIn} to ${selected.checkOut})` : 'has no recorded time-in'}. Select an open session with a time-in and no time-out. No attendance was changed.`, 400);
+        checkIn = inputTime(selected.checkIn);
+      }
+      if (timeOutOnly) {
+        const currentSessions = attendanceSessions(existing);
+        const open = currentSessions.at(-1);
+        if (!open || open.checkOut) throw problem(`Time-out ${checkOut} not applied for ${employeeId} on ${date}: ${open ? `Session ${currentSessions.length} is already closed (${open.checkIn} to ${open.checkOut})` : 'no recorded time-in exists'}. A time-out can only complete an open session. No attendance was changed.`);
+        if (version !== attendanceVersion(null) && version !== attendanceVersion(existing)) throw problem(`Time-out ${checkOut} not applied for ${employeeId}: attendance changed since capture. Current open Session ${currentSessions.length} started at ${open.checkIn}. Review this session online before retrying; no attendance was changed.`);
+        checkIn = inputTime(open.checkIn);
+        if (timesForSession(date, checkIn, checkOut).end <= timesForSession(date, checkIn, '').start) throw problem(`Time-out ${checkOut} must be later than Session ${currentSessions.length}'s time-in ${open.checkIn}. No attendance was changed.`, 400);
+        sessionNumber = currentSessions.length;
+        correction.sessionNumber = sessionNumber;
+        decision.sessionNumber = sessionNumber;
+      }
       // Imported historical time records can predate account registration.
       // Their recorded sessions remain editable; registration still bounds new attendance.
       if (!attendanceSessions(existing).length && employee.createdAt && date < manilaDate(new Date(employee.createdAt))) throw problem('New attendance cannot precede the employee account. Select a date on or after account creation.');
       const emptyOfflineCapture = operationKey && captureOnly === true && version === attendanceVersion(null) && !attendanceSessions(existing).length;
-      if (!emptyOfflineCapture && version !== attendanceVersion(existing)) {
+      if (!timeOutOnly && !emptyOfflineCapture && version !== attendanceVersion(existing)) {
         if (operationKey) {
           const sessions = attendanceSessions(existing);
           const current = sessions.length ? sessions.map((session, index) => `Session ${index + 1}: ${session.checkIn} to ${session.checkOut || 'Open (not yet timed out)'}`).join('; ') : 'No recorded sessions';
@@ -117,7 +138,7 @@ export async function correctAttendance(db, { employeeId, date, sessionNumber, r
         throw problem('Attendance changed. Reload the current times before saving.');
       }
       const leaves = await tx.collection('leave_requests').find({ employeeId, status: 'approved' }).toArray();
-      if (operationKey && captureOnly) {
+      if (operationKey && captureOnly && !timeOutOnly) {
         const currentSessions = attendanceSessions(existing);
         if (currentSessions.some(session => !session.checkOut)) throw problem('Offline capture cannot replace an open server session. Reconnect and use Edit Attendance to complete it. The local entry was not applied.');
         if (sessionNumber !== currentSessions.length + 1) throw problem('Offline capture can only add the next attendance session; it cannot edit existing sessions. The local entry was not applied.');
@@ -131,6 +152,11 @@ export async function correctAttendance(db, { employeeId, date, sessionNumber, r
         if (!locked.matchedCount) throw problem('Payroll changed during review. Refresh and try again.');
       }
       const sessions = correctedSessions(existing, correction, { checkIn, checkOut, now, actor, actorName: decision.correctedByName, reason: decision.reason, sessionDefaults: await getSessionDefaults(tx, employee) });
+      if (preserveTimeIn) {
+        const original = attendanceSessions(existing)[sessionNumber - 1];
+        sessions[sessionNumber - 1].checkIn = original.checkIn;
+        if (original.checkInAt) sessions[sessionNumber - 1].checkInAt = original.checkInAt;
+      }
       const adjacentDates = [-1, 1].map(offset => { const adjacentDate = new Date(`${date}T00:00:00Z`); adjacentDate.setUTCDate(adjacentDate.getUTCDate() + offset); return adjacentDate.toISOString().slice(0, 10); });
       const adjacent = await tx.collection('attendance').find({ employeeId, date: { $in: adjacentDates } }).toArray();
       for (const other of adjacent) {

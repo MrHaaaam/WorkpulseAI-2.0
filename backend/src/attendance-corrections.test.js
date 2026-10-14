@@ -213,6 +213,60 @@ test('stale previews and concurrent scans cannot be overwritten', async () => {
   await assert.rejects(correctAttendance(db, { ...options, version: attendanceVersion(original) }), /changed during/);
   assert.deepEqual(db.data.attendance, [original]); assert.equal(db.data.employee_notifications.length, 0);
 });
+test('online time-out only verifies selected session is open', async () => {
+  for (const checkOut of [null, '05:00 PM']) {
+    const original = { _id: 'a1', employeeId: 'E1', date: options.date, sessions: [{ checkIn: '09:00 AM', checkOut }] };
+    const db = database({ attendance: [original] });
+    const request = { ...options, checkIn: '', version: attendanceVersion(original) };
+    if (checkOut) { const before = structuredClone(db.data); await assert.rejects(correctAttendance(db, request), /already closed/); assert.deepEqual(db.data, before); }
+    else { await correctAttendance(db, request); assert.equal(db.data.attendance[0].sessions[0].checkIn, '09:00 AM'); assert.equal(db.data.attendance[0].sessions[0].checkOut, '05:00 PM'); }
+  }
+  await assert.rejects(correctAttendance(database(), { ...options, checkIn: '' }), /has no recorded time-in/);
+});
+
+test('offline time-out only closes the server open session, preserves time-in and retries once', async () => {
+  const original = { _id: 'a1', employeeId: 'E1', date: options.date, sessions: [{ checkIn: '09:00 AM', checkOut: null, checkInAt: new Date('2026-10-09T01:00:25Z') }] };
+  const db = database({ attendance: [original] });
+  const request = { ...options, checkIn: '', checkOut: '17:00', captureOnly: true, operationKey: 'checkout-test', operationHash: 'checkout-hash' };
+  const result = await correctAttendance(db, request);
+  assert.equal(result.sessionNumber, 1);
+  assert.equal(db.data.attendance[0].sessions.length, 1);
+  assert.equal(db.data.attendance[0].sessions[0].checkIn, original.sessions[0].checkIn);
+  assert.deepEqual(db.data.attendance[0].sessions[0].checkInAt, original.sessions[0].checkInAt);
+  assert.equal(db.data.attendance[0].sessions[0].checkOut, '05:00 PM');
+  await correctAttendance(db, request);
+  assert.equal(db.data.employee_notifications.length, 1);
+});
+test('offline time-out only rejects missing, closed, changed or out-of-schedule sessions', async () => {
+  for (const scenario of [
+    { attendance: [], expected: /no recorded time-in exists/ },
+    { attendance: [{ checkIn: '09:00 AM', checkOut: '05:00 PM' }], expected: /already closed/ },
+    { attendance: [{ checkIn: '09:00 AM', checkOut: null }], version: 'stale', expected: /attendance changed since capture/ },
+    { attendance: [{ checkIn: '09:00 AM', checkOut: null }], checkOut: '23:00', expected: /after the final cutoff/ },
+  ]) {
+    const db = database({ attendance: scenario.attendance.map(session => ({ _id: 'a1', employeeId: 'E1', date: options.date, sessions: [session] })) });
+    const before = structuredClone(db.data);
+    await assert.rejects(correctAttendance(db, { ...options, checkIn: '', checkOut: scenario.checkOut || '17:00', version: scenario.version || options.version, captureOnly: true, operationKey: 'checkout-test', operationHash: 'checkout-hash' }), scenario.expected);
+    assert.deepEqual(db.data, before);
+  }
+});
+
+test('Session 2 overlap names both sessions, while a later start is accepted', async () => {
+  const original = { _id: 'a1', employeeId: 'E1', date: options.date, sessions: [{ checkIn: '06:00 AM', checkOut: '12:00 PM', workStartTime: '06:00', overtimeStopTime: '19:00' }] };
+  const db = database({ attendance: [original] });
+  const before = structuredClone(db.data);
+  const second = { ...options, sessionNumber: 2, version: attendanceVersion(original), getSessionDefaults: async () => ({ ...defaults, workStartTime: '06:00', overtimeStopTime: '19:00' }) };
+  await assert.rejects(correctAttendance(db, { ...second, checkIn: '09:00', checkOut: '12:00' }), error => {
+    assert.match(error.message, /Session 2 cannot start at 09:00 AM/);
+    assert.match(error.message, /Session 1 is 06:00 AM to 12:00 PM/);
+    assert.match(error.message, /Start Session 2 at or after/);
+    return true;
+  });
+  assert.deepEqual(db.data, before);
+  await correctAttendance(db, { ...second, checkIn: '12:01', checkOut: '18:00' });
+  assert.equal(db.data.attendance[0].sessions[1].checkIn, '12:01 PM');
+});
+
 test('offline capture conflicts explain current sessions and preserve employee scans', async () => {
   for (const checkOut of [null, '05:00 PM']) {
     const original = { _id: 'a1', employeeId: 'E1', date: options.date, sessions: [{ checkIn: '11:13 AM', checkOut }] };
