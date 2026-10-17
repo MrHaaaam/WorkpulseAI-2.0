@@ -3,7 +3,7 @@ import { type AttendanceSource } from '../components/AttendanceSourceLabels';
 import { AttendanceCorrectionHistory, type AttendanceCorrection, type CorrectionSession } from '../components/AttendanceCorrectionHistory';
 import { Input } from "../components/ui/Input";
 import { Textarea } from "../components/ui/Input";
-import { Fragment, useCallback, useEffect, useMemo, useState, type FormEvent } from 'react'
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
 import {
   ArrowRight, CalendarDays, CheckCircle2, ChevronRight, Clock3, Fingerprint, LayoutDashboard, LogOut,
   AlertTriangle, Eye, Mail, MapPin, Menu, Pencil, Phone, Printer, RefreshCw, Save, Send, ShieldCheck, UserRound, WalletCards, X,
@@ -79,23 +79,37 @@ export function EmployeePortal() {
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null)
   const [refreshing, setRefreshing] = useState(false)
   const [refreshError, setRefreshError] = useState('')
+  const [loggingOut, setLoggingOut] = useState(false)
+  const latestLoad = useRef(0)
 
   const loadWorkspace = useCallback(async (manual = false) => {
+    const requestId = ++latestLoad.current
     if (manual) setRefreshing(true)
     try {
       const response = await apiFetch('/api/employee/me')
       const data = await response.json()
       if (!response.ok) throw new Error(data.error || 'Unable to load your workspace')
+      if (requestId !== latestLoad.current) return
       setWorkspace(data); setContactDraft(current => current.phone || current.address ? current : { phone: data.profile?.phone || '', address: data.profile?.address || '' });
-      if (response.headers.get('X-WorkPulse-Offline') === 'true') setRefreshError('Offline: showing a saved copy. Payments and balances may have changed on the server.');
-      else { setLastUpdated(new Date()); setRefreshError(''); }
-    } catch (reason) { setRefreshError(reason instanceof Error ? reason.message : 'Unable to refresh your workspace') }
-    finally { setLoading(false); setRefreshing(false) }
-  }, [])
+      if (response.headers.get('X-WorkPulse-Offline') === 'true') {
+        setRefreshError('Offline: showing a saved copy. Payments and balances may have changed on the server.');
+        if (manual) toast({ title: 'Showing saved information', description: 'The server could not be reached. These records may be out of date.', variant: 'info' });
+      } else {
+        setLastUpdated(new Date()); setRefreshError('');
+        if (manual) toast({ title: 'Workspace refreshed', description: 'Your latest attendance, leave, payroll, and profile records are displayed.', variant: 'success' });
+      }
+    } catch (reason) {
+      if (requestId !== latestLoad.current) return;
+      const message = reason instanceof Error ? reason.message : 'Unable to refresh your workspace';
+      setRefreshError(message);
+      if (manual) toast({ title: 'Workspace not refreshed', description: message, variant: 'error' });
+    }
+    finally { if (requestId === latestLoad.current) { setLoading(false); setRefreshing(false); } }
+  }, [toast])
 
   useEffect(() => {
     const initialLoad = window.setTimeout(() => { void loadWorkspace() }, 0)
-    return () => window.clearTimeout(initialLoad)
+    return () => { window.clearTimeout(initialLoad); latestLoad.current = -1; }
   }, [loadWorkspace])
   useEffect(() => {
     const refresh = () => { if (document.visibilityState === 'visible') void loadWorkspace() }
@@ -126,7 +140,7 @@ export function EmployeePortal() {
       const response = await apiFetch('/api/employee/me/leave-requests', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(leaveDraft) })
       const data = await response.json()
       if (!response.ok) throw new Error(data.error || 'Unable to submit leave request')
-      if (data.queued) { setLeaveDraft({ leaveType: 'Annual Leave', requestedDates: [], reason: '' }); return }
+      if (data.queued) { setLeaveDraft({ leaveType: 'Annual Leave', requestedDates: [], reason: '' }); toast({ title: 'Leave request saved on this device', description: 'It has not reached your administrator yet. Review Offline records for its sync status.', variant: 'info' }); return }
       setWorkspace((current) => current ? { ...current, leaveRequests: [data, ...current.leaveRequests] } : current)
       setLeaveDraft({ leaveType: 'Annual Leave', requestedDates: [], reason: '' })
       toast({ title: 'Leave request submitted', description: 'Your request is now waiting for administrator review.', variant: 'success' })
@@ -157,10 +171,12 @@ export function EmployeePortal() {
       const response = await apiFetch('/api/employee/me/contact', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(contactDraft) })
       const data = await response.json().catch(() => ({}))
       if (!response.ok) throw new Error(data.error || 'Unable to update your contact information')
+      latestLoad.current++;
       setWorkspace((current) => current ? { ...current, profile: { ...current.profile, phone: data.phone, address: data.address } } : current)
       setContactDraft({ phone: data.phone, address: data.address })
       setEditingContact(false)
       toast({ title: 'Contact information updated', description: 'Your phone number and address were saved.', variant: 'success' })
+      await loadWorkspace()
     } catch (reason) {
       toast({ title: 'Changes not saved', description: reason instanceof Error ? reason.message : 'Please try again.', variant: 'error' })
     } finally { setSavingContact(false) }
@@ -173,11 +189,21 @@ export function EmployeePortal() {
   }
 
   async function logout() {
-    try { await apiFetch('/api/auth/logout', { method: 'POST' }) } finally { clearSession(); window.location.replace('/') }
+    if (loggingOut) return;
+    setLoggingOut(true);
+    try {
+      const response = await apiFetch('/api/auth/logout', { method: 'POST' });
+      if (!response.ok && response.status !== 401) throw new Error('Your session could not be ended. Please try again.');
+      latestLoad.current++;
+      clearSession(); window.location.replace('/');
+    } catch (reason) {
+      toast({ title: 'Unable to log out', description: reason instanceof Error ? reason.message : 'Check your connection and try again.', variant: 'error' });
+      setLoggingOut(false);
+    }
   }
 
   if (loading) return <div className="grid min-h-screen place-items-center bg-slate-100/70"><div className="text-center"><div className="mx-auto mb-3 h-8 w-8 animate-spin rounded-full border-4 border-violet-100 border-t-[#8642ED]" /><p className="text-sm font-medium text-slate-500">Loading your secure workspace...</p></div></div>
-  if (!workspace) return <div className="grid min-h-screen place-items-center bg-slate-100/70"><button onClick={() => { clearSession(); window.location.replace('/') }} className="rounded-xl bg-[#8642ED] px-5 py-3 text-sm font-semibold text-white">Return to sign in</button></div>
+  if (!workspace) return <div className="grid min-h-screen place-items-center bg-slate-100/70 p-6"><div className="max-w-md space-y-4 text-center"><h1 className="text-lg font-semibold text-slate-900">Your workspace could not load</h1><p role="alert" className="text-sm text-slate-600">{refreshError || 'Check your connection and try again.'}</p><div className="flex justify-center gap-2"><Button disabled={refreshing} onClick={() => void loadWorkspace(true)}>Try again</Button><Button variant="outline" disabled={loggingOut} onClick={() => void logout()}>Return to sign in</Button></div></div></div>
 
   const { profile } = workspace
   const selectedPayroll = workspace.payroll.find((item) => item.id === selectedPayrollId) ?? null
@@ -205,7 +231,7 @@ export function EmployeePortal() {
         <p className="mb-2 px-3 pt-2 text-[10px] font-bold uppercase tracking-[0.16em] text-slate-400">Workspace</p>
         {nav.map(({ key, label, icon: Icon }) => { const active = section === key; return <button key={key} onClick={() => { setSection(key); setMobileNavigationOpen(false); }} className={`group flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-[13px] font-semibold transition-all ${active ? 'bg-violet-600 text-white shadow-sm shadow-violet-600/20' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-950'}`}><Icon className={`h-[18px] w-[18px] shrink-0 transition-colors ${active ? 'text-white' : 'text-slate-400 group-hover:text-slate-700'}`} />{label}{active && <ChevronRight className="ml-auto h-3.5 w-3.5 text-white/80" />}</button> })}
       </nav>
-      <div className="border-t border-slate-200/80 p-3"><div className="flex items-center gap-2.5 rounded-xl border border-slate-200 bg-slate-50 p-2.5"><div className="flex h-9 w-9 items-center justify-center rounded-full bg-[#8642ED] text-[13px] font-bold text-white">{initials}</div><div className="min-w-0 flex-1"><p className="truncate text-[13px] font-semibold text-slate-900">{profile.name}</p><div className="flex items-center gap-1.5"><span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-700"><span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />Online</span><span className="truncate text-[10px] capitalize text-slate-400">{employeeRoleLabel(profile.role)}</span></div></div><button onClick={logout} aria-label="Log out" className="rounded-md p-1.5 text-slate-400 transition-colors hover:bg-red-50 hover:text-red-600"><LogOut className="h-4 w-4" /></button></div></div>
+      <div className="border-t border-slate-200/80 p-3"><div className="flex items-center gap-2.5 rounded-xl border border-slate-200 bg-slate-50 p-2.5"><div className="flex h-9 w-9 items-center justify-center rounded-full bg-[#8642ED] text-[13px] font-bold text-white">{initials}</div><div className="min-w-0 flex-1"><p className="truncate text-[13px] font-semibold text-slate-900">{profile.name}</p><div className="flex items-center gap-1.5"><span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-700"><span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />Online</span><span className="truncate text-[10px] capitalize text-slate-400">{employeeRoleLabel(profile.role)}</span></div></div><button onClick={() => void logout()} disabled={loggingOut} aria-label="Log out" className="rounded-md p-1.5 text-slate-400 transition-colors hover:bg-red-50 hover:text-red-600"><LogOut className="h-4 w-4" /></button></div></div>
     </aside>
 
     <div className="min-w-0 flex-1">
@@ -246,7 +272,7 @@ export function EmployeePortal() {
 
         {section === 'calendar' && <EmployeeCalendar refreshKey={lastUpdated?.getTime() ?? 0} />}
 
-        {section === 'payroll' && <div className="space-y-5"><Panel title="Payroll history" subtitle="Open any pay period to view or print your personal payslip"><DataTable headers={['Pay period', 'Current pay', 'Carried balance', 'Total payout', 'Status', 'Summary']} rows={[...workspace.payroll].sort((a, b) => String(b.periodStart || '').localeCompare(String(a.periodStart || ''))).map((item) => [formatDate(item.periodStart), money(item.currentAmount), money(item.carryOverAmount), <strong key={`${item.id}-amount`} className="text-slate-900">{money(item.amount)}</strong>, <Status key={`${item.id}-status`} value={item.status} />, <button key={`${item.id}-view`} type="button" onClick={() => setSelectedPayrollId(item.id)} className="inline-flex h-9 items-center gap-2 whitespace-nowrap rounded-lg border border-violet-200 bg-violet-50 px-3 text-xs font-semibold text-violet-700 hover:bg-violet-100 focus:outline-none focus:ring-4 focus:ring-violet-200"><Eye className="h-4 w-4" />View summary</button>])} empty="No payroll records yet." /></Panel><EmployeeCashAdvancePanel maxAmount={workspace.cashAdvanceMax} payroll={workspace.payroll} summary={workspace.cashAdvance} requests={workspace.cashAdvanceRequests || []} onChanged={loadWorkspace}/></div>}
+        {section === 'payroll' && <div className="space-y-5"><Panel title="Payroll history" subtitle="Open any pay period to view or print your personal payslip"><DataTable headers={['Pay period', 'Current pay', 'Carried balance', 'Total payout', 'Status', 'Summary']} rows={[...workspace.payroll].sort((a, b) => String(b.periodStart || '').localeCompare(String(a.periodStart || ''))).map((item) => [formatDate(item.periodStart), money(item.currentAmount), money(item.carryOverAmount), <strong key={`${item.id}-amount`} className="text-slate-900">{money(item.amount)}</strong>, <Status key={`${item.id}-status`} value={item.status} payroll />, <button key={`${item.id}-view`} type="button" onClick={() => setSelectedPayrollId(item.id)} className="inline-flex h-9 items-center gap-2 whitespace-nowrap rounded-lg border border-violet-200 bg-violet-50 px-3 text-xs font-semibold text-violet-700 hover:bg-violet-100 focus:outline-none focus:ring-4 focus:ring-violet-200"><Eye className="h-4 w-4" />View summary</button>])} empty="No payroll records yet." /></Panel><EmployeeCashAdvancePanel maxAmount={workspace.cashAdvanceMax} payroll={workspace.payroll} summary={workspace.cashAdvance} requests={workspace.cashAdvanceRequests || []} onChanged={loadWorkspace}/></div>}
 
         {section === 'leave' && <div className="grid gap-5 xl:grid-cols-[.82fr_1.18fr]">
           <Panel title="Request leave" subtitle="Your administrator will review the dates you select"><form onSubmit={submitLeave} className="mt-5 space-y-4"><Field label="Leave type"><select value={leaveDraft.leaveType} onChange={(event) => setLeaveDraft((current) => ({ ...current, leaveType: event.target.value }))} className="input"><option>Annual Leave</option><option>Sick Leave</option><option>Personal Leave</option><option>Maternity Leave</option></select></Field><LeaveDatePicker maxDates={MAX_LEAVE_REQUEST_DAYS} selected={leaveDraft.requestedDates} workSchedule={workspace.workSchedule} onChange={(requestedDates)=>setLeaveDraft(current=>({...current,requestedDates}))}/><Field label="Reason"><Textarea required minLength={5} maxLength={500} rows={4} value={leaveDraft.reason} onChange={(event) => setLeaveDraft((current) => ({ ...current, reason: event.target.value }))} className="input h-auto py-3" placeholder="Briefly explain your request" /></Field><button disabled={submitting||leaveDraft.requestedDates.length===0||leaveDraft.requestedDates.length>MAX_LEAVE_REQUEST_DAYS} className="flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-[#8642ED] text-sm font-semibold text-white shadow-lg shadow-violet-600/15 hover:bg-violet-700 disabled:opacity-60"><Send className="h-4 w-4" />{submitting ? 'Submitting...' : `Submit ${leaveDraft.requestedDates.length} ${leaveDraft.requestedDates.length===1?'date':'dates'}`}</button></form></Panel>
@@ -255,7 +281,7 @@ export function EmployeePortal() {
 
         {section === 'profile' && <div className="grid gap-5 xl:grid-cols-[1.15fr_.85fr]">
           <div className="space-y-5"><Panel title="Employee information" subtitle="Contact an administrator to change protected information"><div className="grid gap-3 sm:grid-cols-2"><ProfileItem icon={UserRound} label="Employee ID" value={profile.id} /><ProfileItem icon={CalendarDays} label="Account created" value={profile.createdAt ? new Date(profile.createdAt).toLocaleString('en-PH') : 'Not recorded'} /><ProfileItem icon={WalletCards} label="Employment type" value={employeeRoleLabel(profile.role)} /><ProfileItem icon={Mail} label="Email" value={profile.email || 'Not provided'} /></div></Panel>
-          <Panel title="Contact information" subtitle="You can update your own phone number and address">{editingContact ? <form onSubmit={saveContactInformation} className="space-y-4"><Field label="Phone number"><Input type="tel" autoComplete="tel" minLength={7} maxLength={30} required value={contactDraft.phone} onChange={(event) => setContactDraft((current) => ({ ...current, phone: event.target.value }))} className="input" placeholder="Enter your phone number" /></Field><Field label="Home address"><Textarea autoComplete="street-address" minLength={5} maxLength={500} rows={3} required value={contactDraft.address} onChange={(event) => setContactDraft((current) => ({ ...current, address: event.target.value }))} className="input h-auto py-3" placeholder="Enter your current address" /></Field><div className="flex flex-wrap justify-end gap-2"><button type="button" disabled={savingContact} onClick={cancelContactEditing} className="h-11 rounded-xl border border-slate-300 px-4 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50">Cancel</button><button type="submit" disabled={savingContact} className="flex h-11 items-center gap-2 rounded-xl bg-[#8642ED] px-4 text-sm font-semibold text-white hover:bg-violet-700 disabled:opacity-50"><Save className="h-4 w-4" />{savingContact ? 'Saving...' : 'Save changes'}</button></div></form> : <div><div className="grid gap-3 sm:grid-cols-2"><ProfileItem icon={Phone} label="Phone" value={profile.phone || 'Not provided'} /><ProfileItem icon={MapPin} label="Address" value={profile.address || 'Not provided'} /></div><button type="button" onClick={() => setEditingContact(true)} className="mt-4 flex h-11 items-center gap-2 rounded-xl bg-[#8642ED] px-4 text-sm font-semibold text-white hover:bg-violet-700 focus:outline-none focus:ring-4 focus:ring-violet-300"><Pencil className="h-4 w-4" />Edit contact information</button></div>}</Panel></div>
+          <Panel title="Contact information" subtitle="You can update your own phone number and address">{editingContact ? <form onSubmit={saveContactInformation} className="space-y-4"><Field label="Phone number"><Input type="tel" autoComplete="tel" minLength={7} maxLength={30} required value={contactDraft.phone} onChange={(event) => setContactDraft((current) => ({ ...current, phone: event.target.value }))} className="input" placeholder="Enter your phone number" /></Field><Field label="Home address"><Textarea autoComplete="street-address" minLength={5} maxLength={500} rows={3} required value={contactDraft.address} onChange={(event) => setContactDraft((current) => ({ ...current, address: event.target.value }))} className="input h-auto py-3" placeholder="Enter your current address" /></Field><div className="flex flex-wrap justify-end gap-2"><button type="button" disabled={savingContact} onClick={cancelContactEditing} className="h-11 rounded-xl border border-slate-300 px-4 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50">Cancel</button><button type="submit" disabled={savingContact} className="flex h-11 items-center gap-2 rounded-xl bg-[#8642ED] px-4 text-sm font-semibold text-white hover:bg-violet-700 disabled:opacity-50"><Save className="h-4 w-4" />{savingContact ? 'Saving...' : 'Save changes'}</button></div></form> : <div><div className="grid gap-3 sm:grid-cols-2"><ProfileItem icon={Phone} label="Phone" value={profile.phone || 'Not provided'} /><ProfileItem icon={MapPin} label="Address" value={profile.address || 'Not provided'} /></div><button type="button" onClick={() => { setContactDraft({ phone: profile.phone || '', address: profile.address || '' }); setEditingContact(true); }} className="mt-4 flex h-11 items-center gap-2 rounded-xl bg-[#8642ED] px-4 text-sm font-semibold text-white hover:bg-violet-700 focus:outline-none focus:ring-4 focus:ring-violet-300"><Pencil className="h-4 w-4" />Edit contact information</button></div>}</Panel></div>
           <div className="space-y-5"><Panel title="Attendance access" subtitle="Fingerprint registration status"><div className="flex items-center gap-4 rounded-2xl border border-violet-100 bg-violet-50 p-4"><span className="grid h-12 w-12 place-items-center rounded-2xl bg-white text-[#8642ED] shadow-sm"><Fingerprint className="h-6 w-6" /></span><div><p className="text-xs text-violet-600">Biometric status</p><p className="font-bold capitalize text-violet-950">{profile.biometricStatus}</p></div></div></Panel></div>
         </div>}
       </div></main>
@@ -291,7 +317,7 @@ function EmployeePayslip({ profile, payroll, onClose }: { profile: EmployeeProfi
           <button type="button" onClick={onClose} aria-label="Close payslip" className="no-print grid h-10 w-10 place-items-center rounded-xl text-slate-500 hover:bg-slate-100"><X className="h-5 w-5" /></button>
         </header>
         <div className="space-y-5 px-6 py-6 sm:px-8">
-          <div className="flex flex-wrap items-center justify-between gap-4 rounded-2xl border border-violet-200 bg-violet-50 p-4"><div><p className="font-bold text-slate-950">{profile.name}</p><p className="mt-0.5 text-sm text-slate-600">Employee ID: {profile.id}</p></div><Status value={payroll.status} /></div>
+          <div className="flex flex-wrap items-center justify-between gap-4 rounded-2xl border border-violet-200 bg-violet-50 p-4"><div><p className="font-bold text-slate-950">{profile.name}</p><p className="mt-0.5 text-sm text-slate-600">Employee ID: {profile.id}</p></div><Status value={payroll.status} payroll /></div>
           {payroll.warnings?.length ? <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4"><p className="font-semibold text-amber-900">Attendance reminder</p>{payroll.warnings.map((warning) => <p key={warning} className="mt-1 text-sm text-amber-800">• {warning}</p>)}</div> : null}
           <div className="grid gap-3 sm:grid-cols-3"><PayslipStat label="Hours worked" value={`${Number(payroll.hoursWorked || 0).toFixed(2)} hours`} /><PayslipStat label="Hourly rate" value={payroll.rateBreakdown&&payroll.rateBreakdown.length>1?'Multiple rates':money(payroll.rateBreakdown?.[0]?.rate??payroll.hourlyRate)} /><PayslipStat label="Current pay after advance" value={money(payroll.currentAmount)} /></div>
           {payroll.rateBreakdown&&payroll.rateBreakdown.length>1&&<div className="rounded-xl bg-slate-50 p-3 text-xs text-slate-700">{payroll.rateBreakdown.map(line=><p key={line.rate}>{line.hours.toFixed(2)} hours at {money(line.rate)}/hour: {money(line.amount)}</p>)}</div>}
@@ -347,10 +373,10 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
   return <label className="block"><span className="mb-2 block text-sm font-semibold text-slate-700">{label}</span>{children}</label>
 }
 
-function Status({ value }: { value: string }) {
+function Status({ value, payroll = false }: { value: string; payroll?: boolean }) {
   const good = ['approved', 'paid', 'Present', 'Idle', 'active'].includes(value)
   const bad = ['rejected', 'Absent'].includes(value)
-  const label = value === 'passed' ? 'Leave request passed' : value === 'processing' ? 'Ready to pay' : value === 'rejected' ? 'Payment on hold' : value === 'carried_over' ? 'Carried to next period' : value
+  const label = value === 'passed' ? 'Leave request passed' : value === 'processing' ? 'Ready to pay' : value === 'rejected' ? payroll ? 'Payment on hold' : 'Rejected' : value === 'carried_over' ? 'Carried to next period' : value
   return <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold capitalize ${value === 'passed' ? 'bg-slate-100 text-slate-700 ring-1 ring-slate-200' : good ? 'bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200' : bad ? 'bg-rose-50 text-rose-700 ring-1 ring-rose-200' : 'bg-amber-50 text-amber-700 ring-1 ring-amber-200'}`}>{label}</span>
 }
 

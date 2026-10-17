@@ -1,6 +1,8 @@
+import { useToast } from '../components/ui/Toast';
+import { readPageCache, writePageCache, pageCacheGeneration } from "../lib/pageCache";
 import { Input } from "../components/ui/Input";
 import { AdminPageHeader } from "../components/AdminPageHeader";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Activity, AlertTriangle, BrainCircuit, CalendarDays, ChevronRight,
   Clock3, Flag, RefreshCw, ShieldCheck, Sparkles, TrendingUp, Users,
@@ -31,7 +33,7 @@ export type Insights = {
   disclaimer: string;
 };
 
-let insightsPageCache: { token: string | null; data: Insights } | null = null;
+
 
 const modelMeta = {
   forecast: { title: "Expected Attendance", label: "Attendance outlook", icon: TrendingUp, accent: "violet", formula: "Uses recent attendance patterns", description: "Shows an estimate of how many employees may be present during the next seven days." },
@@ -258,26 +260,32 @@ function Stat({ label, value }: { label: string; value: string }) { return <div 
 function Empty({ text }: { text: string }) { return <div className="px-5 py-10 text-center text-sm text-slate-500">{text}</div>; }
 
 export function AIInsightsView() {
-  const cachedInsights = insightsPageCache?.token === sessionStorage.getItem("workpulse_token") ? insightsPageCache.data : null;
+  const { toast } = useToast();
+  const cachedInsights = readPageCache<Insights>("insights") ?? null;
   const [insights, setInsights] = useState<Insights | null>(cachedInsights);
   const [selected, setSelected] = useState<InsightKey>("forecast");
   const [loading, setLoading] = useState(!cachedInsights);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const latestRequest = useRef(0);
   const loadInsights = useCallback(async (manual = false) => {
+    const requestId = ++latestRequest.current;
+    const generation = pageCacheGeneration();
     if (manual) setRefreshing(true);
     try {
       const response = await apiFetch(manual ? "/api/ai-insights?refresh=1" : "/api/ai-insights");
       const body = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(body.error || "Unable to load Insights.");
-      insightsPageCache = { token: sessionStorage.getItem("workpulse_token"), data: body as Insights };
+      if (requestId !== latestRequest.current || generation !== pageCacheGeneration()) return;
+      writePageCache("insights", body as Insights, generation);
       setInsights(body as Insights); setError(null);
-    } catch (reason) { setError(reason instanceof TypeError ? "Could not connect to Insights. Please try again." : reason instanceof Error ? reason.message : "Unable to load Insights."); }
-    finally { setLoading(false); setRefreshing(false); }
-  }, []);
+      if (manual) toast({ title: "Insights refreshed", description: "The latest analysis is displayed.", variant: "success" });
+    } catch (reason) { if (requestId !== latestRequest.current) return; if (manual) toast({ title: "Insights not refreshed", description: reason instanceof Error ? reason.message : "Please try again.", variant: "error" }); setError(reason instanceof TypeError ? "Could not connect to Insights. Please try again." : reason instanceof Error ? reason.message : "Unable to load Insights."); }
+    finally { if (requestId === latestRequest.current) { setLoading(false); setRefreshing(false); } }
+  }, [toast]);
   useEffect(() => {
     const initial = window.setTimeout(() => void loadInsights(), 0);
-    return () => window.clearTimeout(initial);
+    return () => { window.clearTimeout(initial); latestRequest.current = -1; };
   }, [loadInsights]);
   const meta = modelMeta[selected];
   const generated = useMemo(() => insights ? new Intl.DateTimeFormat("en-US", { hour: "numeric", minute: "2-digit", timeZone: "Asia/Manila" }).format(new Date(insights.generatedAt)) : null, [insights]);

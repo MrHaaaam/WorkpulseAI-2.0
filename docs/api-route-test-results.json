@@ -1,0 +1,3822 @@
+{
+  "generatedAt": "2026-10-17T01:45:02.084Z",
+  "routeCount": 95,
+  "scope": "Actual Express HTTP handlers; controlled in-memory records and mocked email. Physical scanner matching is external.",
+  "routes": [
+    {
+      "method": "GET",
+      "path": "/api/auth/captcha",
+      "observations": [
+        {
+          "scenario": "all public authentication endpoints and protected session actions",
+          "role": "anonymous",
+          "status": 200
+        },
+        {
+          "scenario": "password login, OTP, password recovery and initial password replacement",
+          "role": "anonymous",
+          "status": 200
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/auth/login",
+      "observations": [
+        {
+          "scenario": "all public authentication endpoints and protected session actions",
+          "role": "anonymous",
+          "status": 400
+        },
+        {
+          "scenario": "password login, OTP, password recovery and initial password replacement",
+          "role": "anonymous",
+          "status": 200
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/auth/verify-otp",
+      "observations": [
+        {
+          "scenario": "all public authentication endpoints and protected session actions",
+          "role": "anonymous",
+          "status": 400
+        },
+        {
+          "scenario": "password login, OTP, password recovery and initial password replacement",
+          "role": "anonymous",
+          "status": 200
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/auth/session",
+      "observations": [
+        {
+          "scenario": "all public authentication endpoints and protected session actions",
+          "role": "admin",
+          "status": 200
+        },
+        {
+          "scenario": "all public authentication endpoints and protected session actions",
+          "role": "admin",
+          "status": 401
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/auth/forgot-password/request",
+      "observations": [
+        {
+          "scenario": "all public authentication endpoints and protected session actions",
+          "role": "anonymous",
+          "status": 400
+        },
+        {
+          "scenario": "password login, OTP, password recovery and initial password replacement",
+          "role": "anonymous",
+          "status": 200
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/auth/forgot-password/verify",
+      "observations": [
+        {
+          "scenario": "all public authentication endpoints and protected session actions",
+          "role": "anonymous",
+          "status": 400
+        },
+        {
+          "scenario": "password login, OTP, password recovery and initial password replacement",
+          "role": "anonymous",
+          "status": 200
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/auth/forgot-password/reset",
+      "observations": [
+        {
+          "scenario": "all public authentication endpoints and protected session actions",
+          "role": "anonymous",
+          "status": 401
+        },
+        {
+          "scenario": "password login, OTP, password recovery and initial password replacement",
+          "role": "anonymous",
+          "status": 200
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/auth/change-initial-password",
+      "observations": [
+        {
+          "scenario": "every protected write requires cookie CSRF protection",
+          "role": "admin",
+          "status": 403
+        },
+        {
+          "scenario": "all public authentication endpoints and protected session actions",
+          "role": "admin",
+          "status": 403
+        },
+        {
+          "scenario": "password login, OTP, password recovery and initial password replacement",
+          "role": "regular",
+          "status": 200
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/auth/verify-password",
+      "observations": [
+        {
+          "scenario": "every protected write requires cookie CSRF protection",
+          "role": "admin",
+          "status": 403
+        },
+        {
+          "scenario": "all public authentication endpoints and protected session actions",
+          "role": "admin",
+          "status": 200
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/auth/logout",
+      "observations": [
+        {
+          "scenario": "every protected write requires cookie CSRF protection",
+          "role": "admin",
+          "status": 403
+        },
+        {
+          "scenario": "all public authentication endpoints and protected session actions",
+          "role": "admin",
+          "status": 204
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/employee/me",
+      "observations": [
+        {
+          "scenario": "every protected API rejects anonymous requests",
+          "role": "anonymous",
+          "status": 401
+        },
+        {
+          "scenario": "administrator cannot impersonate the employee portal",
+          "role": "admin",
+          "status": 403
+        },
+        {
+          "scenario": "all read endpoints return valid responses",
+          "role": "regular",
+          "status": 200
+        },
+        {
+          "scenario": "regular: employee workspace, calendar and inbox remain accessible",
+          "role": "regular",
+          "status": 200
+        },
+        {
+          "scenario": "extra: employee workspace, calendar and inbox remain accessible",
+          "role": "extra",
+          "status": 200
+        },
+        {
+          "scenario": "manager: employee workspace, calendar and inbox remain accessible",
+          "role": "manager",
+          "status": 200
+        },
+        {
+          "scenario": "supervisor: employee workspace, calendar and inbox remain accessible",
+          "role": "supervisor",
+          "status": 200
+        },
+        {
+          "scenario": "system controls, employee access, and settings update",
+          "role": "regular",
+          "status": 503
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/employee/me/calendar",
+      "observations": [
+        {
+          "scenario": "every protected API rejects anonymous requests",
+          "role": "anonymous",
+          "status": 401
+        },
+        {
+          "scenario": "administrator cannot impersonate the employee portal",
+          "role": "admin",
+          "status": 403
+        },
+        {
+          "scenario": "all read endpoints return valid responses",
+          "role": "regular",
+          "status": 200
+        },
+        {
+          "scenario": "regular: employee workspace, calendar and inbox remain accessible",
+          "role": "regular",
+          "status": 200
+        },
+        {
+          "scenario": "extra: employee workspace, calendar and inbox remain accessible",
+          "role": "extra",
+          "status": 200
+        },
+        {
+          "scenario": "manager: employee workspace, calendar and inbox remain accessible",
+          "role": "manager",
+          "status": 200
+        },
+        {
+          "scenario": "supervisor: employee workspace, calendar and inbox remain accessible",
+          "role": "supervisor",
+          "status": 200
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/calendar",
+      "observations": [
+        {
+          "scenario": "every protected API rejects anonymous requests",
+          "role": "anonymous",
+          "status": 401
+        },
+        {
+          "scenario": "regular: every admin API is forbidden",
+          "role": "regular",
+          "status": 403
+        },
+        {
+          "scenario": "extra: every admin API is forbidden",
+          "role": "extra",
+          "status": 403
+        },
+        {
+          "scenario": "manager: every admin API is forbidden",
+          "role": "manager",
+          "status": 403
+        },
+        {
+          "scenario": "supervisor: every admin API is forbidden",
+          "role": "supervisor",
+          "status": 403
+        },
+        {
+          "scenario": "all read endpoints return valid responses",
+          "role": "admin",
+          "status": 200
+        },
+        {
+          "scenario": "read APIs reject invalid calendar dates and reversed attendance ranges",
+          "role": "admin",
+          "status": 400
+        }
+      ]
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/employee/me/contact",
+      "observations": [
+        {
+          "scenario": "every protected API rejects anonymous requests",
+          "role": "anonymous",
+          "status": 401
+        },
+        {
+          "scenario": "every protected write requires cookie CSRF protection",
+          "role": "admin",
+          "status": 403
+        },
+        {
+          "scenario": "administrator cannot impersonate the employee portal",
+          "role": "admin",
+          "status": 403
+        },
+        {
+          "scenario": "employee contact is scoped to the authenticated employee",
+          "role": "regular",
+          "status": 200
+        },
+        {
+          "scenario": "validation PATCH /api/employee/me/contact",
+          "role": "regular",
+          "status": 400
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/employee/me/leave-requests",
+      "observations": [
+        {
+          "scenario": "every protected API rejects anonymous requests",
+          "role": "anonymous",
+          "status": 401
+        },
+        {
+          "scenario": "every protected write requires cookie CSRF protection",
+          "role": "admin",
+          "status": 403
+        },
+        {
+          "scenario": "administrator cannot impersonate the employee portal",
+          "role": "admin",
+          "status": 403
+        },
+        {
+          "scenario": "leave submission, conflict, cancellation, preview, approval and undo",
+          "role": "regular",
+          "status": 201
+        },
+        {
+          "scenario": "leave submission, conflict, cancellation, preview, approval and undo",
+          "role": "regular",
+          "status": 409
+        },
+        {
+          "scenario": "leave submission, conflict, cancellation, preview, approval and undo",
+          "role": "regular",
+          "status": 201
+        },
+        {
+          "scenario": "leave submission, conflict, cancellation, preview, approval and undo",
+          "role": "regular",
+          "status": 201
+        },
+        {
+          "scenario": "validation POST /api/employee/me/leave-requests",
+          "role": "regular",
+          "status": 400
+        }
+      ]
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/employee/me/leave-requests/:id/cancel",
+      "observations": [
+        {
+          "scenario": "every protected API rejects anonymous requests",
+          "role": "anonymous",
+          "status": 401
+        },
+        {
+          "scenario": "every protected write requires cookie CSRF protection",
+          "role": "admin",
+          "status": 403
+        },
+        {
+          "scenario": "administrator cannot impersonate the employee portal",
+          "role": "admin",
+          "status": 403
+        },
+        {
+          "scenario": "leave submission, conflict, cancellation, preview, approval and undo",
+          "role": "regular",
+          "status": 200
+        },
+        {
+          "scenario": "validation PATCH /api/employee/me/leave-requests/:id/cancel",
+          "role": "regular",
+          "status": 409
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/employee/me/cash-advance-requests",
+      "observations": [
+        {
+          "scenario": "every protected API rejects anonymous requests",
+          "role": "anonymous",
+          "status": 401
+        },
+        {
+          "scenario": "every protected write requires cookie CSRF protection",
+          "role": "admin",
+          "status": 403
+        },
+        {
+          "scenario": "administrator cannot impersonate the employee portal",
+          "role": "admin",
+          "status": 403
+        },
+        {
+          "scenario": "cash advance request, approval, acceptance, disbursement and duplicate protection",
+          "role": "regular",
+          "status": 201
+        },
+        {
+          "scenario": "employee cash cancellation and administrator cash entry",
+          "role": "regular",
+          "status": 201
+        },
+        {
+          "scenario": "validation POST /api/employee/me/cash-advance-requests",
+          "role": "regular",
+          "status": 400
+        }
+      ]
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/employee/me/cash-advance-requests/:id/accept",
+      "observations": [
+        {
+          "scenario": "every protected API rejects anonymous requests",
+          "role": "anonymous",
+          "status": 401
+        },
+        {
+          "scenario": "every protected write requires cookie CSRF protection",
+          "role": "admin",
+          "status": 403
+        },
+        {
+          "scenario": "administrator cannot impersonate the employee portal",
+          "role": "admin",
+          "status": 403
+        },
+        {
+          "scenario": "cash advance request, approval, acceptance, disbursement and duplicate protection",
+          "role": "regular",
+          "status": 200
+        },
+        {
+          "scenario": "validation PATCH /api/employee/me/cash-advance-requests/:id/accept",
+          "role": "regular",
+          "status": 409
+        }
+      ]
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/employee/me/cash-advance-requests/:id/cancel",
+      "observations": [
+        {
+          "scenario": "every protected API rejects anonymous requests",
+          "role": "anonymous",
+          "status": 401
+        },
+        {
+          "scenario": "every protected write requires cookie CSRF protection",
+          "role": "admin",
+          "status": 403
+        },
+        {
+          "scenario": "administrator cannot impersonate the employee portal",
+          "role": "admin",
+          "status": 403
+        },
+        {
+          "scenario": "employee cash cancellation and administrator cash entry",
+          "role": "regular",
+          "status": 200
+        },
+        {
+          "scenario": "validation PATCH /api/employee/me/cash-advance-requests/:id/cancel",
+          "role": "regular",
+          "status": 409
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/employee/me/notifications",
+      "observations": [
+        {
+          "scenario": "every protected API rejects anonymous requests",
+          "role": "anonymous",
+          "status": 401
+        },
+        {
+          "scenario": "administrator cannot impersonate the employee portal",
+          "role": "admin",
+          "status": 403
+        },
+        {
+          "scenario": "all read endpoints return valid responses",
+          "role": "regular",
+          "status": 200
+        },
+        {
+          "scenario": "regular: employee workspace, calendar and inbox remain accessible",
+          "role": "regular",
+          "status": 200
+        },
+        {
+          "scenario": "extra: employee workspace, calendar and inbox remain accessible",
+          "role": "extra",
+          "status": 200
+        },
+        {
+          "scenario": "manager: employee workspace, calendar and inbox remain accessible",
+          "role": "manager",
+          "status": 200
+        },
+        {
+          "scenario": "supervisor: employee workspace, calendar and inbox remain accessible",
+          "role": "supervisor",
+          "status": 200
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/employee/me/notifications/read",
+      "observations": [
+        {
+          "scenario": "every protected API rejects anonymous requests",
+          "role": "anonymous",
+          "status": 401
+        },
+        {
+          "scenario": "every protected write requires cookie CSRF protection",
+          "role": "admin",
+          "status": 403
+        },
+        {
+          "scenario": "administrator cannot impersonate the employee portal",
+          "role": "admin",
+          "status": 403
+        },
+        {
+          "scenario": "export reports, audit actions, and notification ownership",
+          "role": "regular",
+          "status": 200
+        },
+        {
+          "scenario": "validation POST /api/employee/me/notifications/read",
+          "role": "regular",
+          "status": 400
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/attendance/correction",
+      "observations": [
+        {
+          "scenario": "every protected API rejects anonymous requests",
+          "role": "anonymous",
+          "status": 401
+        },
+        {
+          "scenario": "regular: every admin API is forbidden",
+          "role": "regular",
+          "status": 403
+        },
+        {
+          "scenario": "extra: every admin API is forbidden",
+          "role": "extra",
+          "status": 403
+        },
+        {
+          "scenario": "manager: every admin API is forbidden",
+          "role": "manager",
+          "status": 403
+        },
+        {
+          "scenario": "supervisor: every admin API is forbidden",
+          "role": "supervisor",
+          "status": 403
+        },
+        {
+          "scenario": "all read endpoints return valid responses",
+          "role": "admin",
+          "status": 200
+        },
+        {
+          "scenario": "manual attendance, bulk attendance, forced clock-out and idle-day changes",
+          "role": "admin",
+          "status": 200
+        },
+        {
+          "scenario": "manual attendance, bulk attendance, forced clock-out and idle-day changes",
+          "role": "admin",
+          "status": 200
+        }
+      ]
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/attendance/correction",
+      "observations": [
+        {
+          "scenario": "every protected API rejects anonymous requests",
+          "role": "anonymous",
+          "status": 401
+        },
+        {
+          "scenario": "every protected write requires cookie CSRF protection",
+          "role": "admin",
+          "status": 403
+        },
+        {
+          "scenario": "regular: every admin API is forbidden",
+          "role": "regular",
+          "status": 403
+        },
+        {
+          "scenario": "extra: every admin API is forbidden",
+          "role": "extra",
+          "status": 403
+        },
+        {
+          "scenario": "manager: every admin API is forbidden",
+          "role": "manager",
+          "status": 403
+        },
+        {
+          "scenario": "supervisor: every admin API is forbidden",
+          "role": "supervisor",
+          "status": 403
+        },
+        {
+          "scenario": "manual attendance, bulk attendance, forced clock-out and idle-day changes",
+          "role": "admin",
+          "status": 200
+        },
+        {
+          "scenario": "validation PATCH /api/attendance/correction",
+          "role": "admin",
+          "status": 401
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/offline/sync",
+      "observations": [
+        {
+          "scenario": "every protected API rejects anonymous requests",
+          "role": "anonymous",
+          "status": 401
+        },
+        {
+          "scenario": "every protected write requires cookie CSRF protection",
+          "role": "admin",
+          "status": 403
+        },
+        {
+          "scenario": "regular: every admin API is forbidden",
+          "role": "regular",
+          "status": 403
+        },
+        {
+          "scenario": "extra: every admin API is forbidden",
+          "role": "extra",
+          "status": 403
+        },
+        {
+          "scenario": "manager: every admin API is forbidden",
+          "role": "manager",
+          "status": 403
+        },
+        {
+          "scenario": "supervisor: every admin API is forbidden",
+          "role": "supervisor",
+          "status": 403
+        },
+        {
+          "scenario": "manual attendance, bulk attendance, forced clock-out and idle-day changes",
+          "role": "admin",
+          "status": 200
+        },
+        {
+          "scenario": "validation POST /api/offline/sync",
+          "role": "admin",
+          "status": 403
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/cash-advance-requests",
+      "observations": [
+        {
+          "scenario": "every protected API rejects anonymous requests",
+          "role": "anonymous",
+          "status": 401
+        },
+        {
+          "scenario": "regular: every admin API is forbidden",
+          "role": "regular",
+          "status": 403
+        },
+        {
+          "scenario": "extra: every admin API is forbidden",
+          "role": "extra",
+          "status": 403
+        },
+        {
+          "scenario": "manager: every admin API is forbidden",
+          "role": "manager",
+          "status": 403
+        },
+        {
+          "scenario": "supervisor: every admin API is forbidden",
+          "role": "supervisor",
+          "status": 403
+        },
+        {
+          "scenario": "all read endpoints return valid responses",
+          "role": "admin",
+          "status": 200
+        }
+      ]
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/cash-advance-requests/:id/decision",
+      "observations": [
+        {
+          "scenario": "every protected API rejects anonymous requests",
+          "role": "anonymous",
+          "status": 401
+        },
+        {
+          "scenario": "every protected write requires cookie CSRF protection",
+          "role": "admin",
+          "status": 403
+        },
+        {
+          "scenario": "regular: every admin API is forbidden",
+          "role": "regular",
+          "status": 403
+        },
+        {
+          "scenario": "extra: every admin API is forbidden",
+          "role": "extra",
+          "status": 403
+        },
+        {
+          "scenario": "manager: every admin API is forbidden",
+          "role": "manager",
+          "status": 403
+        },
+        {
+          "scenario": "supervisor: every admin API is forbidden",
+          "role": "supervisor",
+          "status": 403
+        },
+        {
+          "scenario": "cash advance request, approval, acceptance, disbursement and duplicate protection",
+          "role": "admin",
+          "status": 200
+        },
+        {
+          "scenario": "validation PATCH /api/cash-advance-requests/:id/decision",
+          "role": "admin",
+          "status": 401
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/cash-advance-requests/:id/disburse",
+      "observations": [
+        {
+          "scenario": "every protected API rejects anonymous requests",
+          "role": "anonymous",
+          "status": 401
+        },
+        {
+          "scenario": "every protected write requires cookie CSRF protection",
+          "role": "admin",
+          "status": 403
+        },
+        {
+          "scenario": "regular: every admin API is forbidden",
+          "role": "regular",
+          "status": 403
+        },
+        {
+          "scenario": "extra: every admin API is forbidden",
+          "role": "extra",
+          "status": 403
+        },
+        {
+          "scenario": "manager: every admin API is forbidden",
+          "role": "manager",
+          "status": 403
+        },
+        {
+          "scenario": "supervisor: every admin API is forbidden",
+          "role": "supervisor",
+          "status": 403
+        },
+        {
+          "scenario": "cash advance request, approval, acceptance, disbursement and duplicate protection",
+          "role": "admin",
+          "status": 201
+        },
+        {
+          "scenario": "cash advance request, approval, acceptance, disbursement and duplicate protection",
+          "role": "admin",
+          "status": 409
+        },
+        {
+          "scenario": "validation POST /api/cash-advance-requests/:id/disburse",
+          "role": "admin",
+          "status": 401
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/cash-advances",
+      "observations": [
+        {
+          "scenario": "every protected API rejects anonymous requests",
+          "role": "anonymous",
+          "status": 401
+        },
+        {
+          "scenario": "regular: every admin API is forbidden",
+          "role": "regular",
+          "status": 403
+        },
+        {
+          "scenario": "extra: every admin API is forbidden",
+          "role": "extra",
+          "status": 403
+        },
+        {
+          "scenario": "manager: every admin API is forbidden",
+          "role": "manager",
+          "status": 403
+        },
+        {
+          "scenario": "supervisor: every admin API is forbidden",
+          "role": "supervisor",
+          "status": 403
+        },
+        {
+          "scenario": "all read endpoints return valid responses",
+          "role": "admin",
+          "status": 200
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/cash-advances",
+      "observations": [
+        {
+          "scenario": "every protected API rejects anonymous requests",
+          "role": "anonymous",
+          "status": 401
+        },
+        {
+          "scenario": "every protected write requires cookie CSRF protection",
+          "role": "admin",
+          "status": 403
+        },
+        {
+          "scenario": "regular: every admin API is forbidden",
+          "role": "regular",
+          "status": 403
+        },
+        {
+          "scenario": "extra: every admin API is forbidden",
+          "role": "extra",
+          "status": 403
+        },
+        {
+          "scenario": "manager: every admin API is forbidden",
+          "role": "manager",
+          "status": 403
+        },
+        {
+          "scenario": "supervisor: every admin API is forbidden",
+          "role": "supervisor",
+          "status": 403
+        },
+        {
+          "scenario": "employee cash cancellation and administrator cash entry",
+          "role": "admin",
+          "status": 201
+        },
+        {
+          "scenario": "validation POST /api/cash-advances",
+          "role": "admin",
+          "status": 401
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/notifications",
+      "observations": [
+        {
+          "scenario": "every protected API rejects anonymous requests",
+          "role": "anonymous",
+          "status": 401
+        },
+        {
+          "scenario": "regular: every admin API is forbidden",
+          "role": "regular",
+          "status": 403
+        },
+        {
+          "scenario": "extra: every admin API is forbidden",
+          "role": "extra",
+          "status": 403
+        },
+        {
+          "scenario": "manager: every admin API is forbidden",
+          "role": "manager",
+          "status": 403
+        },
+        {
+          "scenario": "supervisor: every admin API is forbidden",
+          "role": "supervisor",
+          "status": 403
+        },
+        {
+          "scenario": "all read endpoints return valid responses",
+          "role": "admin",
+          "status": 200
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/admin/notifications/read",
+      "observations": [
+        {
+          "scenario": "every protected API rejects anonymous requests",
+          "role": "anonymous",
+          "status": 401
+        },
+        {
+          "scenario": "every protected write requires cookie CSRF protection",
+          "role": "admin",
+          "status": 403
+        },
+        {
+          "scenario": "regular: every admin API is forbidden",
+          "role": "regular",
+          "status": 403
+        },
+        {
+          "scenario": "extra: every admin API is forbidden",
+          "role": "extra",
+          "status": 403
+        },
+        {
+          "scenario": "manager: every admin API is forbidden",
+          "role": "manager",
+          "status": 403
+        },
+        {
+          "scenario": "supervisor: every admin API is forbidden",
+          "role": "supervisor",
+          "status": 403
+        },
+        {
+          "scenario": "export reports, audit actions, and notification ownership",
+          "role": "admin",
+          "status": 200
+        },
+        {
+          "scenario": "validation POST /api/admin/notifications/read",
+          "role": "admin",
+          "status": 400
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/account-security",
+      "observations": [
+        {
+          "scenario": "every protected API rejects anonymous requests",
+          "role": "anonymous",
+          "status": 401
+        },
+        {
+          "scenario": "regular: every admin API is forbidden",
+          "role": "regular",
+          "status": 403
+        },
+        {
+          "scenario": "extra: every admin API is forbidden",
+          "role": "extra",
+          "status": 403
+        },
+        {
+          "scenario": "manager: every admin API is forbidden",
+          "role": "manager",
+          "status": 403
+        },
+        {
+          "scenario": "supervisor: every admin API is forbidden",
+          "role": "supervisor",
+          "status": 403
+        },
+        {
+          "scenario": "all read endpoints return valid responses",
+          "role": "admin",
+          "status": 200
+        }
+      ]
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/admin/account-security",
+      "observations": [
+        {
+          "scenario": "every protected API rejects anonymous requests",
+          "role": "anonymous",
+          "status": 401
+        },
+        {
+          "scenario": "every protected write requires cookie CSRF protection",
+          "role": "admin",
+          "status": 403
+        },
+        {
+          "scenario": "regular: every admin API is forbidden",
+          "role": "regular",
+          "status": 403
+        },
+        {
+          "scenario": "extra: every admin API is forbidden",
+          "role": "extra",
+          "status": 403
+        },
+        {
+          "scenario": "manager: every admin API is forbidden",
+          "role": "manager",
+          "status": 403
+        },
+        {
+          "scenario": "supervisor: every admin API is forbidden",
+          "role": "supervisor",
+          "status": 403
+        },
+        {
+          "scenario": "password login, OTP, password recovery and initial password replacement",
+          "role": "admin",
+          "status": 200
+        },
+        {
+          "scenario": "validation PATCH /api/admin/account-security",
+          "role": "admin",
+          "status": 400
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/system-controls",
+      "observations": [
+        {
+          "scenario": "every protected API rejects anonymous requests",
+          "role": "anonymous",
+          "status": 401
+        },
+        {
+          "scenario": "regular: every admin API is forbidden",
+          "role": "regular",
+          "status": 403
+        },
+        {
+          "scenario": "extra: every admin API is forbidden",
+          "role": "extra",
+          "status": 403
+        },
+        {
+          "scenario": "manager: every admin API is forbidden",
+          "role": "manager",
+          "status": 403
+        },
+        {
+          "scenario": "supervisor: every admin API is forbidden",
+          "role": "supervisor",
+          "status": 403
+        },
+        {
+          "scenario": "all read endpoints return valid responses",
+          "role": "admin",
+          "status": 200
+        },
+        {
+          "scenario": "system controls, employee access, and settings update",
+          "role": "admin",
+          "status": 200
+        }
+      ]
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/admin/system-controls",
+      "observations": [
+        {
+          "scenario": "every protected API rejects anonymous requests",
+          "role": "anonymous",
+          "status": 401
+        },
+        {
+          "scenario": "every protected write requires cookie CSRF protection",
+          "role": "admin",
+          "status": 403
+        },
+        {
+          "scenario": "regular: every admin API is forbidden",
+          "role": "regular",
+          "status": 403
+        },
+        {
+          "scenario": "extra: every admin API is forbidden",
+          "role": "extra",
+          "status": 403
+        },
+        {
+          "scenario": "manager: every admin API is forbidden",
+          "role": "manager",
+          "status": 403
+        },
+        {
+          "scenario": "supervisor: every admin API is forbidden",
+          "role": "supervisor",
+          "status": 403
+        },
+        {
+          "scenario": "system controls, employee access, and settings update",
+          "role": "admin",
+          "status": 200
+        },
+        {
+          "scenario": "system controls, employee access, and settings update",
+          "role": "admin",
+          "status": 200
+        },
+        {
+          "scenario": "system controls, employee access, and settings update",
+          "role": "admin",
+          "status": 200
+        },
+        {
+          "scenario": "validation PATCH /api/admin/system-controls",
+          "role": "admin",
+          "status": 400
+        }
+      ]
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/admin/employees/:id/access",
+      "observations": [
+        {
+          "scenario": "every protected API rejects anonymous requests",
+          "role": "anonymous",
+          "status": 401
+        },
+        {
+          "scenario": "every protected write requires cookie CSRF protection",
+          "role": "admin",
+          "status": 403
+        },
+        {
+          "scenario": "regular: every admin API is forbidden",
+          "role": "regular",
+          "status": 403
+        },
+        {
+          "scenario": "extra: every admin API is forbidden",
+          "role": "extra",
+          "status": 403
+        },
+        {
+          "scenario": "manager: every admin API is forbidden",
+          "role": "manager",
+          "status": 403
+        },
+        {
+          "scenario": "supervisor: every admin API is forbidden",
+          "role": "supervisor",
+          "status": 403
+        },
+        {
+          "scenario": "system controls, employee access, and settings update",
+          "role": "admin",
+          "status": 200
+        },
+        {
+          "scenario": "validation PATCH /api/admin/employees/:id/access",
+          "role": "admin",
+          "status": 404
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/force-clock-out",
+      "observations": [
+        {
+          "scenario": "every protected API rejects anonymous requests",
+          "role": "anonymous",
+          "status": 401
+        },
+        {
+          "scenario": "regular: every admin API is forbidden",
+          "role": "regular",
+          "status": 403
+        },
+        {
+          "scenario": "extra: every admin API is forbidden",
+          "role": "extra",
+          "status": 403
+        },
+        {
+          "scenario": "manager: every admin API is forbidden",
+          "role": "manager",
+          "status": 403
+        },
+        {
+          "scenario": "supervisor: every admin API is forbidden",
+          "role": "supervisor",
+          "status": 403
+        },
+        {
+          "scenario": "all read endpoints return valid responses",
+          "role": "admin",
+          "status": 200
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/admin/force-clock-out",
+      "observations": [
+        {
+          "scenario": "every protected API rejects anonymous requests",
+          "role": "anonymous",
+          "status": 401
+        },
+        {
+          "scenario": "every protected write requires cookie CSRF protection",
+          "role": "admin",
+          "status": 403
+        },
+        {
+          "scenario": "regular: every admin API is forbidden",
+          "role": "regular",
+          "status": 403
+        },
+        {
+          "scenario": "extra: every admin API is forbidden",
+          "role": "extra",
+          "status": 403
+        },
+        {
+          "scenario": "manager: every admin API is forbidden",
+          "role": "manager",
+          "status": 403
+        },
+        {
+          "scenario": "supervisor: every admin API is forbidden",
+          "role": "supervisor",
+          "status": 403
+        },
+        {
+          "scenario": "manual attendance, bulk attendance, forced clock-out and idle-day changes",
+          "role": "admin",
+          "status": 200
+        },
+        {
+          "scenario": "validation POST /api/admin/force-clock-out",
+          "role": "admin",
+          "status": 400
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/backup",
+      "observations": [
+        {
+          "scenario": "every protected API rejects anonymous requests",
+          "role": "anonymous",
+          "status": 401
+        },
+        {
+          "scenario": "regular: every admin API is forbidden",
+          "role": "regular",
+          "status": 403
+        },
+        {
+          "scenario": "extra: every admin API is forbidden",
+          "role": "extra",
+          "status": 403
+        },
+        {
+          "scenario": "manager: every admin API is forbidden",
+          "role": "manager",
+          "status": 403
+        },
+        {
+          "scenario": "supervisor: every admin API is forbidden",
+          "role": "supervisor",
+          "status": 403
+        },
+        {
+          "scenario": "all read endpoints return valid responses",
+          "role": "admin",
+          "status": 200
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/ai-insights",
+      "observations": [
+        {
+          "scenario": "every protected API rejects anonymous requests",
+          "role": "anonymous",
+          "status": 401
+        },
+        {
+          "scenario": "regular: every admin API is forbidden",
+          "role": "regular",
+          "status": 403
+        },
+        {
+          "scenario": "extra: every admin API is forbidden",
+          "role": "extra",
+          "status": 403
+        },
+        {
+          "scenario": "manager: every admin API is forbidden",
+          "role": "manager",
+          "status": 403
+        },
+        {
+          "scenario": "supervisor: every admin API is forbidden",
+          "role": "supervisor",
+          "status": 403
+        },
+        {
+          "scenario": "all read endpoints return valid responses",
+          "role": "admin",
+          "status": 200
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/biometric-evaluation-trials/pending",
+      "observations": [
+        {
+          "scenario": "every protected API rejects anonymous requests",
+          "role": "anonymous",
+          "status": 401
+        },
+        {
+          "scenario": "regular: every admin API is forbidden",
+          "role": "regular",
+          "status": 403
+        },
+        {
+          "scenario": "extra: every admin API is forbidden",
+          "role": "extra",
+          "status": 403
+        },
+        {
+          "scenario": "manager: every admin API is forbidden",
+          "role": "manager",
+          "status": 403
+        },
+        {
+          "scenario": "supervisor: every admin API is forbidden",
+          "role": "supervisor",
+          "status": 403
+        },
+        {
+          "scenario": "all read endpoints return valid responses",
+          "role": "admin",
+          "status": 200
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/biometric-evaluation-trials/:id/confirm",
+      "observations": [
+        {
+          "scenario": "every protected API rejects anonymous requests",
+          "role": "anonymous",
+          "status": 401
+        },
+        {
+          "scenario": "every protected write requires cookie CSRF protection",
+          "role": "admin",
+          "status": 403
+        },
+        {
+          "scenario": "regular: every admin API is forbidden",
+          "role": "regular",
+          "status": 403
+        },
+        {
+          "scenario": "extra: every admin API is forbidden",
+          "role": "extra",
+          "status": 403
+        },
+        {
+          "scenario": "manager: every admin API is forbidden",
+          "role": "manager",
+          "status": 403
+        },
+        {
+          "scenario": "supervisor: every admin API is forbidden",
+          "role": "supervisor",
+          "status": 403
+        },
+        {
+          "scenario": "fingerprint tester no-match, assessment, and malformed enrollment",
+          "role": "admin",
+          "status": 200
+        },
+        {
+          "scenario": "fingerprint tester no-match, assessment, and malformed enrollment",
+          "role": "admin",
+          "status": 409
+        },
+        {
+          "scenario": "validation POST /api/biometric-evaluation-trials/:id/confirm",
+          "role": "admin",
+          "status": 400
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/biometric-evaluation-trials",
+      "observations": [
+        {
+          "scenario": "every protected API rejects anonymous requests",
+          "role": "anonymous",
+          "status": 401
+        },
+        {
+          "scenario": "every protected write requires cookie CSRF protection",
+          "role": "admin",
+          "status": 403
+        },
+        {
+          "scenario": "regular: every admin API is forbidden",
+          "role": "regular",
+          "status": 403
+        },
+        {
+          "scenario": "extra: every admin API is forbidden",
+          "role": "extra",
+          "status": 403
+        },
+        {
+          "scenario": "manager: every admin API is forbidden",
+          "role": "manager",
+          "status": 403
+        },
+        {
+          "scenario": "supervisor: every admin API is forbidden",
+          "role": "supervisor",
+          "status": 403
+        },
+        {
+          "scenario": "fingerprint tester no-match, assessment, and malformed enrollment",
+          "role": "admin",
+          "status": 201
+        },
+        {
+          "scenario": "validation POST /api/biometric-evaluation-trials",
+          "role": "admin",
+          "status": 400
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/overview",
+      "observations": [
+        {
+          "scenario": "every protected API rejects anonymous requests",
+          "role": "anonymous",
+          "status": 401
+        },
+        {
+          "scenario": "regular: every admin API is forbidden",
+          "role": "regular",
+          "status": 403
+        },
+        {
+          "scenario": "extra: every admin API is forbidden",
+          "role": "extra",
+          "status": 403
+        },
+        {
+          "scenario": "manager: every admin API is forbidden",
+          "role": "manager",
+          "status": 403
+        },
+        {
+          "scenario": "supervisor: every admin API is forbidden",
+          "role": "supervisor",
+          "status": 403
+        },
+        {
+          "scenario": "all read endpoints return valid responses",
+          "role": "admin",
+          "status": 200
+        },
+        {
+          "scenario": "read APIs reject invalid calendar dates and reversed attendance ranges",
+          "role": "admin",
+          "status": 400
+        },
+        {
+          "scenario": "read APIs reject invalid calendar dates and reversed attendance ranges",
+          "role": "admin",
+          "status": 400
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/audit-events",
+      "observations": [
+        {
+          "scenario": "every protected API rejects anonymous requests",
+          "role": "anonymous",
+          "status": 401
+        },
+        {
+          "scenario": "regular: every admin API is forbidden",
+          "role": "regular",
+          "status": 403
+        },
+        {
+          "scenario": "extra: every admin API is forbidden",
+          "role": "extra",
+          "status": 403
+        },
+        {
+          "scenario": "manager: every admin API is forbidden",
+          "role": "manager",
+          "status": 403
+        },
+        {
+          "scenario": "supervisor: every admin API is forbidden",
+          "role": "supervisor",
+          "status": 403
+        },
+        {
+          "scenario": "all read endpoints return valid responses",
+          "role": "admin",
+          "status": 200
+        },
+        {
+          "scenario": "read APIs reject invalid calendar dates and reversed attendance ranges",
+          "role": "admin",
+          "status": 400
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/settings",
+      "observations": [
+        {
+          "scenario": "every protected API rejects anonymous requests",
+          "role": "anonymous",
+          "status": 401
+        },
+        {
+          "scenario": "regular: every admin API is forbidden",
+          "role": "regular",
+          "status": 403
+        },
+        {
+          "scenario": "extra: every admin API is forbidden",
+          "role": "extra",
+          "status": 403
+        },
+        {
+          "scenario": "manager: every admin API is forbidden",
+          "role": "manager",
+          "status": 403
+        },
+        {
+          "scenario": "supervisor: every admin API is forbidden",
+          "role": "supervisor",
+          "status": 403
+        },
+        {
+          "scenario": "all read endpoints return valid responses",
+          "role": "admin",
+          "status": 200
+        }
+      ]
+    },
+    {
+      "method": "PUT",
+      "path": "/api/settings",
+      "observations": [
+        {
+          "scenario": "every protected API rejects anonymous requests",
+          "role": "anonymous",
+          "status": 401
+        },
+        {
+          "scenario": "every protected write requires cookie CSRF protection",
+          "role": "admin",
+          "status": 403
+        },
+        {
+          "scenario": "regular: every admin API is forbidden",
+          "role": "regular",
+          "status": 403
+        },
+        {
+          "scenario": "extra: every admin API is forbidden",
+          "role": "extra",
+          "status": 403
+        },
+        {
+          "scenario": "manager: every admin API is forbidden",
+          "role": "manager",
+          "status": 403
+        },
+        {
+          "scenario": "supervisor: every admin API is forbidden",
+          "role": "supervisor",
+          "status": 403
+        },
+        {
+          "scenario": "system controls, employee access, and settings update",
+          "role": "admin",
+          "status": 200
+        },
+        {
+          "scenario": "validation PUT /api/settings",
+          "role": "admin",
+          "status": 401
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/employees",
+      "observations": [
+        {
+          "scenario": "every protected API rejects anonymous requests",
+          "role": "anonymous",
+          "status": 401
+        },
+        {
+          "scenario": "regular: every admin API is forbidden",
+          "role": "regular",
+          "status": 403
+        },
+        {
+          "scenario": "extra: every admin API is forbidden",
+          "role": "extra",
+          "status": 403
+        },
+        {
+          "scenario": "manager: every admin API is forbidden",
+          "role": "manager",
+          "status": 403
+        },
+        {
+          "scenario": "supervisor: every admin API is forbidden",
+          "role": "supervisor",
+          "status": 403
+        },
+        {
+          "scenario": "all read endpoints return valid responses",
+          "role": "admin",
+          "status": 200
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/employees-next-id",
+      "observations": [
+        {
+          "scenario": "every protected API rejects anonymous requests",
+          "role": "anonymous",
+          "status": 401
+        },
+        {
+          "scenario": "regular: every admin API is forbidden",
+          "role": "regular",
+          "status": 403
+        },
+        {
+          "scenario": "extra: every admin API is forbidden",
+          "role": "extra",
+          "status": 403
+        },
+        {
+          "scenario": "manager: every admin API is forbidden",
+          "role": "manager",
+          "status": 403
+        },
+        {
+          "scenario": "supervisor: every admin API is forbidden",
+          "role": "supervisor",
+          "status": 403
+        },
+        {
+          "scenario": "all read endpoints return valid responses",
+          "role": "admin",
+          "status": 200
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/fingerprints/check-enrollment",
+      "observations": [
+        {
+          "scenario": "every protected API rejects anonymous requests",
+          "role": "anonymous",
+          "status": 401
+        },
+        {
+          "scenario": "every protected write requires cookie CSRF protection",
+          "role": "admin",
+          "status": 403
+        },
+        {
+          "scenario": "regular: every admin API is forbidden",
+          "role": "regular",
+          "status": 403
+        },
+        {
+          "scenario": "extra: every admin API is forbidden",
+          "role": "extra",
+          "status": 403
+        },
+        {
+          "scenario": "manager: every admin API is forbidden",
+          "role": "manager",
+          "status": 403
+        },
+        {
+          "scenario": "supervisor: every admin API is forbidden",
+          "role": "supervisor",
+          "status": 403
+        },
+        {
+          "scenario": "fingerprint tester no-match, assessment, and malformed enrollment",
+          "role": "admin",
+          "status": 400
+        },
+        {
+          "scenario": "simulated native scanner: enrollment, identification, and kiosk attendance",
+          "role": "admin",
+          "status": 200
+        },
+        {
+          "scenario": "validation POST /api/fingerprints/check-enrollment",
+          "role": "admin",
+          "status": 400
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/fingerprints/check-scan",
+      "observations": [
+        {
+          "scenario": "every protected API rejects anonymous requests",
+          "role": "anonymous",
+          "status": 401
+        },
+        {
+          "scenario": "every protected write requires cookie CSRF protection",
+          "role": "admin",
+          "status": 403
+        },
+        {
+          "scenario": "regular: every admin API is forbidden",
+          "role": "regular",
+          "status": 403
+        },
+        {
+          "scenario": "extra: every admin API is forbidden",
+          "role": "extra",
+          "status": 403
+        },
+        {
+          "scenario": "manager: every admin API is forbidden",
+          "role": "manager",
+          "status": 403
+        },
+        {
+          "scenario": "supervisor: every admin API is forbidden",
+          "role": "supervisor",
+          "status": 403
+        },
+        {
+          "scenario": "fingerprint tester no-match, assessment, and malformed enrollment",
+          "role": "admin",
+          "status": 400
+        },
+        {
+          "scenario": "simulated native scanner: enrollment, identification, and kiosk attendance",
+          "role": "admin",
+          "status": 200
+        },
+        {
+          "scenario": "validation POST /api/fingerprints/check-scan",
+          "role": "admin",
+          "status": 400
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/fingerprints/identify",
+      "observations": [
+        {
+          "scenario": "every protected API rejects anonymous requests",
+          "role": "anonymous",
+          "status": 401
+        },
+        {
+          "scenario": "every protected write requires cookie CSRF protection",
+          "role": "admin",
+          "status": 403
+        },
+        {
+          "scenario": "regular: every admin API is forbidden",
+          "role": "regular",
+          "status": 403
+        },
+        {
+          "scenario": "extra: every admin API is forbidden",
+          "role": "extra",
+          "status": 403
+        },
+        {
+          "scenario": "manager: every admin API is forbidden",
+          "role": "manager",
+          "status": 403
+        },
+        {
+          "scenario": "supervisor: every admin API is forbidden",
+          "role": "supervisor",
+          "status": 403
+        },
+        {
+          "scenario": "fingerprint tester no-match, assessment, and malformed enrollment",
+          "role": "admin",
+          "status": 400
+        },
+        {
+          "scenario": "fingerprint tester no-match, assessment, and malformed enrollment",
+          "role": "admin",
+          "status": 200
+        },
+        {
+          "scenario": "simulated native scanner: enrollment, identification, and kiosk attendance",
+          "role": "admin",
+          "status": 200
+        },
+        {
+          "scenario": "validation POST /api/fingerprints/identify",
+          "role": "admin",
+          "status": 400
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/employees/email-verification",
+      "observations": [
+        {
+          "scenario": "every protected API rejects anonymous requests",
+          "role": "anonymous",
+          "status": 401
+        },
+        {
+          "scenario": "every protected write requires cookie CSRF protection",
+          "role": "admin",
+          "status": 403
+        },
+        {
+          "scenario": "regular: every admin API is forbidden",
+          "role": "regular",
+          "status": 403
+        },
+        {
+          "scenario": "extra: every admin API is forbidden",
+          "role": "extra",
+          "status": 403
+        },
+        {
+          "scenario": "manager: every admin API is forbidden",
+          "role": "manager",
+          "status": 403
+        },
+        {
+          "scenario": "supervisor: every admin API is forbidden",
+          "role": "supervisor",
+          "status": 403
+        },
+        {
+          "scenario": "employee email verification, creation without scanner, and login email resend",
+          "role": "admin",
+          "status": 200
+        },
+        {
+          "scenario": "validation POST /api/employees/email-verification",
+          "role": "admin",
+          "status": 400
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/employees",
+      "observations": [
+        {
+          "scenario": "every protected API rejects anonymous requests",
+          "role": "anonymous",
+          "status": 401
+        },
+        {
+          "scenario": "every protected write requires cookie CSRF protection",
+          "role": "admin",
+          "status": 403
+        },
+        {
+          "scenario": "regular: every admin API is forbidden",
+          "role": "regular",
+          "status": 403
+        },
+        {
+          "scenario": "extra: every admin API is forbidden",
+          "role": "extra",
+          "status": 403
+        },
+        {
+          "scenario": "manager: every admin API is forbidden",
+          "role": "manager",
+          "status": 403
+        },
+        {
+          "scenario": "supervisor: every admin API is forbidden",
+          "role": "supervisor",
+          "status": 403
+        },
+        {
+          "scenario": "employee email verification, creation without scanner, and login email resend",
+          "role": "admin",
+          "status": 201
+        },
+        {
+          "scenario": "validation POST /api/employees",
+          "role": "admin",
+          "status": 400
+        }
+      ]
+    },
+    {
+      "method": "PUT",
+      "path": "/api/employees/:id",
+      "observations": [
+        {
+          "scenario": "every protected API rejects anonymous requests",
+          "role": "anonymous",
+          "status": 401
+        },
+        {
+          "scenario": "every protected write requires cookie CSRF protection",
+          "role": "admin",
+          "status": 403
+        },
+        {
+          "scenario": "regular: every admin API is forbidden",
+          "role": "regular",
+          "status": 403
+        },
+        {
+          "scenario": "extra: every admin API is forbidden",
+          "role": "extra",
+          "status": 403
+        },
+        {
+          "scenario": "manager: every admin API is forbidden",
+          "role": "manager",
+          "status": 403
+        },
+        {
+          "scenario": "supervisor: every admin API is forbidden",
+          "role": "supervisor",
+          "status": 403
+        },
+        {
+          "scenario": "employee edit, archive, restore, and permanent deletion",
+          "role": "admin",
+          "status": 200
+        },
+        {
+          "scenario": "validation PUT /api/employees/:id",
+          "role": "admin",
+          "status": 401
+        }
+      ]
+    },
+    {
+      "method": "PUT",
+      "path": "/api/employees/:id/fingerprint",
+      "observations": [
+        {
+          "scenario": "every protected API rejects anonymous requests",
+          "role": "anonymous",
+          "status": 401
+        },
+        {
+          "scenario": "every protected write requires cookie CSRF protection",
+          "role": "admin",
+          "status": 403
+        },
+        {
+          "scenario": "regular: every admin API is forbidden",
+          "role": "regular",
+          "status": 403
+        },
+        {
+          "scenario": "extra: every admin API is forbidden",
+          "role": "extra",
+          "status": 403
+        },
+        {
+          "scenario": "manager: every admin API is forbidden",
+          "role": "manager",
+          "status": 403
+        },
+        {
+          "scenario": "supervisor: every admin API is forbidden",
+          "role": "supervisor",
+          "status": 403
+        },
+        {
+          "scenario": "fingerprint tester no-match, assessment, and malformed enrollment",
+          "role": "admin",
+          "status": 400
+        },
+        {
+          "scenario": "simulated native scanner: enrollment, identification, and kiosk attendance",
+          "role": "admin",
+          "status": 200
+        },
+        {
+          "scenario": "simulated native scanner: enrollment, identification, and kiosk attendance",
+          "role": "admin",
+          "status": 409
+        },
+        {
+          "scenario": "validation PUT /api/employees/:id/fingerprint",
+          "role": "admin",
+          "status": 401
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/employees/:id/send-login-email",
+      "observations": [
+        {
+          "scenario": "every protected API rejects anonymous requests",
+          "role": "anonymous",
+          "status": 401
+        },
+        {
+          "scenario": "every protected write requires cookie CSRF protection",
+          "role": "admin",
+          "status": 403
+        },
+        {
+          "scenario": "regular: every admin API is forbidden",
+          "role": "regular",
+          "status": 403
+        },
+        {
+          "scenario": "extra: every admin API is forbidden",
+          "role": "extra",
+          "status": 403
+        },
+        {
+          "scenario": "manager: every admin API is forbidden",
+          "role": "manager",
+          "status": 403
+        },
+        {
+          "scenario": "supervisor: every admin API is forbidden",
+          "role": "supervisor",
+          "status": 403
+        },
+        {
+          "scenario": "employee email verification, creation without scanner, and login email resend",
+          "role": "admin",
+          "status": 200
+        },
+        {
+          "scenario": "validation POST /api/employees/:id/send-login-email",
+          "role": "admin",
+          "status": 401
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/employees/:id/archive",
+      "observations": [
+        {
+          "scenario": "every protected API rejects anonymous requests",
+          "role": "anonymous",
+          "status": 401
+        },
+        {
+          "scenario": "every protected write requires cookie CSRF protection",
+          "role": "admin",
+          "status": 403
+        },
+        {
+          "scenario": "regular: every admin API is forbidden",
+          "role": "regular",
+          "status": 403
+        },
+        {
+          "scenario": "extra: every admin API is forbidden",
+          "role": "extra",
+          "status": 403
+        },
+        {
+          "scenario": "manager: every admin API is forbidden",
+          "role": "manager",
+          "status": 403
+        },
+        {
+          "scenario": "supervisor: every admin API is forbidden",
+          "role": "supervisor",
+          "status": 403
+        },
+        {
+          "scenario": "employee edit, archive, restore, and permanent deletion",
+          "role": "admin",
+          "status": 200
+        },
+        {
+          "scenario": "validation POST /api/employees/:id/archive",
+          "role": "admin",
+          "status": 401
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/archived-employees",
+      "observations": [
+        {
+          "scenario": "every protected API rejects anonymous requests",
+          "role": "anonymous",
+          "status": 401
+        },
+        {
+          "scenario": "regular: every admin API is forbidden",
+          "role": "regular",
+          "status": 403
+        },
+        {
+          "scenario": "extra: every admin API is forbidden",
+          "role": "extra",
+          "status": 403
+        },
+        {
+          "scenario": "manager: every admin API is forbidden",
+          "role": "manager",
+          "status": 403
+        },
+        {
+          "scenario": "supervisor: every admin API is forbidden",
+          "role": "supervisor",
+          "status": 403
+        },
+        {
+          "scenario": "all read endpoints return valid responses",
+          "role": "admin",
+          "status": 200
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/employees/:id/unarchive",
+      "observations": [
+        {
+          "scenario": "every protected API rejects anonymous requests",
+          "role": "anonymous",
+          "status": 401
+        },
+        {
+          "scenario": "every protected write requires cookie CSRF protection",
+          "role": "admin",
+          "status": 403
+        },
+        {
+          "scenario": "regular: every admin API is forbidden",
+          "role": "regular",
+          "status": 403
+        },
+        {
+          "scenario": "extra: every admin API is forbidden",
+          "role": "extra",
+          "status": 403
+        },
+        {
+          "scenario": "manager: every admin API is forbidden",
+          "role": "manager",
+          "status": 403
+        },
+        {
+          "scenario": "supervisor: every admin API is forbidden",
+          "role": "supervisor",
+          "status": 403
+        },
+        {
+          "scenario": "employee edit, archive, restore, and permanent deletion",
+          "role": "admin",
+          "status": 200
+        },
+        {
+          "scenario": "validation POST /api/employees/:id/unarchive",
+          "role": "admin",
+          "status": 404
+        }
+      ]
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/employees/:id/permanent",
+      "observations": [
+        {
+          "scenario": "every protected API rejects anonymous requests",
+          "role": "anonymous",
+          "status": 401
+        },
+        {
+          "scenario": "every protected write requires cookie CSRF protection",
+          "role": "admin",
+          "status": 403
+        },
+        {
+          "scenario": "regular: every admin API is forbidden",
+          "role": "regular",
+          "status": 403
+        },
+        {
+          "scenario": "extra: every admin API is forbidden",
+          "role": "extra",
+          "status": 403
+        },
+        {
+          "scenario": "manager: every admin API is forbidden",
+          "role": "manager",
+          "status": 403
+        },
+        {
+          "scenario": "supervisor: every admin API is forbidden",
+          "role": "supervisor",
+          "status": 403
+        },
+        {
+          "scenario": "employee edit, archive, restore, and permanent deletion",
+          "role": "admin",
+          "status": 200
+        },
+        {
+          "scenario": "validation DELETE /api/employees/:id/permanent",
+          "role": "admin",
+          "status": 401
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/payroll/employees",
+      "observations": [
+        {
+          "scenario": "every protected API rejects anonymous requests",
+          "role": "anonymous",
+          "status": 401
+        },
+        {
+          "scenario": "regular: every admin API is forbidden",
+          "role": "regular",
+          "status": 403
+        },
+        {
+          "scenario": "extra: every admin API is forbidden",
+          "role": "extra",
+          "status": 403
+        },
+        {
+          "scenario": "manager: every admin API is forbidden",
+          "role": "manager",
+          "status": 403
+        },
+        {
+          "scenario": "supervisor: every admin API is forbidden",
+          "role": "supervisor",
+          "status": 403
+        },
+        {
+          "scenario": "all read endpoints return valid responses",
+          "role": "admin",
+          "status": 200
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/report/:name",
+      "observations": [
+        {
+          "scenario": "every protected API rejects anonymous requests",
+          "role": "anonymous",
+          "status": 401
+        },
+        {
+          "scenario": "regular: every admin API is forbidden",
+          "role": "regular",
+          "status": 403
+        },
+        {
+          "scenario": "extra: every admin API is forbidden",
+          "role": "extra",
+          "status": 403
+        },
+        {
+          "scenario": "manager: every admin API is forbidden",
+          "role": "manager",
+          "status": 403
+        },
+        {
+          "scenario": "supervisor: every admin API is forbidden",
+          "role": "supervisor",
+          "status": 403
+        },
+        {
+          "scenario": "all read endpoints return valid responses",
+          "role": "admin",
+          "status": 200
+        },
+        {
+          "scenario": "export reports, audit actions, and notification ownership",
+          "role": "admin",
+          "status": 200
+        },
+        {
+          "scenario": "export reports, audit actions, and notification ownership",
+          "role": "admin",
+          "status": 200
+        },
+        {
+          "scenario": "export reports, audit actions, and notification ownership",
+          "role": "admin",
+          "status": 200
+        },
+        {
+          "scenario": "export reports, audit actions, and notification ownership",
+          "role": "admin",
+          "status": 200
+        },
+        {
+          "scenario": "export reports, audit actions, and notification ownership",
+          "role": "admin",
+          "status": 404
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/payroll-requests",
+      "observations": [
+        {
+          "scenario": "every protected API rejects anonymous requests",
+          "role": "anonymous",
+          "status": 401
+        },
+        {
+          "scenario": "regular: every admin API is forbidden",
+          "role": "regular",
+          "status": 403
+        },
+        {
+          "scenario": "extra: every admin API is forbidden",
+          "role": "extra",
+          "status": 403
+        },
+        {
+          "scenario": "manager: every admin API is forbidden",
+          "role": "manager",
+          "status": 403
+        },
+        {
+          "scenario": "supervisor: every admin API is forbidden",
+          "role": "supervisor",
+          "status": 403
+        },
+        {
+          "scenario": "all read endpoints return valid responses",
+          "role": "admin",
+          "status": 200
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/payroll-requests/prepare-bulk",
+      "observations": [
+        {
+          "scenario": "every protected API rejects anonymous requests",
+          "role": "anonymous",
+          "status": 401
+        },
+        {
+          "scenario": "every protected write requires cookie CSRF protection",
+          "role": "admin",
+          "status": 403
+        },
+        {
+          "scenario": "regular: every admin API is forbidden",
+          "role": "regular",
+          "status": 403
+        },
+        {
+          "scenario": "extra: every admin API is forbidden",
+          "role": "extra",
+          "status": 403
+        },
+        {
+          "scenario": "manager: every admin API is forbidden",
+          "role": "manager",
+          "status": 403
+        },
+        {
+          "scenario": "supervisor: every admin API is forbidden",
+          "role": "supervisor",
+          "status": 403
+        },
+        {
+          "scenario": "payroll preparation, bonus, holds, bulk payment, undo, and individual payment",
+          "role": "admin",
+          "status": 200
+        },
+        {
+          "scenario": "validation POST /api/payroll-requests/prepare-bulk",
+          "role": "admin",
+          "status": 400
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/payroll/audit-print",
+      "observations": [
+        {
+          "scenario": "every protected API rejects anonymous requests",
+          "role": "anonymous",
+          "status": 401
+        },
+        {
+          "scenario": "every protected write requires cookie CSRF protection",
+          "role": "admin",
+          "status": 403
+        },
+        {
+          "scenario": "regular: every admin API is forbidden",
+          "role": "regular",
+          "status": 403
+        },
+        {
+          "scenario": "extra: every admin API is forbidden",
+          "role": "extra",
+          "status": 403
+        },
+        {
+          "scenario": "manager: every admin API is forbidden",
+          "role": "manager",
+          "status": 403
+        },
+        {
+          "scenario": "supervisor: every admin API is forbidden",
+          "role": "supervisor",
+          "status": 403
+        },
+        {
+          "scenario": "export reports, audit actions, and notification ownership",
+          "role": "admin",
+          "status": 204
+        },
+        {
+          "scenario": "validation POST /api/payroll/audit-print",
+          "role": "admin",
+          "status": 204
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/payroll-requests/quarterly-additions/preview",
+      "observations": [
+        {
+          "scenario": "every protected API rejects anonymous requests",
+          "role": "anonymous",
+          "status": 401
+        },
+        {
+          "scenario": "every protected write requires cookie CSRF protection",
+          "role": "admin",
+          "status": 403
+        },
+        {
+          "scenario": "regular: every admin API is forbidden",
+          "role": "regular",
+          "status": 403
+        },
+        {
+          "scenario": "extra: every admin API is forbidden",
+          "role": "extra",
+          "status": 403
+        },
+        {
+          "scenario": "manager: every admin API is forbidden",
+          "role": "manager",
+          "status": 403
+        },
+        {
+          "scenario": "supervisor: every admin API is forbidden",
+          "role": "supervisor",
+          "status": 403
+        },
+        {
+          "scenario": "quarterly allowance preview, inclusion, and removal",
+          "role": "admin",
+          "status": 200
+        },
+        {
+          "scenario": "validation POST /api/payroll-requests/quarterly-additions/preview",
+          "role": "admin",
+          "status": 400
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/payroll-requests/quarterly-additions/include",
+      "observations": [
+        {
+          "scenario": "every protected API rejects anonymous requests",
+          "role": "anonymous",
+          "status": 401
+        },
+        {
+          "scenario": "every protected write requires cookie CSRF protection",
+          "role": "admin",
+          "status": 403
+        },
+        {
+          "scenario": "regular: every admin API is forbidden",
+          "role": "regular",
+          "status": 403
+        },
+        {
+          "scenario": "extra: every admin API is forbidden",
+          "role": "extra",
+          "status": 403
+        },
+        {
+          "scenario": "manager: every admin API is forbidden",
+          "role": "manager",
+          "status": 403
+        },
+        {
+          "scenario": "supervisor: every admin API is forbidden",
+          "role": "supervisor",
+          "status": 403
+        },
+        {
+          "scenario": "quarterly allowance preview, inclusion, and removal",
+          "role": "admin",
+          "status": 200
+        },
+        {
+          "scenario": "validation POST /api/payroll-requests/quarterly-additions/include",
+          "role": "admin",
+          "status": 400
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/payroll-requests/quarterly-additions/remove",
+      "observations": [
+        {
+          "scenario": "every protected API rejects anonymous requests",
+          "role": "anonymous",
+          "status": 401
+        },
+        {
+          "scenario": "every protected write requires cookie CSRF protection",
+          "role": "admin",
+          "status": 403
+        },
+        {
+          "scenario": "regular: every admin API is forbidden",
+          "role": "regular",
+          "status": 403
+        },
+        {
+          "scenario": "extra: every admin API is forbidden",
+          "role": "extra",
+          "status": 403
+        },
+        {
+          "scenario": "manager: every admin API is forbidden",
+          "role": "manager",
+          "status": 403
+        },
+        {
+          "scenario": "supervisor: every admin API is forbidden",
+          "role": "supervisor",
+          "status": 403
+        },
+        {
+          "scenario": "quarterly allowance preview, inclusion, and removal",
+          "role": "admin",
+          "status": 200
+        },
+        {
+          "scenario": "validation POST /api/payroll-requests/quarterly-additions/remove",
+          "role": "admin",
+          "status": 400
+        }
+      ]
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/payroll-requests/bonus",
+      "observations": [
+        {
+          "scenario": "every protected API rejects anonymous requests",
+          "role": "anonymous",
+          "status": 401
+        },
+        {
+          "scenario": "every protected write requires cookie CSRF protection",
+          "role": "admin",
+          "status": 403
+        },
+        {
+          "scenario": "regular: every admin API is forbidden",
+          "role": "regular",
+          "status": 403
+        },
+        {
+          "scenario": "extra: every admin API is forbidden",
+          "role": "extra",
+          "status": 403
+        },
+        {
+          "scenario": "manager: every admin API is forbidden",
+          "role": "manager",
+          "status": 403
+        },
+        {
+          "scenario": "supervisor: every admin API is forbidden",
+          "role": "supervisor",
+          "status": 403
+        },
+        {
+          "scenario": "payroll preparation, bonus, holds, bulk payment, undo, and individual payment",
+          "role": "admin",
+          "status": 200
+        },
+        {
+          "scenario": "validation PATCH /api/payroll-requests/bonus",
+          "role": "admin",
+          "status": 400
+        }
+      ]
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/payroll-requests/pay-bulk",
+      "observations": [
+        {
+          "scenario": "every protected API rejects anonymous requests",
+          "role": "anonymous",
+          "status": 401
+        },
+        {
+          "scenario": "every protected write requires cookie CSRF protection",
+          "role": "admin",
+          "status": 403
+        },
+        {
+          "scenario": "regular: every admin API is forbidden",
+          "role": "regular",
+          "status": 403
+        },
+        {
+          "scenario": "extra: every admin API is forbidden",
+          "role": "extra",
+          "status": 403
+        },
+        {
+          "scenario": "manager: every admin API is forbidden",
+          "role": "manager",
+          "status": 403
+        },
+        {
+          "scenario": "supervisor: every admin API is forbidden",
+          "role": "supervisor",
+          "status": 403
+        },
+        {
+          "scenario": "payroll preparation, bonus, holds, bulk payment, undo, and individual payment",
+          "role": "admin",
+          "status": 200
+        },
+        {
+          "scenario": "payroll preparation, bonus, holds, bulk payment, undo, and individual payment",
+          "role": "admin",
+          "status": 409
+        },
+        {
+          "scenario": "validation PATCH /api/payroll-requests/pay-bulk",
+          "role": "admin",
+          "status": 401
+        }
+      ]
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/payroll-requests/undo-last-payment",
+      "observations": [
+        {
+          "scenario": "every protected API rejects anonymous requests",
+          "role": "anonymous",
+          "status": 401
+        },
+        {
+          "scenario": "every protected write requires cookie CSRF protection",
+          "role": "admin",
+          "status": 403
+        },
+        {
+          "scenario": "regular: every admin API is forbidden",
+          "role": "regular",
+          "status": 403
+        },
+        {
+          "scenario": "extra: every admin API is forbidden",
+          "role": "extra",
+          "status": 403
+        },
+        {
+          "scenario": "manager: every admin API is forbidden",
+          "role": "manager",
+          "status": 403
+        },
+        {
+          "scenario": "supervisor: every admin API is forbidden",
+          "role": "supervisor",
+          "status": 403
+        },
+        {
+          "scenario": "payroll preparation, bonus, holds, bulk payment, undo, and individual payment",
+          "role": "admin",
+          "status": 200
+        },
+        {
+          "scenario": "validation PATCH /api/payroll-requests/undo-last-payment",
+          "role": "admin",
+          "status": 400
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/payroll-requests",
+      "observations": [
+        {
+          "scenario": "every protected API rejects anonymous requests",
+          "role": "anonymous",
+          "status": 401
+        },
+        {
+          "scenario": "every protected write requires cookie CSRF protection",
+          "role": "admin",
+          "status": 403
+        },
+        {
+          "scenario": "regular: every admin API is forbidden",
+          "role": "regular",
+          "status": 403
+        },
+        {
+          "scenario": "extra: every admin API is forbidden",
+          "role": "extra",
+          "status": 403
+        },
+        {
+          "scenario": "manager: every admin API is forbidden",
+          "role": "manager",
+          "status": 403
+        },
+        {
+          "scenario": "supervisor: every admin API is forbidden",
+          "role": "supervisor",
+          "status": 403
+        },
+        {
+          "scenario": "payroll preparation, bonus, holds, bulk payment, undo, and individual payment",
+          "role": "admin",
+          "status": 200
+        },
+        {
+          "scenario": "validation POST /api/payroll-requests",
+          "role": "admin",
+          "status": 400
+        }
+      ]
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/payroll-requests/:id/confirm-payment",
+      "observations": [
+        {
+          "scenario": "every protected API rejects anonymous requests",
+          "role": "anonymous",
+          "status": 401
+        },
+        {
+          "scenario": "every protected write requires cookie CSRF protection",
+          "role": "admin",
+          "status": 403
+        },
+        {
+          "scenario": "regular: every admin API is forbidden",
+          "role": "regular",
+          "status": 403
+        },
+        {
+          "scenario": "extra: every admin API is forbidden",
+          "role": "extra",
+          "status": 403
+        },
+        {
+          "scenario": "manager: every admin API is forbidden",
+          "role": "manager",
+          "status": 403
+        },
+        {
+          "scenario": "supervisor: every admin API is forbidden",
+          "role": "supervisor",
+          "status": 403
+        },
+        {
+          "scenario": "payroll preparation, bonus, holds, bulk payment, undo, and individual payment",
+          "role": "admin",
+          "status": 200
+        },
+        {
+          "scenario": "validation PATCH /api/payroll-requests/:id/confirm-payment",
+          "role": "admin",
+          "status": 401
+        }
+      ]
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/payroll-requests/:id/reject-payment",
+      "observations": [
+        {
+          "scenario": "every protected API rejects anonymous requests",
+          "role": "anonymous",
+          "status": 401
+        },
+        {
+          "scenario": "every protected write requires cookie CSRF protection",
+          "role": "admin",
+          "status": 403
+        },
+        {
+          "scenario": "regular: every admin API is forbidden",
+          "role": "regular",
+          "status": 403
+        },
+        {
+          "scenario": "extra: every admin API is forbidden",
+          "role": "extra",
+          "status": 403
+        },
+        {
+          "scenario": "manager: every admin API is forbidden",
+          "role": "manager",
+          "status": 403
+        },
+        {
+          "scenario": "supervisor: every admin API is forbidden",
+          "role": "supervisor",
+          "status": 403
+        },
+        {
+          "scenario": "payroll preparation, bonus, holds, bulk payment, undo, and individual payment",
+          "role": "admin",
+          "status": 200
+        },
+        {
+          "scenario": "validation PATCH /api/payroll-requests/:id/reject-payment",
+          "role": "admin",
+          "status": 401
+        }
+      ]
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/payroll-requests/:id/remove-hold",
+      "observations": [
+        {
+          "scenario": "every protected API rejects anonymous requests",
+          "role": "anonymous",
+          "status": 401
+        },
+        {
+          "scenario": "every protected write requires cookie CSRF protection",
+          "role": "admin",
+          "status": 403
+        },
+        {
+          "scenario": "regular: every admin API is forbidden",
+          "role": "regular",
+          "status": 403
+        },
+        {
+          "scenario": "extra: every admin API is forbidden",
+          "role": "extra",
+          "status": 403
+        },
+        {
+          "scenario": "manager: every admin API is forbidden",
+          "role": "manager",
+          "status": 403
+        },
+        {
+          "scenario": "supervisor: every admin API is forbidden",
+          "role": "supervisor",
+          "status": 403
+        },
+        {
+          "scenario": "payroll preparation, bonus, holds, bulk payment, undo, and individual payment",
+          "role": "admin",
+          "status": 200
+        },
+        {
+          "scenario": "validation PATCH /api/payroll-requests/:id/remove-hold",
+          "role": "admin",
+          "status": 401
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/payroll-requests/:id/email",
+      "observations": [
+        {
+          "scenario": "every protected API rejects anonymous requests",
+          "role": "anonymous",
+          "status": 401
+        },
+        {
+          "scenario": "every protected write requires cookie CSRF protection",
+          "role": "admin",
+          "status": 403
+        },
+        {
+          "scenario": "regular: every admin API is forbidden",
+          "role": "regular",
+          "status": 403
+        },
+        {
+          "scenario": "extra: every admin API is forbidden",
+          "role": "extra",
+          "status": 403
+        },
+        {
+          "scenario": "manager: every admin API is forbidden",
+          "role": "manager",
+          "status": 403
+        },
+        {
+          "scenario": "supervisor: every admin API is forbidden",
+          "role": "supervisor",
+          "status": 403
+        },
+        {
+          "scenario": "payroll preparation, bonus, holds, bulk payment, undo, and individual payment",
+          "role": "admin",
+          "status": 200
+        },
+        {
+          "scenario": "validation POST /api/payroll-requests/:id/email",
+          "role": "admin",
+          "status": 404
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/payroll/:employeeId/email-summary",
+      "observations": [
+        {
+          "scenario": "every protected API rejects anonymous requests",
+          "role": "anonymous",
+          "status": 401
+        },
+        {
+          "scenario": "every protected write requires cookie CSRF protection",
+          "role": "admin",
+          "status": 403
+        },
+        {
+          "scenario": "regular: every admin API is forbidden",
+          "role": "regular",
+          "status": 403
+        },
+        {
+          "scenario": "extra: every admin API is forbidden",
+          "role": "extra",
+          "status": 403
+        },
+        {
+          "scenario": "manager: every admin API is forbidden",
+          "role": "manager",
+          "status": 403
+        },
+        {
+          "scenario": "supervisor: every admin API is forbidden",
+          "role": "supervisor",
+          "status": 403
+        },
+        {
+          "scenario": "payroll preparation, bonus, holds, bulk payment, undo, and individual payment",
+          "role": "admin",
+          "status": 200
+        },
+        {
+          "scenario": "validation POST /api/payroll/:employeeId/email-summary",
+          "role": "admin",
+          "status": 200
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/leave-requests",
+      "observations": [
+        {
+          "scenario": "every protected API rejects anonymous requests",
+          "role": "anonymous",
+          "status": 401
+        },
+        {
+          "scenario": "regular: every admin API is forbidden",
+          "role": "regular",
+          "status": 403
+        },
+        {
+          "scenario": "extra: every admin API is forbidden",
+          "role": "extra",
+          "status": 403
+        },
+        {
+          "scenario": "manager: every admin API is forbidden",
+          "role": "manager",
+          "status": 403
+        },
+        {
+          "scenario": "supervisor: every admin API is forbidden",
+          "role": "supervisor",
+          "status": 403
+        },
+        {
+          "scenario": "all read endpoints return valid responses",
+          "role": "admin",
+          "status": 200
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/attendance/audit-export",
+      "observations": [
+        {
+          "scenario": "every protected API rejects anonymous requests",
+          "role": "anonymous",
+          "status": 401
+        },
+        {
+          "scenario": "every protected write requires cookie CSRF protection",
+          "role": "admin",
+          "status": 403
+        },
+        {
+          "scenario": "regular: every admin API is forbidden",
+          "role": "regular",
+          "status": 403
+        },
+        {
+          "scenario": "extra: every admin API is forbidden",
+          "role": "extra",
+          "status": 403
+        },
+        {
+          "scenario": "manager: every admin API is forbidden",
+          "role": "manager",
+          "status": 403
+        },
+        {
+          "scenario": "supervisor: every admin API is forbidden",
+          "role": "supervisor",
+          "status": 403
+        },
+        {
+          "scenario": "export reports, audit actions, and notification ownership",
+          "role": "admin",
+          "status": 204
+        },
+        {
+          "scenario": "validation POST /api/attendance/audit-export",
+          "role": "admin",
+          "status": 204
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/payroll/audit-export",
+      "observations": [
+        {
+          "scenario": "every protected API rejects anonymous requests",
+          "role": "anonymous",
+          "status": 401
+        },
+        {
+          "scenario": "every protected write requires cookie CSRF protection",
+          "role": "admin",
+          "status": 403
+        },
+        {
+          "scenario": "regular: every admin API is forbidden",
+          "role": "regular",
+          "status": 403
+        },
+        {
+          "scenario": "extra: every admin API is forbidden",
+          "role": "extra",
+          "status": 403
+        },
+        {
+          "scenario": "manager: every admin API is forbidden",
+          "role": "manager",
+          "status": 403
+        },
+        {
+          "scenario": "supervisor: every admin API is forbidden",
+          "role": "supervisor",
+          "status": 403
+        },
+        {
+          "scenario": "export reports, audit actions, and notification ownership",
+          "role": "admin",
+          "status": 204
+        },
+        {
+          "scenario": "validation POST /api/payroll/audit-export",
+          "role": "admin",
+          "status": 204
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/leave-requests/:id/approval-preview",
+      "observations": [
+        {
+          "scenario": "every protected API rejects anonymous requests",
+          "role": "anonymous",
+          "status": 401
+        },
+        {
+          "scenario": "regular: every admin API is forbidden",
+          "role": "regular",
+          "status": 403
+        },
+        {
+          "scenario": "extra: every admin API is forbidden",
+          "role": "extra",
+          "status": 403
+        },
+        {
+          "scenario": "manager: every admin API is forbidden",
+          "role": "manager",
+          "status": 403
+        },
+        {
+          "scenario": "supervisor: every admin API is forbidden",
+          "role": "supervisor",
+          "status": 403
+        },
+        {
+          "scenario": "leave submission, conflict, cancellation, preview, approval and undo",
+          "role": "admin",
+          "status": 200
+        }
+      ]
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/leave-requests/bulk-status",
+      "observations": [
+        {
+          "scenario": "every protected API rejects anonymous requests",
+          "role": "anonymous",
+          "status": 401
+        },
+        {
+          "scenario": "every protected write requires cookie CSRF protection",
+          "role": "admin",
+          "status": 403
+        },
+        {
+          "scenario": "regular: every admin API is forbidden",
+          "role": "regular",
+          "status": 403
+        },
+        {
+          "scenario": "extra: every admin API is forbidden",
+          "role": "extra",
+          "status": 403
+        },
+        {
+          "scenario": "manager: every admin API is forbidden",
+          "role": "manager",
+          "status": 403
+        },
+        {
+          "scenario": "supervisor: every admin API is forbidden",
+          "role": "supervisor",
+          "status": 403
+        },
+        {
+          "scenario": "leave submission, conflict, cancellation, preview, approval and undo",
+          "role": "admin",
+          "status": 200
+        },
+        {
+          "scenario": "validation PATCH /api/leave-requests/bulk-status",
+          "role": "admin",
+          "status": 400
+        }
+      ]
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/leave-requests/:id/status",
+      "observations": [
+        {
+          "scenario": "every protected API rejects anonymous requests",
+          "role": "anonymous",
+          "status": 401
+        },
+        {
+          "scenario": "every protected write requires cookie CSRF protection",
+          "role": "admin",
+          "status": 403
+        },
+        {
+          "scenario": "regular: every admin API is forbidden",
+          "role": "regular",
+          "status": 403
+        },
+        {
+          "scenario": "extra: every admin API is forbidden",
+          "role": "extra",
+          "status": 403
+        },
+        {
+          "scenario": "manager: every admin API is forbidden",
+          "role": "manager",
+          "status": 403
+        },
+        {
+          "scenario": "supervisor: every admin API is forbidden",
+          "role": "supervisor",
+          "status": 403
+        },
+        {
+          "scenario": "leave submission, conflict, cancellation, preview, approval and undo",
+          "role": "admin",
+          "status": 200
+        },
+        {
+          "scenario": "validation PATCH /api/leave-requests/:id/status",
+          "role": "admin",
+          "status": 400
+        }
+      ]
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/leave-requests/:id/undo-approval",
+      "observations": [
+        {
+          "scenario": "every protected API rejects anonymous requests",
+          "role": "anonymous",
+          "status": 401
+        },
+        {
+          "scenario": "every protected write requires cookie CSRF protection",
+          "role": "admin",
+          "status": 403
+        },
+        {
+          "scenario": "regular: every admin API is forbidden",
+          "role": "regular",
+          "status": 403
+        },
+        {
+          "scenario": "extra: every admin API is forbidden",
+          "role": "extra",
+          "status": 403
+        },
+        {
+          "scenario": "manager: every admin API is forbidden",
+          "role": "manager",
+          "status": 403
+        },
+        {
+          "scenario": "supervisor: every admin API is forbidden",
+          "role": "supervisor",
+          "status": 403
+        },
+        {
+          "scenario": "leave submission, conflict, cancellation, preview, approval and undo",
+          "role": "admin",
+          "status": 200
+        },
+        {
+          "scenario": "validation PATCH /api/leave-requests/:id/undo-approval",
+          "role": "admin",
+          "status": 409
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/attendance",
+      "observations": [
+        {
+          "scenario": "every protected API rejects anonymous requests",
+          "role": "anonymous",
+          "status": 401
+        },
+        {
+          "scenario": "regular: every admin API is forbidden",
+          "role": "regular",
+          "status": 403
+        },
+        {
+          "scenario": "extra: every admin API is forbidden",
+          "role": "extra",
+          "status": 403
+        },
+        {
+          "scenario": "manager: every admin API is forbidden",
+          "role": "manager",
+          "status": 403
+        },
+        {
+          "scenario": "supervisor: every admin API is forbidden",
+          "role": "supervisor",
+          "status": 403
+        },
+        {
+          "scenario": "all read endpoints return valid responses",
+          "role": "admin",
+          "status": 200
+        },
+        {
+          "scenario": "read APIs reject invalid calendar dates and reversed attendance ranges",
+          "role": "admin",
+          "status": 400
+        },
+        {
+          "scenario": "read APIs reject invalid calendar dates and reversed attendance ranges",
+          "role": "admin",
+          "status": 400
+        },
+        {
+          "scenario": "read APIs reject invalid calendar dates and reversed attendance ranges",
+          "role": "admin",
+          "status": 400
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/attendance/manual",
+      "observations": [
+        {
+          "scenario": "every protected API rejects anonymous requests",
+          "role": "anonymous",
+          "status": 401
+        },
+        {
+          "scenario": "regular: every admin API is forbidden",
+          "role": "regular",
+          "status": 403
+        },
+        {
+          "scenario": "extra: every admin API is forbidden",
+          "role": "extra",
+          "status": 403
+        },
+        {
+          "scenario": "manager: every admin API is forbidden",
+          "role": "manager",
+          "status": 403
+        },
+        {
+          "scenario": "supervisor: every admin API is forbidden",
+          "role": "supervisor",
+          "status": 403
+        },
+        {
+          "scenario": "all read endpoints return valid responses",
+          "role": "admin",
+          "status": 200
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/attendance/idle-day",
+      "observations": [
+        {
+          "scenario": "every protected API rejects anonymous requests",
+          "role": "anonymous",
+          "status": 401
+        },
+        {
+          "scenario": "regular: every admin API is forbidden",
+          "role": "regular",
+          "status": 403
+        },
+        {
+          "scenario": "extra: every admin API is forbidden",
+          "role": "extra",
+          "status": 403
+        },
+        {
+          "scenario": "manager: every admin API is forbidden",
+          "role": "manager",
+          "status": 403
+        },
+        {
+          "scenario": "supervisor: every admin API is forbidden",
+          "role": "supervisor",
+          "status": 403
+        },
+        {
+          "scenario": "all read endpoints return valid responses",
+          "role": "admin",
+          "status": 200
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/attendance/idle-days",
+      "observations": [
+        {
+          "scenario": "every protected API rejects anonymous requests",
+          "role": "anonymous",
+          "status": 401
+        },
+        {
+          "scenario": "regular: every admin API is forbidden",
+          "role": "regular",
+          "status": 403
+        },
+        {
+          "scenario": "extra: every admin API is forbidden",
+          "role": "extra",
+          "status": 403
+        },
+        {
+          "scenario": "manager: every admin API is forbidden",
+          "role": "manager",
+          "status": 403
+        },
+        {
+          "scenario": "supervisor: every admin API is forbidden",
+          "role": "supervisor",
+          "status": 403
+        },
+        {
+          "scenario": "all read endpoints return valid responses",
+          "role": "admin",
+          "status": 200
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/attendance/idle-day",
+      "observations": [
+        {
+          "scenario": "every protected API rejects anonymous requests",
+          "role": "anonymous",
+          "status": 401
+        },
+        {
+          "scenario": "every protected write requires cookie CSRF protection",
+          "role": "admin",
+          "status": 403
+        },
+        {
+          "scenario": "regular: every admin API is forbidden",
+          "role": "regular",
+          "status": 403
+        },
+        {
+          "scenario": "extra: every admin API is forbidden",
+          "role": "extra",
+          "status": 403
+        },
+        {
+          "scenario": "manager: every admin API is forbidden",
+          "role": "manager",
+          "status": 403
+        },
+        {
+          "scenario": "supervisor: every admin API is forbidden",
+          "role": "supervisor",
+          "status": 403
+        },
+        {
+          "scenario": "manual attendance, bulk attendance, forced clock-out and idle-day changes",
+          "role": "admin",
+          "status": 200
+        },
+        {
+          "scenario": "manual attendance, bulk attendance, forced clock-out and idle-day changes",
+          "role": "admin",
+          "status": 200
+        },
+        {
+          "scenario": "validation POST /api/attendance/idle-day",
+          "role": "admin",
+          "status": 400
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/attendance/manual",
+      "observations": [
+        {
+          "scenario": "every protected API rejects anonymous requests",
+          "role": "anonymous",
+          "status": 401
+        },
+        {
+          "scenario": "every protected write requires cookie CSRF protection",
+          "role": "admin",
+          "status": 403
+        },
+        {
+          "scenario": "regular: every admin API is forbidden",
+          "role": "regular",
+          "status": 403
+        },
+        {
+          "scenario": "extra: every admin API is forbidden",
+          "role": "extra",
+          "status": 403
+        },
+        {
+          "scenario": "manager: every admin API is forbidden",
+          "role": "manager",
+          "status": 403
+        },
+        {
+          "scenario": "supervisor: every admin API is forbidden",
+          "role": "supervisor",
+          "status": 403
+        },
+        {
+          "scenario": "manual attendance, bulk attendance, forced clock-out and idle-day changes",
+          "role": "admin",
+          "status": 200
+        },
+        {
+          "scenario": "validation POST /api/attendance/manual",
+          "role": "admin",
+          "status": 400
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/attendance/manual/bulk",
+      "observations": [
+        {
+          "scenario": "every protected API rejects anonymous requests",
+          "role": "anonymous",
+          "status": 401
+        },
+        {
+          "scenario": "every protected write requires cookie CSRF protection",
+          "role": "admin",
+          "status": 403
+        },
+        {
+          "scenario": "regular: every admin API is forbidden",
+          "role": "regular",
+          "status": 403
+        },
+        {
+          "scenario": "extra: every admin API is forbidden",
+          "role": "extra",
+          "status": 403
+        },
+        {
+          "scenario": "manager: every admin API is forbidden",
+          "role": "manager",
+          "status": 403
+        },
+        {
+          "scenario": "supervisor: every admin API is forbidden",
+          "role": "supervisor",
+          "status": 403
+        },
+        {
+          "scenario": "manual attendance, bulk attendance, forced clock-out and idle-day changes",
+          "role": "admin",
+          "status": 200
+        },
+        {
+          "scenario": "validation POST /api/attendance/manual/bulk",
+          "role": "admin",
+          "status": 400
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/attendance/kiosk/recent",
+      "observations": [
+        {
+          "scenario": "every protected API rejects anonymous requests",
+          "role": "anonymous",
+          "status": 401
+        },
+        {
+          "scenario": "regular: every admin API is forbidden",
+          "role": "regular",
+          "status": 403
+        },
+        {
+          "scenario": "extra: every admin API is forbidden",
+          "role": "extra",
+          "status": 403
+        },
+        {
+          "scenario": "manager: every admin API is forbidden",
+          "role": "manager",
+          "status": 403
+        },
+        {
+          "scenario": "supervisor: every admin API is forbidden",
+          "role": "supervisor",
+          "status": 403
+        },
+        {
+          "scenario": "all read endpoints return valid responses",
+          "role": "admin",
+          "status": 200
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/attendance/kiosk",
+      "observations": [
+        {
+          "scenario": "every protected API rejects anonymous requests",
+          "role": "anonymous",
+          "status": 401
+        },
+        {
+          "scenario": "every protected write requires cookie CSRF protection",
+          "role": "admin",
+          "status": 403
+        },
+        {
+          "scenario": "regular: every admin API is forbidden",
+          "role": "regular",
+          "status": 403
+        },
+        {
+          "scenario": "extra: every admin API is forbidden",
+          "role": "extra",
+          "status": 403
+        },
+        {
+          "scenario": "manager: every admin API is forbidden",
+          "role": "manager",
+          "status": 403
+        },
+        {
+          "scenario": "supervisor: every admin API is forbidden",
+          "role": "supervisor",
+          "status": 403
+        },
+        {
+          "scenario": "fingerprint tester no-match, assessment, and malformed enrollment",
+          "role": "admin",
+          "status": 404
+        },
+        {
+          "scenario": "simulated native scanner: enrollment, identification, and kiosk attendance",
+          "role": "admin",
+          "status": 201
+        },
+        {
+          "scenario": "validation POST /api/attendance/kiosk",
+          "role": "admin",
+          "status": 400
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/health",
+      "observations": [
+        {
+          "scenario": "all read endpoints return valid responses",
+          "role": "admin",
+          "status": 200
+        }
+      ]
+    }
+  ]
+}

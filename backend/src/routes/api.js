@@ -870,7 +870,7 @@ router.get('/ai-insights', async (req, res) => {
       db.collection('employees').find({ id: { $in: employeeIds } }).toArray(),
       db.collection('leave_requests').find({ employeeId: { $in: employeeIds }, status: 'approved', endDate: { $gte: attendanceStartDate } }).toArray(),
       db.collection('biometric_verification_attempts').find({}).sort({ createdAt: -1 }).limit(500).toArray(),
-      db.collection('biometric_evaluation_trials').find({}).sort({ createdAt: -1 }).limit(1000).toArray(),
+      db.collection('biometric_evaluation_trials').find({ confirmationPending: { $ne: true } }).sort({ createdAt: -1 }).toArray(),
       getSettings(db),
       db.collection('idle_days').find({ date: { $gte: attendanceStartDate } }, { projection: { _id: 0, date: 1 } }).toArray(),
     ]);
@@ -894,13 +894,34 @@ router.get('/ai-insights', async (req, res) => {
   }
 });
 
+router.get('/biometric-evaluation-trials/pending', async (req, res) => {
+  try {
+    const trials = await mongoose.connection.db.collection('biometric_evaluation_trials').find({ createdBy: req.auth.actor.email, confirmationPending: true }).sort({ createdAt: 1 }).toArray();
+    res.json(trials);
+  } catch { res.status(500).json({ error: 'Unable to load unfinished trials' }); }
+});
+
+router.post('/biometric-evaluation-trials/:id/confirm', async (req, res) => {
+  try {
+    const assessment = req.body?.assessment;
+    if (!['correct', 'wrong'].includes(assessment)) return res.status(400).json({ error: 'Choose a correct or wrong trial assessment' });
+    const result = await mongoose.connection.db.collection('biometric_evaluation_trials').updateOne(
+      { id: req.params.id, createdBy: req.auth.actor.email, confirmationPending: true },
+      { $set: { confirmationPending: false, assessment, assessedAt: new Date(), assessedBy: req.auth.actor.email } },
+    );
+    if (!result.matchedCount) return res.status(409).json({ error: 'Trial was already assessed or is unavailable' });
+    aiInsightsCache = { value: null, expiresAt: 0 };
+    res.json({ confirmed: true });
+  } catch { res.status(500).json({ error: 'Unable to confirm trial' }); }
+});
+
 router.post('/biometric-evaluation-trials', async (req, res) => {
   try {
     const db = mongoose.connection?.db;
     if (!db) return res.status(503).json({ error: 'MongoDB connection not ready' });
-    const expectedType = req.body?.expectedType === 'impostor' ? 'impostor' : req.body?.expectedType === 'genuine' ? 'genuine' : null;
+    const expectedType = req.body?.expectedType === 'impostor' ? 'impostor' : req.body?.expectedType === 'genuine' ? 'genuine' : req.body?.expectedType === 'automatic' ? 'automatic' : null;
     const expectedEmployeeId = String(req.body?.expectedEmployeeId ?? '').trim();
-    if (!expectedType) return res.status(400).json({ error: 'Choose an enrolled employee or a non-enrolled finger test' });
+    if (!expectedType) return res.status(400).json({ error: 'Choose a valid fingerprint test mode' });
     if (expectedType === 'genuine' && !expectedEmployeeId) return res.status(400).json({ error: 'Choose the employee expected to match' });
     const [probe] = normalizeFingerprintSamples(req.body?.fingerprintSamples, 1);
     const deviceUid = String(req.body?.deviceUid ?? '').trim().slice(0, 200);
@@ -912,14 +933,15 @@ router.post('/biometric-evaluation-trials', async (req, res) => {
     const decision = await findFingerprintDecision(probe, templates);
     const responseTimeMs = Date.now() - startedAt;
     const actualEmployeeId = decision.accepted ? decision.best?.employeeId || null : null;
-    let classification;
-    if (expectedType === 'impostor') classification = decision.accepted ? 'FA' : 'TR';
+    let classification = null;
+    if (expectedType === 'automatic') classification = null;
+    else if (expectedType === 'impostor') classification = decision.accepted ? 'FA' : 'TR';
     else if (!decision.accepted) classification = 'FR';
     else classification = actualEmployeeId === expectedEmployeeId ? 'TA' : 'FA';
     const expectedEmployee = expectedType === 'genuine' ? await db.collection('employees').findOne({ id: expectedEmployeeId }) : null;
     const actualEmployee = actualEmployeeId ? await db.collection('employees').findOne({ id: actualEmployeeId }) : null;
     const trial = {
-      id: crypto.randomUUID(), mode: 'one-to-many', expectedType,
+      id: crypto.randomUUID(), mode: expectedType === 'automatic' ? 'automatic-identification' : 'one-to-many', expectedType,
       expectedEmployeeId: expectedType === 'genuine' ? expectedEmployeeId : null,
       expectedEmployeeName: expectedEmployee?.name || null,
       actualEmployeeId, actualEmployeeName: actualEmployee?.name || null,
@@ -929,8 +951,10 @@ router.post('/biometric-evaluation-trials', async (req, res) => {
       matchStrength: fingerprintMatchStrength(decision.best?.score, decision.threshold),
       deviceUid: deviceUid || null, responseTimeMs, createdAt: new Date(),
       createdBy: req.auth.actor.email,
+      confirmationPending: expectedType === 'automatic' || req.body?.preview === true,
     };
     await db.collection('biometric_evaluation_trials').insertOne(trial);
+    aiInsightsCache = { value: null, expiresAt: 0 };
     res.status(201).json(trial);
   } catch (error) {
     if (error instanceof BiometricError) return res.status(error.status).json({ error: error.message });
@@ -960,6 +984,9 @@ function serializedAuditEvent(event) {
 
 router.get('/overview', requireRole('admin', 'manager'), async (req, res) => {
   try {
+    for (const field of ['performanceDate', 'auditDate']) {
+      if (req.query[field] && !validAttendanceDate(String(req.query[field]))) return res.status(400).json({ error: 'Choose a valid overview date in YYYY-MM-DD format.' });
+    }
     const db = mongoose.connection?.db;
     if (!db) return res.status(503).json({ error: 'Database is unavailable' });
     await expirePassedLeaveRequests(db);
@@ -1030,7 +1057,7 @@ router.get('/audit-events', async (req, res) => {
     const date = String(req.query.date ?? '').trim();
     const filter = { ...activityFilter };
     if (date) {
-      if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return res.status(400).json({ error: 'Audit date must use YYYY-MM-DD format' });
+      if (!validAttendanceDate(date)) return res.status(400).json({ error: 'Choose a valid audit date in YYYY-MM-DD format' });
       const start = new Date(`${date}T00:00:00+08:00`);
       const end = new Date(start.getTime() + 86_400_000);
       filter.occurredAt = { $gte: start, $lt: end };
@@ -2509,6 +2536,7 @@ router.post('/payroll-requests/:id/email', async (req, res) => {
 
 router.post('/payroll/:employeeId/email-summary', async (req, res) => {
   try {
+    const db = mongoose.connection.db;
     if (!emailConfigured()) return res.status(503).json({ error: 'Email delivery is not configured' });
     const employee = await mongoose.connection.db.collection('employees').findOne({ id: req.params.employeeId, archived: { $ne: true } });
     if (!employee) return res.status(404).json({ error: 'Employee not found' });
@@ -2582,7 +2610,7 @@ router.get('/leave-requests', async (req, res) => {
 
 router.post('/attendance/audit-export', async (req, res) => {
   res.locals.auditMetadata = {
-    attendanceAction: 'exported', exportFormat: req.body?.format === 'csv' ? 'csv' : 'unknown',
+    attendanceAction: 'exported', exportFormat: ['csv', 'xlsx'].includes(req.body?.format) ? req.body.format : 'unknown',
     from: String(req.body?.from || '').slice(0, 10), to: String(req.body?.to || '').slice(0, 10),
     recordCount: Math.max(0, Math.min(10000, Number(req.body?.recordCount || 0))),
   };
@@ -2591,7 +2619,7 @@ router.post('/attendance/audit-export', async (req, res) => {
 
 router.post('/payroll/audit-export', async (req, res) => {
   res.locals.auditMetadata = {
-    payrollAction: 'exported', exportFormat: req.body?.format === 'csv' ? 'csv' : 'unknown',
+    payrollAction: 'exported', exportFormat: ['csv', 'xlsx'].includes(req.body?.format) ? req.body.format : 'unknown',
     periodStart: String(req.body?.periodStart || '').slice(0, 10), filter: String(req.body?.filter || 'all').slice(0, 30),
     searchApplied: Boolean(req.body?.searchApplied), recordCount: Math.max(0, Math.min(10000, Number(req.body?.recordCount || 0))),
   };
@@ -2682,6 +2710,11 @@ router.patch('/leave-requests/:id/undo-approval', async (req, res) => {
 // Attendance is stored in `attendance` collection.
 router.get('/attendance', async (req, res) => {
   try {
+    const from = String(req.query.from || '');
+    const to = String(req.query.to || '');
+    if ((from && !validAttendanceDate(from)) || (to && !validAttendanceDate(to)) || (from && to && from > to)) {
+      return res.status(400).json({ error: 'Choose valid attendance dates with the start date on or before the end date.' });
+    }
     const db = mongoose.connection?.db;
     if (!db) return res.status(500).json({ error: 'MongoDB connection not ready' });
 

@@ -71,7 +71,7 @@ export function IdleDayDialog({ onClose, onSaved }: { onClose: () => void; onSav
       toast({ title: next ? "Idle day set" : "Idle day removed", description: `${selectedDates.length} date${selectedDates.length === 1 ? "" : "s"} updated.`, variant: "success" });
       onClose();
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Unable to update idle day.");
+      const message = reason instanceof Error ? reason.message : "Unable to update idle day."; setError(message); toast({ title: "Idle day not updated", description: message, variant: "error" });
     } finally { setSaving(false); }
   }
 

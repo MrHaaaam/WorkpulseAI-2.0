@@ -33,6 +33,12 @@ For biometric verification, each test attempt requires a known ground-truth iden
 
 ## Required test protocol
 
+### Insights accuracy tester
+
+In Insights, select an enrolled employee (use that employee's enrolled finger) or an unregistered finger before starting a trial. The server uses the production one-to-many matcher, stores the expected and actual identities, threshold, score, reader, and processing time without retaining the probe image, and classifies the result. Review and confirm to include it in the totals. Wrong employee matches are displayed separately from rejection and count as incorrect results. False acceptance rate uses only unregistered-finger trials; false rejection rate uses all enrolled-finger trials as its denominator.
+
+Unconfirmed trials persist and are restored for the same administrator. Confirmation is idempotent. Unlabeled identification scans do not enter accuracy totals. Scanner/connection/processing errors appear as a session counter rather than identity decisions. Tests do not record attendance. Totals reflect confirmed trials remaining in the database for employees visible in Insights; recent history shows up to twenty scans. Small trial counts are preliminary evidence, not biometric certification.
+
 1. Freeze a biometric algorithm, device firmware, match threshold, and preprocessing version.
 2. Obtain informed consent and a documented retention/deletion policy.
 3. Use separate enrollment and evaluation attempts.

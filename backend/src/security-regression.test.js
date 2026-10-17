@@ -146,13 +146,15 @@ test('security regression through actual HTTP routes with controlled records and
       assert.equal((await request('/api/employee/me/notifications', null, cookie, null, 'GET')).status, 200);
     });
     await t.test('successful offline synchronization returns its receipt without a post-save server error', async () => {
-      const operation = { id: crypto.randomUUID(), kind: 'leave', payload: { requestedDates: ['2026-12-01'], reason: 'Controlled retry' } };
+      const token = 'b'.repeat(64); const csrf = 'offline-csrf'; const digest = value => crypto.createHash('sha256').update(value).digest('hex');
+      await db.collection('admin_sessions').insertOne({ tokenDigest: digest(token), csrfDigest: digest(csrf), accountId: admin._id, accountType: 'admin', createdAt: new Date(), expiresAt: new Date(Date.now() + 60_000) });
+      const operation = { id: crypto.randomUUID(), kind: 'attendance', payload: { employeeId: 'E1', date: '2026-01-01', sessionNumber: 1, checkIn: '08:00', reason: 'Controlled retry', captureOnly: true } };
       const result = { id: 'request-1', employeeId: 'E1', status: 'pending' };
       await db.collection('offline_operations').insertOne({
-        _id: `employee:${employee._id}:${operation.id}`, kind: operation.kind,
+        _id: `admin:${admin._id}:${operation.id}`, kind: operation.kind,
         operationHash: crypto.createHash('sha256').update(JSON.stringify({ kind: operation.kind, body: operation.payload })).digest('hex'), result,
       });
-      const res = await request('/api/offline/sync', { operation }, `workpulse_session=${'f'.repeat(64)}`, 'initial-csrf');
+      const res = await request('/api/offline/sync', { operation, password: 'CorrectPass123!' }, `workpulse_session=${token}`, csrf);
       assert.equal(res.status, 200, JSON.stringify(res.data));
       assert.deepEqual(res.data, result);
     });

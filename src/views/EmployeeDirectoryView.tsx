@@ -1,3 +1,4 @@
+import { useCachedState } from "../hooks/useCachedState";
 import { employeeRoleLabel, employeeRole } from '../../shared/employee-roles.js';
 import { Textarea } from "../components/ui/Input";
 import { BoundedNumberInput } from "../components/ui/BoundedNumberInput";
@@ -91,7 +92,8 @@ function StatusBadge({ status }: { status: Employee["status"] }) {
 
 export function EmployeeDirectoryView({ employees: initialEmployees }: Partial<EmployeeDirectoryViewProps>) {
   const { toast } = useToast();
-  const [employees, setEmployees] = useState<Employee[]>(initialEmployees ?? []);
+  const [employees, setEmployees] = useCachedState<Employee[]>("employees", initialEmployees ?? []);
+  const [loadError, setLoadError] = useState("");
   const [viewMode, setViewMode] = useState<ViewMode>("table");
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<"All" | Employee["status"]>("All");
@@ -125,8 +127,10 @@ export function EmployeeDirectoryView({ employees: initialEmployees }: Partial<E
   const [archiving, setArchiving] = useState(false);
 
   useEffect(() => {
-    apiFetch('/api/employees').then((response) => response.ok ? response.json() : Promise.reject()).then(setEmployees).catch(() => {});
-  }, []);
+    let active = true;
+    apiFetch('/api/employees').then((response) => response.ok ? response.json() : Promise.reject()).then(data => { if (active) { setEmployees(data); setLoadError(''); } }).catch(() => { if (active) setLoadError('Employee records could not refresh. Reopen this page to retry; any saved records remain displayed.'); });
+    return () => { active = false; };
+  }, [setEmployees]);
 
   useEffect(() => {
     if (passwordRetrySeconds <= 0) return;
@@ -437,6 +441,7 @@ export function EmployeeDirectoryView({ employees: initialEmployees }: Partial<E
 
   return (
     <div className="space-y-6">
+      {loadError && <p role="alert" className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">{loadError}</p>}
       <AdminPageHeader title="Employee Directory" description="Find employees and manage their account details." icon={Contact} actions={<><Button variant="outline" onClick={() => window.open('/kiosk', '_blank', 'noopener,noreferrer')}><ScanLine className="h-4 w-4" /> Open Kiosk</Button><Button data-guide="employee-add" onClick={openAdd}><Plus className="h-4 w-4" /> Add Employee</Button></>} />
 
       <div data-guide="employee-filters" className="grid grid-cols-1 gap-2 sm:grid-cols-[minmax(0,1fr)_auto_auto_auto] sm:items-center lg:grid-cols-[minmax(18rem,28rem)_auto_auto_auto_1fr]">

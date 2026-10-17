@@ -286,17 +286,20 @@ function verificationInsight(attendance, verificationAttempts, evaluationTrials,
     };
   }).sort((a, b) => String(b.scannedAt).localeCompare(String(a.scannedAt))).slice(0, 20);
   const recentMatches = loggedAttempts.length ? loggedAttempts : attendanceMatches;
+  evaluationTrials = evaluationTrials.filter(trial => !trial.confirmationPending);
   const counts = { TA: 0, TR: 0, FA: 0, FR: 0 };
   for (const trial of evaluationTrials) if (Object.hasOwn(counts, trial.classification)) counts[trial.classification] += 1;
-  const totalTrials = counts.TA + counts.TR + counts.FA + counts.FR;
-  const genuineTrials = counts.TA + counts.FR;
+  const assessedTrials = evaluationTrials.filter(trial => ['correct', 'wrong'].includes(trial.assessment) || Object.hasOwn(counts, trial.classification));
+  const totalTrials = assessedTrials.length;
+  const genuineTrials = evaluationTrials.filter((trial) => trial.expectedType === 'genuine').length;
   const impostorTrials = evaluationTrials.filter((trial) => trial.expectedType === 'impostor');
   const impostorFalseAcceptances = impostorTrials.filter((trial) => trial.classification === 'FA').length;
   const averageResponseTimeMs = totalTrials
-    ? Math.round(evaluationTrials.slice(0, totalTrials).reduce((sum, trial) => sum + Number(trial.responseTimeMs || 0), 0) / totalTrials) : 0;
+    ? Math.round(assessedTrials.reduce((sum, trial) => sum + Number(trial.responseTimeMs || 0), 0) / totalTrials) : 0;
+  const correctTrialCount = assessedTrials.filter(trial => trial.assessment ? trial.assessment === "correct" : ["TA", "TR"].includes(trial.classification)).length;
   const evaluation = {
-    counts, totalTrials,
-    accuracy: totalTrials ? round((counts.TA + counts.TR) / totalTrials * 100) : null,
+    counts, totalTrials, correctTrialCount,
+    accuracy: totalTrials ? round(correctTrialCount / totalTrials * 100) : null,
     far: impostorTrials.length ? round(impostorFalseAcceptances / impostorTrials.length * 100) : null,
     frr: genuineTrials ? round(counts.FR / genuineTrials * 100) : null,
     genuineTrialCount: evaluationTrials.filter((trial) => trial.expectedType === 'genuine').length,
@@ -305,7 +308,7 @@ function verificationInsight(attendance, verificationAttempts, evaluationTrials,
     minimumRecommendedTrials: 40,
     averageResponseTimeMs,
     recentTrials: evaluationTrials.slice(0, 20).map((trial) => ({
-      id: trial.id || String(trial._id), classification: trial.classification,
+      id: trial.id || String(trial._id), classification: trial.classification, assessment: trial.assessment || null,
       scanKind: trial.mode === 'automatic-identification' ? 'automatic' : 'controlled',
       expectedType: trial.expectedType, expectedEmployeeName: trial.expectedEmployeeName || null,
       actualEmployeeName: trial.actualEmployeeName || null, accepted: Boolean(trial.accepted),

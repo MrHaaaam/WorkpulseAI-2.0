@@ -1,3 +1,5 @@
+import { useCachedState } from "../hooks/useCachedState";
+import { useToast } from '../components/ui/Toast'
 import { useEffect, useMemo, useState } from 'react'
 import { Check, RefreshCw, Search, WalletCards, X } from 'lucide-react'
 import { Button } from '../components/ui/Button'
@@ -39,8 +41,9 @@ function RepaymentPreview({ row, payroll }: { row: Summary; payroll: PayrollRequ
 }
 
 export function CashAdvanceSection({ employees, payroll, onPayrollChanged }: { employees: Employee[]; payroll: PayrollRequest[]; onPayrollChanged: () => Promise<void> }) {
-  const [requests, setRequests] = useState<AdvanceRequest[]>([])
-  const [summaries, setSummaries] = useState<Summary[]>([])
+  const { toast } = useToast()
+  const [requests, setRequests] = useCachedState<AdvanceRequest[]>("advance-requests", [])
+  const [summaries, setSummaries] = useCachedState<Summary[]>("advance-summaries", [])
   const [search, setSearch] = useState('')
   const [target, setTarget] = useState<AdvanceRequest | null>(null)
   const [directOpen, setDirectOpen] = useState(false)
@@ -59,11 +62,14 @@ export function CashAdvanceSection({ employees, payroll, onPayrollChanged }: { e
     setRequests(await requestResponse.json()); setSummaries(await summaryResponse.json()); setLoadingError('')
   }
   useEffect(() => {
+    let active = true;
     void Promise.all([apiFetch('/api/cash-advance-requests'), apiFetch('/api/cash-advances')]).then(async ([requestsResponse, summariesResponse]) => {
       if (!requestsResponse.ok || !summariesResponse.ok) throw new Error('Unable to load cash advances.')
-      setRequests(await requestsResponse.json()); setSummaries(await summariesResponse.json())
-    }).catch(cause => setLoadingError(cause.message))
-  }, [])
+      const [requests, summaries] = await Promise.all([requestsResponse.json(), summariesResponse.json()]);
+      if (active) { setRequests(requests); setSummaries(summaries); }
+    }).catch(cause => { if (active) setLoadingError(cause.message); })
+    return () => { active = false; };
+  }, [setRequests, setSummaries])
   const query = search.trim().toLowerCase()
   const shownRequests = useMemo(() => requests.filter(item => `${item.employeeName} ${item.employeeId}`.toLowerCase().includes(query)), [requests, query])
   const shownSummaries = useMemo(() => summaries.filter(item => `${item.employeeName} ${item.employeeId}`.toLowerCase().includes(query)), [summaries, query])
@@ -77,13 +83,16 @@ export function CashAdvanceSection({ employees, payroll, onPayrollChanged }: { e
     event.preventDefault()
     if (!target || passwordRetrySeconds > 0) return
     setSaving(true); setError('')
+    let saved = false;
     try {
       const url = decision === 'disburse' ? `/api/cash-advance-requests/${target.id}/disburse` : `/api/cash-advance-requests/${target.id}/decision`
       const response = await apiFetch(url, { method: decision === 'disburse' ? 'POST' : 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(decision === 'disburse' ? { date: givenDate, password } : { decision, startPeriod, note, password }) })
       const data = await response.json().catch(() => ({}))
       if (!response.ok) throw new Error(data.error || 'Unable to update request.')
+      saved = true;
+      toast({ title: decision === 'disburse' ? 'Cash given recorded' : decision === 'approve' ? 'Cash advance approved' : 'Cash advance rejected', description: `${target.employeeName}'s request was updated.`, variant: decision === 'reject' ? 'info' : 'success' });
       setTarget(null); await load(); if (decision === 'disburse') await onPayrollChanged()
-    } catch (cause) { setError(cause instanceof Error ? cause.message : 'Unable to update request.') }
+    } catch (cause) { const message = cause instanceof Error ? cause.message : 'Unable to update request.'; setError(message); toast({ title: saved ? 'Cash advance saved; refresh needed' : 'Cash advance not updated', description: message, variant: saved ? 'info' : 'error' }) }
     finally { setSaving(false) }
   }
   return <section className="space-y-4" aria-label="Cash advances">

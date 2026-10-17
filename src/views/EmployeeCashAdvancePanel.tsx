@@ -1,3 +1,4 @@
+import { useToast } from '../components/ui/Toast'
 import { useState } from 'react'
 import { WalletCards } from 'lucide-react'
 import { Button } from '../components/ui/Button'
@@ -12,6 +13,7 @@ const money = (value: number) => new Intl.NumberFormat('en-PH', { style: 'curren
 const labels: Record<CashAdvanceRequest['status'], string> = { pending: 'Waiting for admin', approved: 'Review and accept terms', accepted: 'Waiting for cash', rejected: 'Rejected', cancelled: 'Cancelled', disbursed: 'Cash received' }
 
 export function EmployeeCashAdvancePanel({ summary, maxAmount, payroll, requests, onChanged }: { summary?: CashAdvanceSummary; maxAmount?: number; payroll: { periodStart?: string; status: string; advanceDeduction?: number; rolledInto?: string }[]; requests: CashAdvanceRequest[]; onChanged: () => Promise<void> }) {
+  const { toast } = useToast()
   const [amount, setAmount] = useState('')
   const [reason, setReason] = useState('')
   const [agreed, setAgreed] = useState(false)
@@ -23,25 +25,34 @@ export function EmployeeCashAdvancePanel({ summary, maxAmount, payroll, requests
   const receivedThisPeriod = (summary?.advances || []).some(advance => (advance.issuePeriod || (advance.date && payrollPeriodForDate(advance.date))) === currentPeriod)
     || requests.some(request => request.status === 'disbursed' && request.disbursedDate && payrollPeriodForDate(request.disbursedDate) === currentPeriod)
   const nextRepayment = nextCashAdvanceRepayment(summary?.balance || 0, summary?.advances || [], payroll)
+  async function refreshAfterChange() {
+    try { await onChanged() }
+    catch { toast({ title: 'Request saved; refresh needed', description: 'Your change was saved, but the latest balances could not be loaded. Refresh your workspace.', variant: 'info' }) }
+  }
   async function sendRequest(event: React.FormEvent) {
-    event.preventDefault(); if (receivedThisPeriod || openRequest || amountError) return; setBusy(true); setError('')
+    event.preventDefault(); if (busy || receivedThisPeriod || openRequest) return;
+    if (!agreed || !Number.isFinite(Number(amount)) || Number(amount) <= 0 || amountError) { toast({ title: 'Check your cash advance request', description: amountError || 'Enter a valid amount and agree to the repayment terms.', variant: 'error' }); return }; setBusy(true); setError('')
     try {
       const response = await apiFetch('/api/employee/me/cash-advance-requests', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ amount: Number(amount), reason, repaymentAgreed: agreed }) })
       const data = await response.json().catch(() => ({}))
       if (!response.ok) throw new Error(data.error || 'Unable to send request.')
-      if (data.queued) { setAmount(''); setReason(''); setAgreed(false); return }
-      setAmount(''); setReason(''); setAgreed(false); await onChanged()
-    } catch (cause) { setError(cause instanceof Error ? cause.message : 'Unable to send request.'); await onChanged() }
+      if (data.queued) { setAmount(''); setReason(''); setAgreed(false); toast({ title: 'Request saved on this device', description: 'It has not reached your administrator yet. Review Offline records for its sync status.', variant: 'info' }); return }
+      setAmount(''); setReason(''); setAgreed(false);
+      toast({ title: 'Cash advance requested', description: 'Your request is waiting for administrator review.', variant: 'success' });
+      await refreshAfterChange()
+    } catch (cause) { const message = cause instanceof Error ? cause.message : 'Unable to send request.'; setError(message); toast({ title: 'Cash advance not requested', description: message, variant: 'error' }) }
     finally { setBusy(false) }
   }
   async function changeRequest(request: CashAdvanceRequest, action: 'accept' | 'cancel') {
+    if (busy) return;
     setBusy(true); setError('')
     try {
       const response = await apiFetch(`/api/employee/me/cash-advance-requests/${request.id}/${action}`, { method: 'PATCH' })
       const data = await response.json().catch(() => ({}))
       if (!response.ok) throw new Error(data.error || 'Unable to update request.')
-      await onChanged()
-    } catch (cause) { setError(cause instanceof Error ? cause.message : 'Unable to update request.') }
+      toast({ title: action === 'accept' ? 'Repayment terms accepted' : 'Cash advance request cancelled', description: action === 'accept' ? 'Your administrator can now record the cash handover.' : 'The request was cancelled.', variant: 'success' });
+      await refreshAfterChange()
+    } catch (cause) { const message = cause instanceof Error ? cause.message : 'Unable to update request.'; setError(message); toast({ title: 'Cash advance not updated', description: message, variant: 'error' }) }
     finally { setBusy(false) }
   }
   return <section className="rounded-2xl border border-slate-200 bg-white shadow-sm"><div className="flex items-center gap-3 border-b border-slate-100 bg-violet-50/50 p-5"><span className="rounded-xl bg-violet-100 p-2 text-violet-700"><WalletCards size={20}/></span><div><h2 className="font-bold text-slate-900">Cash advance</h2><p className="text-sm text-slate-500">Request cash and track what you still owe.</p></div></div><div className="space-y-5 p-5">

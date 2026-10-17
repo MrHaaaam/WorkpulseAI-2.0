@@ -1,3 +1,4 @@
+import { useCachedState } from "../hooks/useCachedState";
 import { employeeRoleLabel } from '../../shared/employee-roles.js';
 import { PASSWORD_RULES, passwordValidationError } from '../../shared/password-policy.js';
 import { emailInput } from '../../shared/input-format.js';
@@ -29,8 +30,8 @@ type ConfirmationRequest = { title: string; description: string; confirmLabel: s
 
 export function AdminView() {
   const { toast } = useToast();
-  const [localEmployees, setLocalEmployees] = useState<(Employee & { banned?: boolean })[]>([]);
-  const [archivedAccounts, setArchivedAccounts] = useState<{ id: string; name: string; type: "Employee"; record: Employee & { banned?: boolean; archivedAt?: string } }[]>([]);
+  const [localEmployees, setLocalEmployees] = useCachedState<(Employee & { banned?: boolean })[]>("admin-employees", []);
+  const [archivedAccounts, setArchivedAccounts] = useCachedState<{ id: string; name: string; type: "Employee"; record: Employee & { banned?: boolean; archivedAt?: string } }[]>("admin-archives", []);
   const [adminUnlocked, setAdminUnlocked] = useState(false);
   const [passwordPromptOpen, setPasswordPromptOpen] = useState(false);
   const [archiveOpen, setArchiveOpen] = useState(false);
@@ -38,7 +39,8 @@ export function AdminView() {
   const [password, setPassword] = useState("");
   const [passwordError, setPasswordError] = useState("");
   const [passwordRetrySeconds, setPasswordRetrySeconds] = useState(0);
-  const [controls, setControls] = useState({ maintenanceMode: false, registrationOpen: true, updatedAt: null as string | null });
+  const [controls, setControls] = useCachedState("admin-controls", { maintenanceMode: false, registrationOpen: true, updatedAt: null as string | null });
+  const [loadError, setLoadError] = useState("");
   const [controlBusy, setControlBusy] = useState<string | null>(null);
   const [archiveReferenceTime] = useState(() => Date.now());
   const [archiveRange, setArchiveRange] = useState<"30d" | "1y" | "5y" | "all">("all");
@@ -90,7 +92,11 @@ export function AdminView() {
   }, [passwordRetrySeconds]);
 
   useEffect(() => {
+    let active = true;
     Promise.all([apiFetch('/api/employees'), apiFetch('/api/archived-employees'), apiFetch('/api/admin/system-controls'), apiFetch('/api/admin/account-security')]).then(async ([activeResponse, archivedResponse, controlsResponse, accountResponse]) => {
+      if (!active) return;
+      if (![activeResponse, archivedResponse, controlsResponse, accountResponse].every(response => response.ok)) throw new Error("Some administrator records could not load. Reopen Admin Controls before changing these settings.");
+      setLoadError("");
       if (activeResponse.ok) setLocalEmployees(await activeResponse.json());
       if (archivedResponse.ok) {
         const archived = await archivedResponse.json() as (Employee & { banned?: boolean })[];
@@ -98,8 +104,9 @@ export function AdminView() {
       }
       if (controlsResponse.ok) setControls(await controlsResponse.json());
       if (accountResponse.ok) setAdminEmail((await accountResponse.json()).email ?? "");
-    }).catch(() => {});
-  }, []);
+    }).catch(reason => { if (active) setLoadError(reason instanceof Error ? reason.message : "Admin Controls could not load."); });
+    return () => { active = false; };
+  }, [setArchivedAccounts, setControls, setLocalEmployees]);
 
   async function updateAdminCredentials(event: React.FormEvent) {
     event.preventDefault();
@@ -131,14 +138,20 @@ export function AdminView() {
     if (!employee) return;
     const banned = !employee.banned;
     if (!await askForConfirmation({ title: `${banned ? "Block" : "Restore"} employee access?`, description: `${employee.name}'s account will be ${banned ? "blocked and any active session will be signed out" : "restored so they can sign in again"}.`, confirmLabel: banned ? "Block Access" : "Restore Access", destructive: banned })) return;
-    const response = await apiFetch(`/api/admin/employees/${id}/access`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ banned }) });
-    const data = await response.json().catch(() => ({}));
-    if (!response.ok) return toast({ title: "Access was not updated", description: data.error || "Please try again.", variant: "error" });
-    setLocalEmployees((current) => current.map((item) => item.id === id ? { ...item, banned } : item));
-    toast({ title: banned ? "Account access blocked" : "Account access restored", description: `${employee.name}'s access was updated.`, variant: banned ? "info" : "success" });
+    setControlBusy(`access-${id}`);
+    try {
+      const response = await apiFetch(`/api/admin/employees/${id}/access`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ banned }) });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.error || 'Employee access was not updated.');
+      setLocalEmployees(current => current.map(item => item.id === id ? { ...item, banned } : item));
+      toast({ title: banned ? 'Account access blocked' : 'Account access restored', description: `${employee.name}'s access was updated.`, variant: banned ? 'info' : 'success' });
+    } catch (reason) { toast({ title: 'Access was not updated', description: reason instanceof Error ? reason.message : 'Please try again.', variant: 'error' }); }
+    finally { setControlBusy(null); }
   }
 
   async function updateControl(key: "maintenanceMode" | "registrationOpen", value: boolean) {
+    if (controlBusy !== null) return;
+    if (loadError) { toast({ title: "System controls unavailable", description: loadError, variant: "error" }); return; }
     const message = key === "maintenanceMode"
       ? value ? "Turn on maintenance mode? All employee users will be locked out until it is turned off." : "Turn off maintenance mode and restore employee access?"
       : value ? "Open new employee registration?" : "Restrict new employee registration? Administrators will not be able to create employees until it is reopened.";
@@ -221,12 +234,16 @@ export function AdminView() {
     const account = archivedAccounts.find((item) => item.id === id);
     if (!account) return;
     if (!await askForConfirmation({ title: "Restore archived employee?", description: `${account.name} will return to the active employee directory and can be given account access again.`, confirmLabel: "Restore Employee" })) return;
-    const response = await apiFetch(`/api/employees/${id}/unarchive`, { method: 'POST' });
-    if (!response.ok) { toast({ title: "Account was not restored", description: "Please try again.", variant: "error" }); return; }
-    const restored = await response.json();
-    setLocalEmployees((current) => [...current, { ...restored, banned: false }]);
-    setArchivedAccounts((current) => current.filter((item) => item.id !== id));
-    toast({ title: "Account restored", description: `${account.name} returned to the employee directory.`, variant: "success" });
+    setControlBusy(`restore-${id}`);
+    try {
+      const response = await apiFetch(`/api/employees/${id}/unarchive`, { method: 'POST' });
+      const restored = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(restored.error || 'Employee account was not restored.');
+      setLocalEmployees(current => [...current.filter(item => item.id !== id), restored]);
+      setArchivedAccounts(current => current.filter(item => item.id !== id));
+      toast({ title: 'Account restored', description: `${account.name} returned to the employee directory.`, variant: 'success' });
+    } catch (reason) { toast({ title: 'Account was not restored', description: reason instanceof Error ? reason.message : 'Please try again.', variant: 'error' }); }
+    finally { setControlBusy(null); }
   }
 
   async function lockAdminControls() {
@@ -260,15 +277,17 @@ export function AdminView() {
     }
   }
 
+  const loadWarning = loadError && <p role="alert" className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">{loadError}</p>;
+
   if (!adminUnlocked) return (
-    <div className="space-y-6"><AdminPageHeader title="Admin Control Panel" description="Manage user access, bans, and global system configuration" icon={ShieldCheck} /><div className="flex justify-center py-6"><Card className="w-full max-w-md"><CardContent className="flex flex-col items-center p-6 text-center sm:p-8"><div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-[#8642ED]/10"><KeyRound className="h-7 w-7 text-[#8642ED]" /></div><h2 className="mt-4 text-xl font-bold text-slate-900">Admin Controls Locked</h2><p className="mt-1 text-sm text-slate-500">Password verification is required before accessing any administrative controls.</p><Button className="mt-5" onClick={() => { setPassword(""); setPasswordError(""); setPasswordPromptOpen(true); }}>Enter Password</Button></CardContent></Card></div>
+    <div className="space-y-6">{loadWarning}<AdminPageHeader title="Admin Control Panel" description="Manage user access, bans, and global system configuration" icon={ShieldCheck} /><div className="flex justify-center py-6"><Card className="w-full max-w-md"><CardContent className="flex flex-col items-center p-6 text-center sm:p-8"><div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-[#8642ED]/10"><KeyRound className="h-7 w-7 text-[#8642ED]" /></div><h2 className="mt-4 text-xl font-bold text-slate-900">Admin Controls Locked</h2><p className="mt-1 text-sm text-slate-500">Password verification is required before accessing any administrative controls.</p><Button className="mt-5" onClick={() => { setPassword(""); setPasswordError(""); setPasswordPromptOpen(true); }}>Enter Password</Button></CardContent></Card></div>
       <Dialog open={passwordPromptOpen} onClose={() => setPasswordPromptOpen(false)} className="max-w-sm"><DialogHeader><div><h3 className="flex items-center gap-2 text-base font-bold text-slate-900"><KeyRound className="h-4 w-4 text-[#8642ED]" /> Admin Password</h3><p className="mt-1 text-xs text-slate-500">Verify your current account password to continue.</p></div><DialogClose onClose={() => setPasswordPromptOpen(false)} /></DialogHeader><form onSubmit={unlockAdminControls} className="space-y-3 px-6 pb-6 pt-3"><Input type="password" autoFocus disabled={passwordRetrySeconds > 0} value={password} onChange={(event) => { setPassword(event.target.value); setPasswordError(""); }} placeholder={passwordRetrySeconds > 0 ? `Try again in ${passwordRetrySeconds}s` : "Enter admin password"} />{passwordRetrySeconds > 0 && <p className="text-xs font-medium text-amber-600">Password attempts locked for {passwordRetrySeconds} more seconds.</p>}{passwordError && <p className="text-xs text-rose-600">{passwordError}</p>}<div className="flex justify-end gap-2"><Button type="button" size="sm" variant="outline" onClick={() => setPasswordPromptOpen(false)}>Cancel</Button><Button type="submit" size="sm" disabled={passwordRetrySeconds > 0}>{passwordRetrySeconds > 0 ? `Wait ${passwordRetrySeconds}s` : "Unlock"}</Button></div></form></Dialog>
     </div>
   );
 
   return (
     <div className="space-y-6">
-      <AdminPageHeader title="Admin Control Panel" description="Manage user access, bans, and global system configuration" icon={ShieldCheck} actions={<><Button className="flex-1 sm:flex-none" variant="outline" onClick={() => setArchiveOpen(true)}><Archive className="h-4 w-4" /> Archive</Button><Button className="flex-1 sm:flex-none" variant="outline" onClick={lockAdminControls}><KeyRound className="h-4 w-4" /> Lock</Button></>} />
+      {loadWarning}<AdminPageHeader title="Admin Control Panel" description="Manage user access, bans, and global system configuration" icon={ShieldCheck} actions={<><Button className="flex-1 sm:flex-none" variant="outline" onClick={() => setArchiveOpen(true)}><Archive className="h-4 w-4" /> Archive</Button><Button className="flex-1 sm:flex-none" variant="outline" onClick={lockAdminControls}><KeyRound className="h-4 w-4" /> Lock</Button></>} />
 
       <div className="grid grid-cols-1 gap-6">
         {/* Ban / Unban Employees Table */}
@@ -280,7 +299,7 @@ export function AdminView() {
           <CardContent>
             <div className="relative mb-4 max-w-sm"><Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" /><Input aria-label="Search employee access" value={employeeSearch} onChange={(event) => setEmployeeSearch(event.target.value)} placeholder="Search employee, ID, or role" className="pl-9" /></div>
             <div className="space-y-2 sm:hidden">
-              {employeePage.pageItems.map((employee) => <div key={employee.id} className="rounded-xl border border-slate-200 p-4"><div className="flex items-start justify-between gap-2"><div className="min-w-0"><p className="break-words font-semibold text-slate-900">{employee.name}</p><p className="text-xs text-slate-500">{employee.id} · {employeeRoleLabel(employee.role)}</p></div><Badge variant={employee.banned ? "danger" : "success"}>{employee.banned ? "Blocked" : "Active"}</Badge></div><Button className="mt-3 w-full" size="sm" variant="outline" onClick={() => void toggleBanEmployee(employee.id)}>{employee.banned ? "Restore access" : "Block access"}</Button></div>)}
+              {employeePage.pageItems.map((employee) => <div key={employee.id} className="rounded-xl border border-slate-200 p-4"><div className="flex items-start justify-between gap-2"><div className="min-w-0"><p className="break-words font-semibold text-slate-900">{employee.name}</p><p className="text-xs text-slate-500">{employee.id} · {employeeRoleLabel(employee.role)}</p></div><Badge variant={employee.banned ? "danger" : "success"}>{employee.banned ? "Blocked" : "Active"}</Badge></div><Button className="mt-3 w-full" size="sm" variant="outline" disabled={controlBusy !== null || Boolean(loadError)} onClick={() => void toggleBanEmployee(employee.id)}>{employee.banned ? "Restore access" : "Block access"}</Button></div>)}
             </div>
             <div className={`${hoverScrollbarClasses} hidden sm:block`}>
               <Table className="min-w-[620px]">
@@ -308,7 +327,7 @@ export function AdminView() {
                         )}
                       </TableCell>
                       <TableCell className="text-right">
-                        <Button size="sm" variant={e.banned ? "outline" : undefined} onClick={() => void toggleBanEmployee(e.id)}>
+                        <Button size="sm" variant={e.banned ? "outline" : undefined} disabled={controlBusy !== null || Boolean(loadError)} onClick={() => void toggleBanEmployee(e.id)}>
                           {e.banned ? (
                             <><Check className="mr-1.5 h-3.5 w-3.5" />Unban</>
                           ) : (
@@ -373,7 +392,7 @@ export function AdminView() {
               const archivedAt = account.record.archivedAt ? new Date(account.record.archivedAt) : null;
               const validDate = archivedAt && !Number.isNaN(archivedAt.getTime());
               const ageDays = validDate ? Math.max(0, Math.floor((archiveReferenceTime - archivedAt.getTime()) / 86400000)) : null;
-              return <TableRow key={account.id}><TableCell><div className="font-medium text-slate-900">{account.name}</div><div className="text-xs text-slate-400">{account.id}</div></TableCell><TableCell className="text-slate-600">{validDate ? archivedAt.toLocaleDateString('en-PH', { month: 'short', day: 'numeric', year: 'numeric' }) : 'Date unavailable'}</TableCell><TableCell><Badge variant="neutral">{ageDays == null ? 'Unknown' : ageDays === 0 ? 'Today' : `${ageDays} ${ageDays === 1 ? 'day' : 'days'}`}</Badge></TableCell><TableCell><div className="flex justify-end gap-2"><Button size="sm" variant="outline" onClick={() => restoreAccount(account.id)}><RotateCcw className="h-3.5 w-3.5" /> Restore</Button><Button size="sm" variant="destructive" onClick={() => { setDeleteTarget(account); setDeletePassword(''); setDeleteError(''); }}><Trash2 className="h-3.5 w-3.5" /> Delete permanently</Button></div></TableCell></TableRow>;
+              return <TableRow key={account.id}><TableCell><div className="font-medium text-slate-900">{account.name}</div><div className="text-xs text-slate-400">{account.id}</div></TableCell><TableCell className="text-slate-600">{validDate ? archivedAt.toLocaleDateString('en-PH', { month: 'short', day: 'numeric', year: 'numeric' }) : 'Date unavailable'}</TableCell><TableCell><Badge variant="neutral">{ageDays == null ? 'Unknown' : ageDays === 0 ? 'Today' : `${ageDays} ${ageDays === 1 ? 'day' : 'days'}`}</Badge></TableCell><TableCell><div className="flex justify-end gap-2"><Button size="sm" variant="outline" disabled={controlBusy !== null || Boolean(loadError)} onClick={() => void restoreAccount(account.id)}><RotateCcw className="h-3.5 w-3.5" /> Restore</Button><Button size="sm" variant="destructive" onClick={() => { setDeleteTarget(account); setDeletePassword(''); setDeleteError(''); }}><Trash2 className="h-3.5 w-3.5" /> Delete permanently</Button></div></TableCell></TableRow>;
             })}
           </TableBody></Table></div>{filteredArchivedAccounts.length === 0 && <div className="py-10 text-center text-sm text-slate-400">{archivedAccounts.length ? 'No archived employees match the selected filters.' : 'The archive is empty.'}</div>}<PaginationControls {...archivePage} onPageChange={archivePage.setPage} /></CardContent>
         </Card>

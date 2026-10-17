@@ -1,3 +1,4 @@
+import { useCachedState } from "../hooks/useCachedState";
 import { AttendanceSourceLabels, type AttendanceSource } from '../components/AttendanceSourceLabels';
 import { Input } from "../components/ui/Input";
 import { useCallback, useEffect, useMemo, useState } from 'react'
@@ -63,12 +64,13 @@ export function EmployeeCalendar({ refreshKey = 0, admin = false }: { refreshKey
   const today = todayManila()
   const [month, setMonth] = useState(today.slice(0, 7))
   const [selected, setSelected] = useState(today)
-  const [data, setData] = useState<CalendarData | null>(null)
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState('')
   const [employeeSearch, setEmployeeSearch] = useState('')
-  const matches = data?.employees?.filter((employee) => employee.name.toLowerCase().includes(employeeSearch.trim().toLowerCase())) ?? []
+  const [employees, setEmployees] = useCachedState<NonNullable<CalendarData['employees']>>('calendar-employees', [])
+  const matches = employees.filter(employee => employee.name.toLowerCase().includes(employeeSearch.trim().toLowerCase()))
   const employeeId = admin && employeeSearch.trim() ? matches[0]?.id ?? '' : ''
+  const [data, setData] = useCachedState<CalendarData | null>(`calendar:${admin}:${month}:${employeeId}`, null)
+  const [loading, setLoading] = useState(!data)
+  const [error, setError] = useState('')
 
   const load = useCallback(async (signal: AbortSignal) => {
     setLoading(true)
@@ -77,11 +79,11 @@ export function EmployeeCalendar({ refreshKey = 0, admin = false }: { refreshKey
       const response = await apiFetch(admin ? `/api/admin/calendar?month=${month}&employeeId=${encodeURIComponent(employeeId)}` : `/api/employee/me/calendar?month=${month}`, { signal })
       const result = await response.json()
       if (!response.ok) throw new Error(result.error || 'Unable to load calendar')
-      if (!signal.aborted) setData(result)
+      if (!signal.aborted) { setData(result); if (result.employees) setEmployees(result.employees); }
     } catch (reason) {
       if (!signal.aborted) setError(reason instanceof Error ? reason.message : 'Unable to load calendar')
     } finally { if (!signal.aborted) setLoading(false) }
-  }, [month, employeeId, admin])
+  }, [month, employeeId, admin, setData, setEmployees])
 
   useEffect(() => {
     const controller = new AbortController()
@@ -111,7 +113,7 @@ export function EmployeeCalendar({ refreshKey = 0, admin = false }: { refreshKey
     {admin && <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm"><label htmlFor="calendar-employee-search" className="block text-sm font-semibold text-slate-700">Find employee</label><Input id="calendar-employee-search" type="search" value={employeeSearch} onChange={(event) => setEmployeeSearch(event.target.value)} placeholder="Search by name" className="mt-2 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm focus:border-violet-400 focus:outline-none focus:ring-2 focus:ring-violet-100" /><p className="mt-2 text-xs text-slate-500">{employeeSearch.trim() ? matches.length ? `Showing ${matches[0].name}${matches.length > 1 ? `, first of ${matches.length} matches` : ''}` : 'No employees match your search.' : 'Showing company schedule. Type a name to open an employee calendar.'}</p></div>}
     <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
       {([['Scheduled work', summary.workdays], ['Rest days', summary.rest], ['Holidays', summary.holidays], ['Idle days', summary.idle], ['Approved leave', summary.leave]] as const).map(([label, value]) =>
-        <div key={label} className="rounded-2xl border border-slate-200 bg-white px-4 py-3 shadow-sm"><p className="text-xs font-medium text-slate-500">{label}</p><p className="mt-1 text-2xl font-semibold tracking-tight text-slate-900">{loading ? '—' : value}</p></div>)}
+        <div key={label} className="rounded-2xl border border-slate-200 bg-white px-4 py-3 shadow-sm"><p className="text-xs font-medium text-slate-500">{label}</p><p className="mt-1 text-2xl font-semibold tracking-tight text-slate-900">{loading && !data ? '—' : value}</p></div>)}
     </div>
     <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_320px]">
       <section className="min-w-0 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
@@ -120,8 +122,8 @@ export function EmployeeCalendar({ refreshKey = 0, admin = false }: { refreshKey
           <div className="flex items-center gap-1"><button type="button" onClick={() => changeMonth(-1)} aria-label="Previous month" className="rounded-lg border border-slate-200 p-2 text-slate-600 hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-violet-400"><ChevronLeft className="h-4 w-4" /></button><button type="button" onClick={() => { setMonth(today.slice(0, 7)); setSelected(today) }} className="rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50">Today</button><button type="button" onClick={() => changeMonth(1)} aria-label="Next month" className="rounded-lg border border-slate-200 p-2 text-slate-600 hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-violet-400"><ChevronRight className="h-4 w-4" /></button></div>
         </div>
         {error && <div className="m-4 rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800">{error} <button type="button" className="ml-2 font-semibold underline" onClick={() => { const controller = new AbortController(); void load(controller.signal) }}>Retry</button></div>}
-        {loading && <div className="grid min-h-72 place-items-center text-sm text-slate-500">Loading calendar…</div>}
-        {!loading && !error && <div className="p-2 sm:p-4">
+        {loading && !data && <div className="grid min-h-72 place-items-center text-sm text-slate-500">Loading calendar…</div>}
+        {(!loading || data) && data && <div className="p-2 sm:p-4">
           <div className="grid grid-cols-7 border-b border-slate-100 pb-2 text-center text-[10px] font-semibold uppercase tracking-wide text-slate-400 sm:text-xs">{['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map((day) => <span key={day}>{day}</span>)}</div>
           <div className="grid grid-cols-7 gap-1 pt-2 sm:gap-2">{Array.from({ length: leading }, (_, index) => <span key={`blank-${index}`} />)}{days.map((day) => {
             const approved = day.leave.some((leave) => leave.status === 'approved')
@@ -133,7 +135,7 @@ export function EmployeeCalendar({ refreshKey = 0, admin = false }: { refreshKey
           })}</div>
         </div>}
       </section>
-      <aside className="self-start rounded-2xl border border-slate-200 bg-white p-5 shadow-sm"><div className="flex items-center gap-2 text-slate-400"><CalendarDays className="h-4 w-4" /><span className="text-[11px] font-semibold uppercase tracking-widest">Day details</span></div>{selectedDay && !loading ? <><h3 className="mt-3 text-lg font-semibold text-slate-900">{dateLabel(selectedDay.date)}</h3><div className="mt-4 flex flex-wrap gap-2">{dayTags(selectedDay).map((tag, index) => <span key={`${tag.label}-${index}`} className={`rounded-lg px-2.5 py-1.5 text-xs font-semibold ${tagStyles[tag.tone]}`}>{tag.label}</span>)}</div>{selectedDay.schedule === 'Workday' && data?.workSchedule.startTime && <p className="mt-5 text-sm text-slate-600">Scheduled start: <strong className="text-slate-900">{calendarTime(data.workSchedule.startTime)}</strong>{data.workSchedule.workStopTime && <> · End: <strong className="text-slate-900">{calendarTime(data.workSchedule.workStopTime)}</strong></>}</p>}{selectedDay.attendance && <div className="mt-5 border-t border-slate-100 pt-4"><p className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-slate-500"><Clock3 className="h-4 w-4" />Time records</p>{(selectedDay.attendance.sessions?.length ? selectedDay.attendance.sessions : selectedDay.attendance.checkIn ? [{ ...selectedDay.attendance, checkIn: selectedDay.attendance.checkIn }] : []).map((session, index) => <div key={index} className="mt-2 rounded-lg bg-slate-50 p-3"><p className="text-sm text-slate-700">Session {index + 1}: {calendarTime(session.checkIn)} – {session.checkOut ? calendarTime(session.checkOut) : 'In progress'}</p><AttendanceSourceLabels session={session} /></div>)}<div className="mt-3 flex items-center justify-between gap-3 rounded-lg border border-violet-100 bg-violet-50 px-3 py-3 text-sm"><span className="font-medium text-slate-700">Total recorded time</span><strong className="shrink-0 tabular-nums text-violet-700">{selectedDayTime.label}</strong></div>{selectedDayTime.openSessions > 0 && <p className="mt-2 text-xs text-slate-500">Completed sessions only. A session is still in progress.</p>}{!selectedDay.attendance.checkIn && !selectedDay.attendance.sessions?.length && <p className="mt-2 text-sm text-slate-500">No time entries recorded.</p>}</div>}</> : <p className="mt-3 text-sm text-slate-500">Select a date to see its details.</p>}<p className="mt-6 border-t border-slate-100 pt-4 text-xs leading-5 text-slate-500">Holidays and special days reflect the company schedule set by your administrator. Pending leave is not yet approved.</p></aside>
+      <aside className="self-start rounded-2xl border border-slate-200 bg-white p-5 shadow-sm"><div className="flex items-center gap-2 text-slate-400"><CalendarDays className="h-4 w-4" /><span className="text-[11px] font-semibold uppercase tracking-widest">Day details</span></div>{selectedDay && (!loading || data) ? <><h3 className="mt-3 text-lg font-semibold text-slate-900">{dateLabel(selectedDay.date)}</h3><div className="mt-4 flex flex-wrap gap-2">{dayTags(selectedDay).map((tag, index) => <span key={`${tag.label}-${index}`} className={`rounded-lg px-2.5 py-1.5 text-xs font-semibold ${tagStyles[tag.tone]}`}>{tag.label}</span>)}</div>{selectedDay.schedule === 'Workday' && data?.workSchedule.startTime && <p className="mt-5 text-sm text-slate-600">Scheduled start: <strong className="text-slate-900">{calendarTime(data.workSchedule.startTime)}</strong>{data.workSchedule.workStopTime && <> · End: <strong className="text-slate-900">{calendarTime(data.workSchedule.workStopTime)}</strong></>}</p>}{selectedDay.attendance && <div className="mt-5 border-t border-slate-100 pt-4"><p className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-slate-500"><Clock3 className="h-4 w-4" />Time records</p>{(selectedDay.attendance.sessions?.length ? selectedDay.attendance.sessions : selectedDay.attendance.checkIn ? [{ ...selectedDay.attendance, checkIn: selectedDay.attendance.checkIn }] : []).map((session, index) => <div key={index} className="mt-2 rounded-lg bg-slate-50 p-3"><p className="text-sm text-slate-700">Session {index + 1}: {calendarTime(session.checkIn)} – {session.checkOut ? calendarTime(session.checkOut) : 'In progress'}</p><AttendanceSourceLabels session={session} /></div>)}<div className="mt-3 flex items-center justify-between gap-3 rounded-lg border border-violet-100 bg-violet-50 px-3 py-3 text-sm"><span className="font-medium text-slate-700">Total recorded time</span><strong className="shrink-0 tabular-nums text-violet-700">{selectedDayTime.label}</strong></div>{selectedDayTime.openSessions > 0 && <p className="mt-2 text-xs text-slate-500">Completed sessions only. A session is still in progress.</p>}{!selectedDay.attendance.checkIn && !selectedDay.attendance.sessions?.length && <p className="mt-2 text-sm text-slate-500">No time entries recorded.</p>}</div>}</> : <p className="mt-3 text-sm text-slate-500">Select a date to see its details.</p>}<p className="mt-6 border-t border-slate-100 pt-4 text-xs leading-5 text-slate-500">Holidays and special days reflect the company schedule set by your administrator. Pending leave is not yet approved.</p></aside>
     </div>
   </div>
 }

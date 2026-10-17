@@ -24,6 +24,7 @@ function readableValue(field: string, value: unknown) {
       });
     }).join('\n') : String(value);
   }
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
   if (typeof value === 'boolean') return value ? 'Yes' : 'No';
   if (numericFields.has(field) && Number.isFinite(Number(value))) return Number(value);
   if (dateFields.has(field) || timestampFields.has(field)) {
@@ -117,17 +118,47 @@ export async function createReportWorkbook(name: string, inputFields: string[], 
   return workbook;
 }
 
-export async function downloadExcelReport(name: string, fields: string[], records: Record<string, unknown>[]) {
-  const workbook = await createReportWorkbook(name, fields, records);
+export async function createTableWorkbook(name: string, headers: string[], rows: (string | number | boolean | null | undefined)[][]) {
+  const numericColumn = (header: string) => /^(hours worked|hourly rate\(s\)|attendance earnings|bonus|carried balance|advance repayment|total amount|session count)$/i.test(header);
+  const records = rows.map(row => Object.fromEntries(headers.map((header, index) => {
+    let value = row[index];
+    if (value != null && value !== '') {
+      if (/^date$/i.test(header)) value = readableValue('date', value);
+      else if (/^paid at$/i.test(header)) value = readableValue('paidAt', value);
+      else if (numericColumn(header) && Number.isFinite(Number(value))) value = Number(value);
+    }
+    return [header, value];
+  })));
+  const workbook = await createReportWorkbook(name, headers, records);
+  const sheet = workbook.worksheets[0];
+  headers.forEach((header, index) => {
+    const column = sheet.getColumn(index + 1);
+    column.numFmt = numericColumn(header) ? /count/i.test(header) ? '0' : '#,##0.00' : '@';
+    if (/^paid at$/i.test(header)) sheet.getCell(1, index + 1).value = 'Paid At (PH Time)';
+  });
+  return workbook;
+}
+
+async function downloadWorkbook(workbook: Awaited<ReturnType<typeof createReportWorkbook>>, filename: string) {
   const buffer = await workbook.xlsx.writeBuffer();
   const blob = new Blob([new Uint8Array(buffer)], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
   const url = URL.createObjectURL(blob);
   const link = document.createElement('a');
   link.href = url;
-  const date = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Manila', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
-  link.download = `workpulse-${name}-${date}.xlsx`;
+  link.download = filename.replace(/[^a-zA-Z0-9._-]/g, '-');
   document.body.appendChild(link);
   link.click();
   link.remove();
   window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+export async function downloadExcelTable(filename: string, headers: string[], rows: (string | number | boolean | null | undefined)[][]) {
+  const workbook = await createTableWorkbook(filename.startsWith('payroll') ? 'payroll_requests' : 'attendance', headers, rows);
+  await downloadWorkbook(workbook, filename.replace(/\.csv$/i, '.xlsx'));
+}
+
+export async function downloadExcelReport(name: string, fields: string[], records: Record<string, unknown>[]) {
+  const workbook = await createReportWorkbook(name, fields, records);
+  const date = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Manila', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
+  await downloadWorkbook(workbook, `workpulse-${name}-${date}.xlsx`);
 }

@@ -1,3 +1,4 @@
+import { useToast } from './ui/Toast';
 import { useState } from 'react';
 import { Search, ChevronLeft, ChevronRight } from 'lucide-react';
 import { quarterForDate, quarterLabel } from '../../shared/quarterly-additions.js';
@@ -41,6 +42,7 @@ function allowanceExplanation(entry: Entry) {
 }
 
 export function QuarterlyAdditionsDialog({ period, onClose, onChanged }: { period: string; onClose: () => void; onChanged: () => Promise<void> }) {
+  const { toast } = useToast();
   const [year, setYear] = useState(period.slice(0, 4));
   const [quarterNumber, setQuarterNumber] = useState(quarterForDate(period).slice(-1));
   const [entries, setEntries] = useState<Entry[] | null>(null);
@@ -77,22 +79,29 @@ export function QuarterlyAdditionsDialog({ period, onClose, onChanged }: { perio
     try {
       const data = await request('preview', { periodStart: period, quarter });
       setEntries(data.entries); setPage(1);
-    } catch (reason) { setError(reason instanceof Error ? reason.message : 'Unable to load the preview.'); }
+    } catch (reason) { const message = reason instanceof Error ? reason.message : 'Unable to load the preview.'; setError(message); toast({ title: 'Allowance preview unavailable', description: message, variant: 'error' }); }
     finally { setBusy(false); }
   }
 
   async function update(action: 'include' | 'remove', requestId?: string) {
     setBusy(true); setError(''); setMessage('');
+    let saved = false;
     try {
       const selections = eligible.filter(entry => selected.includes(entry.requestId!)).map(entry => ({ requestId: entry.requestId, token: entry.token }));
       const data = await request(action, { periodStart: period, quarter, selections, requestId });
-      setMessage(action === 'remove' ? 'Allowance removed from this unpaid payroll.' : `Added to payroll for ${data.included} employee(s). They have not been marked as paid.`);
-      if (data.results?.some((item: { included: boolean }) => !item.included)) setError('Some allowances could not be added because payroll changed. Check the updated employee list below.');
+      saved = true;
+      const message = action === 'remove' ? 'Allowance removed from this unpaid payroll.' : `Added to payroll for ${data.included} employee(s). They have not been marked as paid.`;
+      const partial = data.results?.some((item: { included: boolean }) => !item.included);
+      setMessage(message);
+      if (partial) setError('Some allowances could not be added because payroll changed. Check the updated employee list below.');
+      toast({ title: partial ? 'Some allowances need review' : action === 'remove' ? 'Allowance removed' : 'Allowances added', description: message, variant: partial ? 'info' : 'success' });
       await onChanged();
       const updated = await request('preview', { periodStart: period, quarter });
       setEntries(updated.entries); setSelected([]); setPage(1);
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : 'Unable to update additions.');
+      const message = reason instanceof Error ? reason.message : 'Unable to update additions.';
+      setError(message);
+      toast({ title: saved ? 'Allowances saved; refresh needed' : 'Allowances not updated', description: message, variant: saved ? 'info' : 'error' });
       setEntries(null); setSelected([]);
       await onChanged().catch(() => undefined);
     } finally { setBusy(false); }

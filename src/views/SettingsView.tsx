@@ -1,8 +1,9 @@
+import { readPageCache, writePageCache, pageCacheGeneration } from "../lib/pageCache";
 import { BoundedNumberInput } from "../components/ui/BoundedNumberInput";
 import { HOURLY_RATE_MAX, settingsNumbersValidationError } from "../../shared/field-limits.js";
 import { workHourOrderError } from "../../shared/work-hours.js";
 import { AdminPageHeader } from "../components/AdminPageHeader";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Settings, CalendarDays, ChevronLeft, ChevronRight, Clock, Eye, EyeOff, KeyRound, Save, WalletCards } from "lucide-react";
 
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../components/ui/Card";
@@ -48,8 +49,12 @@ const defaults: Settings = {
 
 export function SettingsView() {
   const { toast } = useToast();
-  const [settings, setSettings] = useState<Settings>(defaults);
+  const [settings, setLoadedSettings] = useState<Settings>(() => readPageCache<Settings>("settings") ?? defaults);
+  const editRevision = useRef(0);
+  const setSettings: typeof setLoadedSettings = (value) => { editRevision.current++; setLoadedSettings(value); };
   const [saving, setSaving] = useState(false);
+  const [loadingSettings, setLoadingSettings] = useState(true);
+  const [loadError, setLoadError] = useState("");
   const passwordRetrySeconds = useAdminPasswordRetry();
   const [scheduleMonth, setScheduleMonth] = useState(() => { const now = new Date(); return new Date(now.getFullYear(), now.getMonth(), 1); });
   const [scheduleMode, setScheduleMode] = useState<"holiday" | "rest-day" | "workday">("holiday");
@@ -61,13 +66,18 @@ export function SettingsView() {
   const specialScheduleActive = settings.shift.scheduleOverrides.some((entry) => entry.date >= today);
 
   useEffect(() => {
+    const generation = pageCacheGeneration();
+    let active = true;
+    const revision = editRevision.current;
     apiFetch("/api/settings")
       .then((response) => response.ok ? response.json() : Promise.reject())
-      .then((data) => setSettings({
+      .then((data) => { if (!active || editRevision.current !== revision) return; const loaded: Settings = {
         shift: { ...defaults.shift, ...(data.shift ?? {}) },
         payroll: { hourlyRates: { regular: data.payroll?.hourlyRates?.regular ?? defaults.payroll.hourlyRates.regular, extra: data.payroll?.hourlyRates?.extra ?? defaults.payroll.hourlyRates.extra, manager: data.payroll?.hourlyRates?.manager ?? data.payroll?.hourlyRates?.supervisor ?? defaults.payroll.hourlyRates.manager }, cashAdvanceMax: data.payroll?.cashAdvanceMax ?? defaults.payroll.cashAdvanceMax },
-      }))
-      .catch(() => undefined);
+      }; writePageCache("settings", loaded, generation); setLoadedSettings(loaded); })
+      .catch(() => { if (active) setLoadError("Company settings could not load. Reopen this page before saving changes."); })
+      .finally(() => { if (active) setLoadingSettings(false); });
+    return () => { active = false; };
   }, []);
 
   const setShift = (value: Partial<Settings["shift"]>) => {
@@ -75,6 +85,7 @@ export function SettingsView() {
   };
 
   const save = async () => {
+    if (loadingSettings || loadError) { toast({ title: "Settings unavailable", description: loadError || "Wait for the company settings to finish loading.", variant: "error" }); return; }
     if (!adminPassword || passwordRetrySeconds > 0) return;
     if (Object.values(settings.payroll.hourlyRates).some(rate => rate === "")) {
       toast({ title: "Complete the number fields", description: "Enter the hourly-rate values before saving.", variant: "error" });
@@ -88,6 +99,7 @@ export function SettingsView() {
     if (numberError) { toast({ title: "Check the number fields", description: numberError, variant: "error" }); return; }
     const timeError = workHourOrderError(settings.shift.startTime, settings.shift.workStopTime, settings.shift.autoClockOutTime);
     if (timeError) { toast({ title: "Check the work times", description: timeError, variant: "error" }); return; }
+    const generation = pageCacheGeneration();
     setSaving(true);
     try {
       const response = await apiFetch("/api/settings", {
@@ -97,10 +109,13 @@ export function SettingsView() {
       });
       const saved = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(saved.error || "The server could not save your settings.");
-      setSettings({
+      const loaded: Settings = {
         shift: { ...defaults.shift, ...(saved.shift ?? {}) },
         payroll: { hourlyRates: { ...defaults.payroll.hourlyRates, ...(saved.payroll?.hourlyRates ?? {}) }, cashAdvanceMax: saved.payroll?.cashAdvanceMax ?? defaults.payroll.cashAdvanceMax },
-      });
+      };
+      editRevision.current++;
+      writePageCache("settings", loaded, generation);
+      setLoadedSettings(loaded);
       setAdminPassword("");
       setPasswordDialogOpen(false);
       toast({ title: "Settings saved", description: saved.clearedIdleDays?.length ? `${saved.clearedIdleDays.length} idle ${saved.clearedIdleDays.length === 1 ? 'day was' : 'days were'} removed because the dates are now holidays or rest days.` : "The company rules are now up to date.", variant: "success" });
@@ -113,7 +128,10 @@ export function SettingsView() {
 
   return (
     <div className="space-y-6">
+      {loadError && <p role="alert" className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">{loadError}</p>}
       <AdminPageHeader title="System Settings" description="Set attendance schedules and hourly pay rates. Save when finished." icon={Settings} />
+      {loadingSettings && <p role="status" className="text-sm text-slate-500">Loading company settings...</p>}
+      <fieldset disabled={loadingSettings || saving || Boolean(loadError)} aria-label="Company settings" className="min-w-0 space-y-6">
 
       <div className="grid grid-cols-1 items-start gap-6 xl:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)]">
         <div className="min-w-0 space-y-6">
@@ -241,9 +259,10 @@ export function SettingsView() {
       <div className="flex flex-col-reverse gap-3 rounded-2xl border border-slate-200 bg-white p-4 sm:flex-row sm:items-center sm:justify-between">
         <p className="text-xs text-slate-500">Changes only take effect after you select Save Settings.</p>
         <div className="flex gap-3">
-          <Button onClick={() => setPasswordDialogOpen(true)} disabled={saving}><Save className="h-4 w-4" />Save Settings</Button>
+          <Button onClick={() => setPasswordDialogOpen(true)} disabled={saving || loadingSettings || Boolean(loadError)}><Save className="h-4 w-4" />Save Settings</Button>
         </div>
       </div>
+      </fieldset>
       <Dialog open={passwordDialogOpen} onClose={() => !saving && setPasswordDialogOpen(false)}>
         <DialogHeader><div><div className="mb-3 grid h-10 w-10 place-items-center rounded-xl bg-violet-100 text-violet-700"><KeyRound className="h-5 w-5" /></div><h3 className="text-lg font-bold text-slate-950">Confirm settings changes</h3><p className="mt-1 text-sm text-slate-500">Enter your administrator password before applying company rules and hourly rates.</p></div><DialogClose onClose={() => !saving && setPasswordDialogOpen(false)} /></DialogHeader>
         <form onSubmit={(event) => { event.preventDefault(); void save(); }} className="space-y-4 px-6 pb-6 pt-3">

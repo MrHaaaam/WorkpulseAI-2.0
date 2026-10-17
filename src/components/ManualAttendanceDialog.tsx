@@ -100,7 +100,7 @@ export function ManualAttendanceDialog({ onClose, onSaved }: { onClose: () => vo
         return;
       }
       onClose();
-    } catch (reason) { setError(reason instanceof Error ? reason.message : "Unable to record attendance."); }
+    } catch (reason) { const message = reason instanceof Error ? reason.message : "Unable to record attendance."; setError(message); toast({ title: "Attendance not recorded", description: message, variant: "error" }); }
     finally { setSaving(false); }
   }
 

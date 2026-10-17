@@ -3,6 +3,7 @@ import dotenv from 'dotenv';
 import express from 'express';
 import mongoose from 'mongoose';
 import crypto from 'node:crypto';
+import { healthHandler } from './health.js';
 import { fileURLToPath } from 'node:url';
 import { validText } from '../../shared/input-format.js';
 import apiRouter, { enforceAutomaticAbsences, enforceAutomaticClockOut, getSettings } from './routes/api.js';
@@ -74,12 +75,7 @@ app.use((req, res, next) => {
 });
 app.use('/api/auth', authRouter);
 
-app.get('/api/health', (_request, response) => {
-  response.json({
-    ok: true,
-    database: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected',
-  });
-});
+app.get('/api/health', healthHandler(mongoose.connection));
 
 app.use('/api', apiRouter);
 

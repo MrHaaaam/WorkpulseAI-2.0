@@ -41,7 +41,7 @@ export function Input({ className, ...props }: React.InputHTMLAttributes<HTMLInp
   return counter ? <div className="relative min-w-0 flex-1">{field}<span className="pointer-events-none absolute bottom-1 right-3 text-[10px] font-normal text-slate-500" aria-label={`${String(props.value ?? props.defaultValue ?? '').length} of ${limit} characters`}>{String(props.value ?? props.defaultValue ?? '').length}/{limit}</span></div> : field;
 }
 
-export function Textarea({ onChange, maxLength: _maxLength, className, ...props }: React.TextareaHTMLAttributes<HTMLTextAreaElement>) {
+export function Textarea({ onChange, className, ...props }: React.TextareaHTMLAttributes<HTMLTextAreaElement>) {
   return <div className="relative min-w-0"><textarea {...props} className={cn(className, "pb-6")} maxLength={500} onChange={event => {
     event.target.value = textInput(event.target.value, 500, true);
     onChange?.(event);

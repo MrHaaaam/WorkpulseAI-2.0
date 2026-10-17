@@ -69,7 +69,7 @@ export default function LoginSplitPage() {
     }
   }, [toast])
 
-  useEffect(() => { const timer = window.setTimeout(() => { void loadCaptcha(false) }, 0); return () => window.clearTimeout(timer) }, [loadCaptcha])
+  useEffect(() => { const timer = window.setTimeout(() => { void loadCaptcha() }, 0); return () => window.clearTimeout(timer) }, [loadCaptcha])
   useEffect(() => { if (verificationId) otpRef.current?.focus() }, [verificationId])
 
   async function submitLogin() {
@@ -98,8 +98,9 @@ export default function LoginSplitPage() {
       setRetrySeconds(0)
       if (data.authenticated) {
         storeSession(data)
+        const destination = window.location.pathname === '/kiosk' ? '/kiosk' : '/overview?view=overview'
         window.history.replaceState(null, '', '/')
-        window.location.assign('/overview?view=overview')
+        window.location.assign(destination)
         return
       }
       setVerificationId(data.verificationId)
@@ -116,11 +117,13 @@ export default function LoginSplitPage() {
       toast({ title: 'Enter the complete code', description: 'The verification code contains 6 digits.', variant: 'error' })
       return
     }
+    let signedIn = false
     setLoading(true)
     try {
       const response = await apiFetch(`${API_URL}/verify-otp`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ verificationId, otp }) })
       const data = await response.json()
       if (!response.ok) throw new Error(data.error || 'OTP verification failed')
+      signedIn = true
       storeSession(data)
       toast({ title: 'Welcome back', description: 'Your identity was verified successfully.', variant: 'success', duration: 1800 })
       const destination = window.location.pathname === '/kiosk' ? '/kiosk' : '/overview?view=overview'
@@ -131,7 +134,7 @@ export default function LoginSplitPage() {
       }, 450)
     } catch (reason) {
       toast({ title: 'Verification failed', description: reason instanceof Error ? reason.message : 'Please try again.', variant: 'error' })
-    } finally { setLoading(false) }
+    } finally { if (!signedIn) setLoading(false) }
   }
 
   async function requestPasswordReset() {
@@ -164,6 +167,7 @@ export default function LoginSplitPage() {
       if (!response.ok) throw new Error(data.error || 'Unable to verify the reset code')
       setRecoveryToken(data.resetToken)
       setRecoveryStep('password')
+      toast({ title: 'Reset code verified', description: 'You can now set your new password.', variant: 'success' })
     } catch (reason) {
       toast({ title: 'Code not accepted', description: reason instanceof Error ? reason.message : 'Please try again.', variant: 'error' })
     } finally { setLoading(false) }

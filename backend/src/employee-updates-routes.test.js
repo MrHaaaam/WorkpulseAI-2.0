@@ -11,7 +11,7 @@ test('correction preview returns the leave restriction even when no attendance s
   const original = mongoose.connection.db;
   const handlers = new Map();
   const previewRouter = Object.fromEntries(['get', 'post', 'patch'].map(method => [method, (path, ...stack) => handlers.set(`${method}:${path}`, stack.at(-1))]));
-  registerEmployeeUpdates(previewRouter, { getSettings: async () => ({}), enforceAutomaticClockOut: async () => {} });
+  registerEmployeeUpdates(previewRouter, { getSettings: async () => ({ shift: { startTime: "06:00", autoClockOutTime: "21:00" } }), enforceAutomaticClockOut: async () => {} });
   mongoose.connection.db = { collection(name) { return {
     findOne: async () => name === 'employees' ? { id: 'E1', name: 'Alex', status: 'active' } : null,
     find: filter => ({ toArray: async () => {
@@ -41,7 +41,7 @@ test('direct attendance correction requires administrator password even when han
 });
 
 test('offline attendance sync also requires administrator role and a fresh password', async () => {
-  const operation = { id: 'offline-attendance-00001', kind: 'attendance', payload: {} };
+  const operation = { id: 'offline-attendance-00001', kind: 'attendance', payload: { captureOnly: true } };
   const denied = response();
   await route('/offline/sync', 'post').at(-1).handle({ ...request('regular'), body: { operation } }, denied);
   assert.equal(denied.code, 403);

@@ -4,6 +4,9 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
+    "test": "node --experimental-strip-types --test backend/src/*.test.js shared/*.test.js scripts/*.test.cjs scripts/page-cache.test.mjs",
+    "test:api": "node --test backend/src/all-api-routes.test.js",
+    "test:browser": "node scripts/browser-feature-smoke.mjs",
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "eslint .",

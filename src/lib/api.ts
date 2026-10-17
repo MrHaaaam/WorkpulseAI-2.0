@@ -1,3 +1,4 @@
+import { clearPageCache } from './pageCache';
 import { cacheRead, cachedRead, clearOfflineReads, connectionChanged, offlineChanged, offlineOperation, offlineOwner, queueOffline, isOffline } from './offline';
 type SessionData = { authenticated?: boolean; token?: string; csrfToken?: string; role?: string; accountType?: string; mustChangePassword?: boolean; expiresAt?: string; offlineOwner?: string }
 
@@ -99,6 +100,7 @@ export function restoreSession() {
 }
 
 export function storeSession(data: { token?: string; csrfToken?: string; role?: string; expiresAt?: string; offlineOwner?: string; mustChangePassword?: boolean }) {
+  if (data.offlineOwner && data.offlineOwner !== offlineOwner()) clearPageCache();
   if (data.offlineOwner) sessionStorage.setItem('workpulse_offline_owner', data.offlineOwner);
   if (typeof data.mustChangePassword === 'boolean') sessionStorage.setItem('workpulse_must_change_password', String(data.mustChangePassword));
   if (data.token) sessionStorage.setItem('workpulse_token', data.token)
@@ -110,6 +112,7 @@ export function storeSession(data: { token?: string; csrfToken?: string; role?: 
 }
 
 export function clearSession() {
+  clearPageCache();
   const owner = offlineOwner();
   if (owner) void clearOfflineReads(owner).catch(() => {});
   sessionStorage.removeItem('workpulse_offline_owner');

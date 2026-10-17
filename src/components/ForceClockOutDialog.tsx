@@ -57,7 +57,7 @@ export function ForceClockOutDialog({ onClose }: { onClose: () => void }) {
       await refresh();
     } catch (reason) {
       setSelection(null);
-      setError(reason instanceof Error ? reason.message : 'Unable to clock out. Refresh before retrying.');
+      const message = reason instanceof Error ? reason.message : "Unable to clock out. Refresh before retrying."; setError(message); toast({ title: "Clock out failed", description: message, variant: "error" });
     } finally { setBusy(false); }
   }
 

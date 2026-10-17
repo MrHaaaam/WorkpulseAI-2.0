@@ -1,3 +1,4 @@
+import { useCachedState } from "../hooks/useCachedState";
 import { employeeRoleLabel } from '../../shared/employee-roles.js';
 import { Input } from "../components/ui/Input";
 import { AdminPageHeader } from "../components/AdminPageHeader";
@@ -93,9 +94,10 @@ export function LeaveRequestsView({
   onReject,
 }: LeaveRequestsViewProps) {
   const { toast } = useToast();
+  const [loadError, setLoadError] = useState("");
   const [searchTerm, setSearchTerm] = useState("");
   const [filterStatus, setFilterStatus] = useState<"all" | "pending" | "approved" | "rejected" | "passed">("all");
-  const [localRequests, setLocalRequests] = useState(requests);
+  const [localRequests, setLocalRequests] = useCachedState("leave", requests);
   const [reviewTarget, setReviewTarget] = useState<LeaveRequest | null>(null);
   const [undoTarget, setUndoTarget] = useState<LeaveRequest | null>(null);
   const [undoing, setUndoing] = useState(false);
@@ -114,10 +116,10 @@ export function LeaveRequestsView({
   const [bulkFailures, setBulkFailures] = useState<{ id: string; error: string }[]>([]);
   useEffect(() => {
     let active = true;
-    const load = () => { if (document.visibilityState === 'hidden') return; void apiFetch('/api/leave-requests').then(response => response.ok ? response.json() : Promise.reject()).then(data => { if (active) setLocalRequests(data); }).catch(() => {}); };
+    const load = () => { if (document.visibilityState === 'hidden') return; void apiFetch('/api/leave-requests').then(response => response.ok ? response.json() : Promise.reject()).then(data => { if (active) { setLocalRequests(data); setLoadError(''); } }).catch(() => { if (active) setLoadError('Leave requests could not refresh. Any saved requests remain displayed. Try reopening this page.'); }); };
     load(); const timer = window.setInterval(load, 60_000); window.addEventListener('focus', load);
     return () => { active = false; window.clearInterval(timer); window.removeEventListener('focus', load); };
-  }, []);
+  }, [setLocalRequests]);
 
   function openApproval(request: LeaveRequest) {
     setReviewTarget(request); setApprovalPreview(null); setPreviewLoading(true); setPreviewError("");
@@ -221,6 +223,7 @@ export function LeaveRequestsView({
 
   return (
     <div className="leave-page mx-auto w-full max-w-7xl space-y-6">
+      {loadError && <p role="alert" className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">{loadError}</p>}
       <AdminPageHeader title="Leave Requests" description="Review leave dates and reasons. Pending requests appear first." icon={Calendar} />
 
       {/* Modern Stats Bar */}

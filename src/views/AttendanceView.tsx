@@ -1,3 +1,6 @@
+import { readPageCache } from "../lib/pageCache";
+import { useCachedState } from "../hooks/useCachedState";
+import { useToast } from "../components/ui/Toast";
 import { employeeRoleLabel } from '../../shared/employee-roles.js';
 import { AdminPageHeader } from "../components/AdminPageHeader";
 import { useEffect, useMemo, useState } from "react";
@@ -10,7 +13,7 @@ import { apiFetch } from "../lib/api";
 import { DateNavigator } from "../components/DateNavigator";
 import { PaginationControls } from "../components/ui/Pagination";
 import { usePagination } from "../hooks/usePagination";
-import { downloadCsv } from "../lib/exportCsv";
+import { downloadExcelTable } from "../lib/exportExcel";
 import { Input } from "../components/ui/Input";
 import { ManualAttendanceDialog } from "../components/ManualAttendanceDialog";
 import { IdleDayDialog } from "../components/IdleDayDialog";
@@ -62,10 +65,10 @@ export function AttendanceView(props: {
   records: AttendanceRecord[];
 }) {
   const { records } = props;
+  const { toast } = useToast();
 
   // Keep UI stable even when no backend wired yet.
   const [loading, setLoading] = useState(false);
-  const [localRecords, setLocalRecords] = useState<AttendanceRecord[]>(records);
   const [error, setError] = useState<string | null>(null);
   const [selectedDate, setSelectedDate] = useState(workforceDateToday);
   const [rangeMode, setRangeMode] = useState<"day" | "current" | "previous" | "custom">("day");
@@ -93,6 +96,7 @@ export function AttendanceView(props: {
     const end = new Date(today); end.setUTCDate(today.getUTCDate()<=15?0:15); const start = new Date(end); start.setUTCDate(end.getUTCDate()<=15?1:16);
     return { from: start.toISOString().slice(0,10), to: end.toISOString().slice(0,10) };
   }, [customFrom, customTo, rangeMode, selectedDate]);
+  const [localRecords, setLocalRecords] = useCachedState<AttendanceRecord[]>(`attendance:${range.from}:${range.to}`, records);
   const loadedRecords = records.length ? records : localRecords;
   const filteredRecords = useMemo(() => {
     const query = search.trim().toLowerCase();
@@ -104,10 +108,14 @@ export function AttendanceView(props: {
     if (records.length) return;
 
     let mounted = true;
+    let fetching = false;
+    let hasRecords = readPageCache(`attendance:${range.from}:${range.to}`) !== undefined;
     const fetchAttendance = async () => {
+      if (fetching || document.hidden) return;
+      fetching = true;
       try {
         setError(null);
-        setLoading(true);
+        if (!hasRecords) setLoading(true);
 
         // Placeholder endpoint; update when your backend is ready.
         if (range.from > range.to) throw new Error("The start date must be before the end date.");
@@ -115,19 +123,27 @@ export function AttendanceView(props: {
         if (!res.ok) throw new Error(`Failed to load attendance (${res.status})`);
 
         const data = (await res.json()) as AttendanceRecord[];
-        if (mounted) setLocalRecords(data);
+        if (mounted) { setLocalRecords(data); hasRecords = true; }
       } catch (reason: unknown) {
         if (mounted) setError(reason instanceof Error ? reason.message : "Failed to load attendance");
       } finally {
+        fetching = false;
         if (mounted) setLoading(false);
       }
     };
 
-    fetchAttendance();
+    void fetchAttendance();
+    const timer = window.setInterval(() => void fetchAttendance(), 30_000);
+    const refresh = () => { void fetchAttendance(); };
+    window.addEventListener("focus", refresh);
+    document.addEventListener("visibilitychange", refresh);
     return () => {
+      window.clearInterval(timer);
+      window.removeEventListener("focus", refresh);
+      document.removeEventListener("visibilitychange", refresh);
       mounted = false;
     };
-  }, [range.from, range.to, records.length, refreshKey]);
+  }, [range.from, range.to, records.length, refreshKey, setLocalRecords]);
   useEffect(() => {
     let active = true;
     apiFetch(`/api/attendance/idle-days?from=${idleWindow.from}&to=${idleWindow.to}`)
@@ -144,8 +160,11 @@ export function AttendanceView(props: {
       const sessions = attendanceSessions(record).slice(0, 3);
       return [record.employeeId, record.name, employeeRoleLabel(record.role), record.date, record.status, sessions.length, ...Array.from({ length: 3 }, (_, index) => [sessions[index]?.checkIn, sessions[index]?.checkOut]).flat()];
     });
-    void apiFetch("/api/attendance/audit-export", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ format: "csv", from: range.from, to: range.to, recordCount: rows.length }) }).catch(() => undefined);
-    downloadCsv(`attendance-${range.from}-to-${range.to}.csv`, headers, rows);
+    try {
+    await downloadExcelTable(`attendance-${range.from}-to-${range.to}.xlsx`, headers, rows);
+    void apiFetch("/api/attendance/audit-export", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ format: "xlsx", from: range.from, to: range.to, recordCount: rows.length }) }).catch(() => undefined);
+    toast({ title: "Attendance exported", description: "Formatted Excel workbook downloaded.", variant: "success" });
+    } catch (reason) { toast({ title: "Export failed", description: reason instanceof Error ? reason.message : "Unable to export attendance.", variant: "error" }); }
   };
 
   const statusBadge = (status: AttendanceRecord["status"]) => {
@@ -177,7 +196,7 @@ export function AttendanceView(props: {
 
   return (
     <div className="space-y-6">
-      <AdminPageHeader title="Attendance" description="Review daily attendance and up to three sessions per employee." icon={Clock} actions={<>{rangeMode === "day" && <DateNavigator label="Workforce date" value={selectedDate} onChange={setSelectedDate} />}{props.role === "admin" && <button type="button" aria-label="Record attendance" onClick={() => setManualOpen(true)} className="inline-flex h-10 items-center gap-2 rounded-lg bg-violet-600 px-4 text-sm font-semibold text-white shadow-sm hover:bg-violet-700"><ShieldCheck className="h-4 w-4" /><span className="header-button-label">Record attendance</span></button>}{props.role === "admin" && <button type="button" aria-label="Idle day" onClick={() => setIdleOpen(true)} className="inline-flex h-10 items-center gap-2 rounded-lg border border-violet-200 bg-white px-4 text-sm font-semibold text-violet-700 shadow-sm hover:bg-violet-50"><CalendarOff className="h-4 w-4" /><span className="header-button-label">Idle day</span></button>}<button type="button" aria-label="Export CSV" disabled={loading || filteredRecords.length === 0} onClick={() => void exportAttendance()} className="inline-flex h-10 items-center gap-2 rounded-lg border border-violet-200 bg-white px-4 text-sm font-semibold text-violet-700 shadow-sm hover:bg-violet-50 disabled:cursor-not-allowed disabled:opacity-50"><Download className="h-4 w-4" /><span className="header-button-label">Export CSV</span></button></>} />
+      <AdminPageHeader title="Attendance" description="Review daily attendance and up to three sessions per employee." icon={Clock} actions={<>{rangeMode === "day" && <DateNavigator label="Workforce date" value={selectedDate} onChange={setSelectedDate} />}{props.role === "admin" && <button type="button" aria-label="Record attendance" onClick={() => setManualOpen(true)} className="inline-flex h-10 items-center gap-2 rounded-lg bg-violet-600 px-4 text-sm font-semibold text-white shadow-sm hover:bg-violet-700"><ShieldCheck className="h-4 w-4" /><span className="header-button-label">Record attendance</span></button>}{props.role === "admin" && <button type="button" aria-label="Idle day" onClick={() => setIdleOpen(true)} className="inline-flex h-10 items-center gap-2 rounded-lg border border-violet-200 bg-white px-4 text-sm font-semibold text-violet-700 shadow-sm hover:bg-violet-50"><CalendarOff className="h-4 w-4" /><span className="header-button-label">Idle day</span></button>}<button type="button" aria-label="Export Excel" disabled={loading || filteredRecords.length === 0} onClick={() => void exportAttendance()} className="inline-flex h-10 items-center gap-2 rounded-lg border border-violet-200 bg-white px-4 text-sm font-semibold text-violet-700 shadow-sm hover:bg-violet-50 disabled:cursor-not-allowed disabled:opacity-50"><Download className="h-4 w-4" /><span className="header-button-label">Export Excel</span></button></>} />
       {manualOpen && <ManualAttendanceDialog onClose={() => setManualOpen(false)} onSaved={() => setRefreshKey(key => key + 1)} />}
       {idleOpen && <IdleDayDialog onClose={() => setIdleOpen(false)} onSaved={() => setRefreshKey(key => key + 1)} />}
       {props.role === "admin" && <button type="button" onClick={() => setCorrection({ date: selectedDate })} className="inline-flex items-center gap-2 rounded-lg border border-violet-200 bg-white px-4 py-2 text-sm font-semibold text-violet-700 hover:bg-violet-50"><Pencil className="h-4 w-4" />Edit attendance</button>}

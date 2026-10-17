@@ -1,3 +1,4 @@
+import { useToast } from '../components/ui/Toast'
 import { useState } from 'react'
 import { WalletCards } from 'lucide-react'
 import { Button } from '../components/ui/Button'
@@ -23,6 +24,7 @@ function periodOptions() {
 }
 
 export function CashAdvancesDialog({ employees, onClose, onSaved }: { employees: Employee[]; onClose: () => void; onSaved: () => Promise<void> }) {
+  const { toast } = useToast()
   const [employeeId, setEmployeeId] = useState('')
   const [amount, setAmount] = useState('')
   const [date, setDate] = useState(today)
@@ -41,8 +43,9 @@ export function CashAdvancesDialog({ employees, onClose, onSaved }: { employees:
       const response = await apiFetch('/api/cash-advances', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ employeeId, amount: Number(amount), date, startPeriod, note, password, employeeRepaymentAgreementConfirmed: agreementConfirmed }) })
       const data = await response.json().catch(() => ({}))
       if (!response.ok) throw new Error(data.error || 'Unable to record cash given.')
+      toast({ title: 'Cash given recorded', description: 'The cash advance and repayment schedule were saved.', variant: 'success' });
       await onSaved(); onClose()
-    } catch (cause) { setError(cause instanceof Error ? cause.message : 'Unable to record cash given.') }
+    } catch (cause) { const message = cause instanceof Error ? cause.message : 'Unable to record cash given.'; setError(message); toast({ title: 'Cash given not recorded', description: message, variant: 'error' }) }
     finally { setSaving(false) }
   }
   return <Dialog open className="max-w-xl" onClose={() => !saving && onClose()}>
