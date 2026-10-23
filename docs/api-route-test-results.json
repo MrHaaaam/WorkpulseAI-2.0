@@ -1,6 +1,6 @@
 {
-  "generatedAt": "2026-10-23T00:34:53.504Z",
-  "routeCount": 96,
+  "generatedAt": "2026-10-23T00:55:52.010Z",
+  "routeCount": 97,
   "scope": "Actual Express HTTP handlers; controlled in-memory records and mocked email. Physical scanner matching is external.",
   "routes": [
     {
@@ -258,9 +258,60 @@
           "status": 403
         },
         {
+          "scenario": "archive deletion preserves source records and scopes employee and admin views",
+          "role": "regular",
+          "status": 200
+        },
+        {
+          "scenario": "archive deletion preserves source records and scopes employee and admin views",
+          "role": "admin",
+          "status": 200
+        },
+        {
           "scenario": "all read endpoints return valid responses",
           "role": "admin",
           "status": 200
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/api/record-archives/:kind/delete",
+      "observations": [
+        {
+          "scenario": "every protected API rejects anonymous requests",
+          "role": "anonymous",
+          "status": 401
+        },
+        {
+          "scenario": "every protected write requires cookie CSRF protection",
+          "role": "admin",
+          "status": 403
+        },
+        {
+          "scenario": "archive deletion preserves source records and scopes employee and admin views",
+          "role": "regular",
+          "status": 409
+        },
+        {
+          "scenario": "archive deletion preserves source records and scopes employee and admin views",
+          "role": "regular",
+          "status": 200
+        },
+        {
+          "scenario": "archive deletion preserves source records and scopes employee and admin views",
+          "role": "admin",
+          "status": 200
+        },
+        {
+          "scenario": "archive deletion preserves source records and scopes employee and admin views",
+          "role": "regular",
+          "status": 403
+        },
+        {
+          "scenario": "validation POST /api/record-archives/:kind/delete",
+          "role": "admin",
+          "status": 400
         }
       ]
     },

@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-22T07:11:08.330Z",
+  "generatedAt": "2026-10-23T00:58:31.595Z",
   "scope": "Real headless Edge; built React app with controlled API fixtures. No live accounts or hardware.",
   "results": [
     {
@@ -317,7 +317,7 @@
     {
       "method": "GET",
       "path": "/api/overview",
-      "query": "?performanceDate=2026-10-22&auditDate=2026-10-22"
+      "query": "?performanceDate=2026-10-23&auditDate=2026-10-23"
     },
     {
       "method": "GET",
@@ -327,12 +327,12 @@
     {
       "method": "GET",
       "path": "/api/attendance",
-      "query": "?from=2026-10-22&to=2026-10-22"
+      "query": "?from=2026-10-23&to=2026-10-23"
     },
     {
       "method": "GET",
       "path": "/api/attendance/idle-days",
-      "query": "?from=2026-10-22&to=2026-11-20"
+      "query": "?from=2026-10-23&to=2026-11-21"
     },
     {
       "method": "GET",
@@ -571,12 +571,12 @@
     },
     {
       "method": "GET",
-      "path": "/api/payroll-requests",
+      "path": "/api/payroll/employees",
       "query": ""
     },
     {
       "method": "GET",
-      "path": "/api/payroll/employees",
+      "path": "/api/payroll-requests",
       "query": ""
     },
     {
@@ -657,12 +657,12 @@
     {
       "method": "GET",
       "path": "/api/attendance",
-      "query": "?from=2026-10-22&to=2026-10-22"
+      "query": "?from=2026-10-23&to=2026-10-23"
     },
     {
       "method": "GET",
       "path": "/api/attendance/idle-days",
-      "query": "?from=2026-10-22&to=2026-11-20"
+      "query": "?from=2026-10-23&to=2026-11-21"
     },
     {
       "method": "GET",
@@ -677,12 +677,12 @@
     {
       "method": "GET",
       "path": "/api/attendance",
-      "query": "?from=2026-10-21&to=2026-10-21"
+      "query": "?from=2026-10-22&to=2026-10-22"
     },
     {
       "method": "GET",
       "path": "/api/attendance",
-      "query": "?from=2026-10-22&to=2026-10-22"
+      "query": "?from=2026-10-23&to=2026-10-23"
     },
     {
       "method": "GET",
@@ -697,7 +697,7 @@
     {
       "method": "GET",
       "path": "/api/attendance",
-      "query": "?from=2026-10-22&to=2026-10-22"
+      "query": "?from=2026-10-23&to=2026-10-23"
     },
     {
       "method": "GET",
@@ -707,7 +707,7 @@
     {
       "method": "GET",
       "path": "/api/attendance/idle-day",
-      "query": "?date=2026-10-22"
+      "query": "?date=2026-10-23"
     },
     {
       "method": "GET",
@@ -773,6 +773,26 @@
       "method": "GET",
       "path": "/api/record-archives/leave",
       "query": "?search=&status=&type=&from=&to=&page=1"
+    },
+    {
+      "method": "GET",
+      "path": "/api/record-archives/leave",
+      "query": "?search=&status=&type=&from=&to=&page=2"
+    },
+    {
+      "method": "POST",
+      "path": "/api/record-archives/leave/delete",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/record-archives/leave",
+      "query": "?search=&status=&type=&from=&to=&page=2"
+    },
+    {
+      "method": "GET",
+      "path": "/api/record-archives/leave",
+      "query": "?search=&status=&type=&from=&to=&page=2"
     },
     {
       "method": "GET",
@@ -871,6 +891,31 @@
     },
     {
       "method": "GET",
+      "path": "/api/record-archives/additions",
+      "query": "?search=&status=&type=&from=&to=&page=2"
+    },
+    {
+      "method": "POST",
+      "path": "/api/record-archives/additions/delete",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/record-archives/additions",
+      "query": "?search=&status=&type=&from=&to=&page=2"
+    },
+    {
+      "method": "GET",
+      "path": "/api/cash-advance-requests",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/cash-advances",
+      "query": ""
+    },
+    {
+      "method": "GET",
       "path": "/api/record-archives/cash",
       "query": "?search=&status=&type=&from=&to=&page=1"
     },
@@ -916,8 +961,38 @@
     },
     {
       "method": "GET",
+      "path": "/api/cash-advance-requests",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/cash-advances",
+      "query": ""
+    },
+    {
+      "method": "GET",
       "path": "/api/record-archives/cash",
-      "query": "?search=&status=&type=&from=&to=&page=1"
+      "query": "?search=&status=&type=&from=&to=&page=2"
+    },
+    {
+      "method": "POST",
+      "path": "/api/record-archives/cash/delete",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/record-archives/cash",
+      "query": "?search=&status=&type=&from=&to=&page=2"
+    },
+    {
+      "method": "GET",
+      "path": "/api/cash-advance-requests",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/cash-advances",
+      "query": ""
     },
     {
       "method": "GET",
@@ -1101,6 +1176,26 @@
     },
     {
       "method": "GET",
+      "path": "/api/record-archives/leave",
+      "query": "?search=&status=&type=&from=&to=&page=2"
+    },
+    {
+      "method": "POST",
+      "path": "/api/record-archives/leave/delete",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/record-archives/leave",
+      "query": "?search=&status=&type=&from=&to=&page=2"
+    },
+    {
+      "method": "GET",
+      "path": "/api/employee/me",
+      "query": ""
+    },
+    {
+      "method": "GET",
       "path": "/api/record-archives/payroll",
       "query": "?search=&status=&type=&from=&to=&page=1"
     },
@@ -1151,6 +1246,26 @@
     },
     {
       "method": "GET",
+      "path": "/api/record-archives/payroll",
+      "query": "?search=&status=&type=&from=&to=&page=2"
+    },
+    {
+      "method": "POST",
+      "path": "/api/record-archives/payroll/delete",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/record-archives/payroll",
+      "query": "?search=&status=&type=&from=&to=&page=2"
+    },
+    {
+      "method": "GET",
+      "path": "/api/employee/me",
+      "query": ""
+    },
+    {
+      "method": "GET",
       "path": "/api/record-archives/cash",
       "query": "?search=&status=&type=&from=&to=&page=1"
     },
@@ -1193,6 +1308,26 @@
       "method": "GET",
       "path": "/api/record-archives/cash",
       "query": "?search=&status=&type=&from=&to=&page=1"
+    },
+    {
+      "method": "GET",
+      "path": "/api/employee/me",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/record-archives/cash",
+      "query": "?search=&status=&type=&from=&to=&page=2"
+    },
+    {
+      "method": "POST",
+      "path": "/api/record-archives/cash/delete",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/record-archives/cash",
+      "query": "?search=&status=&type=&from=&to=&page=2"
     },
     {
       "method": "GET",
@@ -1292,7 +1427,7 @@
     {
       "method": "GET",
       "path": "/api/overview",
-      "query": "?performanceDate=2026-10-22&auditDate=2026-10-22"
+      "query": "?performanceDate=2026-10-23&auditDate=2026-10-23"
     },
     {
       "method": "GET",

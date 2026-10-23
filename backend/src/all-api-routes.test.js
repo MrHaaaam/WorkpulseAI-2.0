@@ -124,6 +124,20 @@ test('every registered API: HTTP access controls, validation, and feature scenar
       await expect('GET', '/api/record-archives/cash', undefined, 200, role);
       await expect('GET', '/api/record-archives/additions', undefined, 403, role);
     });
+    await scenario('archive deletion preserves source records and scopes employee and admin views', async () => {
+      db.data.set('leave_requests', [
+        { id: 'L-OLD', employeeId: 'E1', status: 'rejected', startDate: '2020-01-01', endDate: '2020-01-01' },
+        { id: 'L-OTHER', employeeId: 'E2', status: 'rejected', startDate: '2020-01-01', endDate: '2020-01-01' },
+      ]);
+      await expect('POST', '/api/record-archives/leave/delete', { ids: ['Leave request:L-OTHER'] }, 409, 'regular');
+      const result = await expect('POST', '/api/record-archives/leave/delete', { ids: ['Leave request:L-OLD'] }, 200, 'regular');
+      assert.equal(result.deleted, 1);
+      assert.equal((await expect('GET', '/api/record-archives/leave', undefined, 200, 'regular')).totalItems, 0);
+      assert.equal((await expect('GET', '/api/record-archives/leave')).totalItems, 2);
+      assert.equal((await expect('POST', '/api/record-archives/leave/delete', { allMatching: true })).deleted, 2);
+      assert.equal(await db.collection('leave_requests').countDocuments({}), 2);
+      await expect('POST', '/api/record-archives/additions/delete', { allMatching: true }, 403, 'regular');
+    });
     await scenario('administrator cannot impersonate the employee portal', async () => {
       for (const route of inventory.filter(route => route.path.startsWith('/api/employee/me'))) assert.equal((await request(route.method, substitute(route), {})).status, 403, route.path);
     });

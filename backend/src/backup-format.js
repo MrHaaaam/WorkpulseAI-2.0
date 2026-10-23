@@ -5,7 +5,7 @@ const { EJSON } = BSON;
 export const BACKUP_COLLECTIONS = Object.freeze([
   'admin_accounts', 'employee_accounts', 'employees', 'attendance', 'employee_notifications', 'offline_operations', 'leave_requests',
   'payroll_requests', 'cash_advances', 'cash_advance_requests', 'settings',
-  'system_controls', 'idle_days', 'admin_notifications', 'audit_events',
+  'archive_deleted_records', 'system_controls', 'idle_days', 'admin_notifications', 'audit_events',
   'employee_email_verifications', 'biometric_templates',
   'biometric_verification_attempts', 'biometric_evaluation_trials',
 ]);

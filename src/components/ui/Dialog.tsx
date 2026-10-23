@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { X } from "lucide-react";
 import { cn } from "../../lib/util";
 import { useAdminPasswordRetry } from "../../lib/adminPasswordRetry";
@@ -29,8 +30,8 @@ export function Dialog({ open, onClose, children, className }: DialogProps) {
 
   if (!open) return null;
 
-  return (
-    <div className="fixed inset-0 z-50 flex items-end justify-center p-0 sm:items-center sm:p-4">
+  return createPortal(
+    <div data-dialog-layer className="fixed inset-0 z-50 flex items-end justify-center p-0 sm:items-center sm:p-4">
       <div
         ref={contentRef}
         onSubmitCapture={(event) => {
@@ -48,7 +49,8 @@ export function Dialog({ open, onClose, children, className }: DialogProps) {
         {hasPassword && retrySeconds > 0 && <p role="status" className="mx-4 mt-4 rounded-lg bg-amber-50 px-3 py-2 text-sm font-medium text-amber-800 sm:mx-6">Incorrect admin password. Try again in {retrySeconds} seconds.</p>}
         {children}
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
 

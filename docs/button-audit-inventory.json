@@ -1,6 +1,6 @@
 {
   "scope": "Current JSX control declarations, including conditional and repeated controls. This inventory is not evidence that every control was clicked.",
-  "count": 343,
+  "count": 350,
   "controls": [
     {
       "file": "src/App.tsx",
@@ -892,7 +892,7 @@
     },
     {
       "file": "src/components/RecordArchives.tsx",
-      "line": 17,
+      "line": 35,
       "tag": "Button",
       "label": "{`View ${title.toLowerCase()} archives`}",
       "handler": "{() => setOpen(true)}",
@@ -900,7 +900,7 @@
     },
     {
       "file": "src/components/RecordArchives.tsx",
-      "line": 49,
+      "line": 106,
       "tag": "Input",
       "label": "\"Archive start date\"",
       "handler": "{event => reset(setFrom)(event.target.value)}",
@@ -908,7 +908,7 @@
     },
     {
       "file": "src/components/RecordArchives.tsx",
-      "line": 50,
+      "line": 107,
       "tag": "Input",
       "label": "\"Archive end date\"",
       "handler": "{event => reset(setTo)(event.target.value)}",
@@ -916,7 +916,7 @@
     },
     {
       "file": "src/components/RecordArchives.tsx",
-      "line": 51,
+      "line": 108,
       "tag": "select",
       "label": "\"Archive record type\"",
       "handler": "{event => reset(setType)(event.target.value)}",
@@ -924,7 +924,7 @@
     },
     {
       "file": "src/components/RecordArchives.tsx",
-      "line": 52,
+      "line": 109,
       "tag": "Button",
       "label": "Clear date/type filters",
       "handler": "{() => { setFrom(''); setTo(''); setType(''); setPage(1); }}",
@@ -932,7 +932,7 @@
     },
     {
       "file": "src/components/RecordArchives.tsx",
-      "line": 53,
+      "line": 110,
       "tag": "Button",
       "label": "Refresh",
       "handler": "{() => setRevision(value => value + 1)}",
@@ -940,7 +940,47 @@
     },
     {
       "file": "src/components/RecordArchives.tsx",
-      "line": 56,
+      "line": 115,
+      "tag": "Button",
+      "label": "Select all records ( )",
+      "handler": "{() => setSelection({ key: selectionKey, all: true, ids: [] })}",
+      "disabled": "{selectionDisabled || !data?.totalItems}"
+    },
+    {
+      "file": "src/components/RecordArchives.tsx",
+      "line": 116,
+      "tag": "Button",
+      "label": "Clear selection",
+      "handler": "{() => setSelection({ key: selectionKey, all: false, ids: [] })}",
+      "disabled": "{selectionDisabled || !selectedCount}"
+    },
+    {
+      "file": "src/components/RecordArchives.tsx",
+      "line": 117,
+      "tag": "Button",
+      "label": "Delete selected ( )",
+      "handler": "{() => { setDeleteError(''); setPendingDelete({ ids: currentSelection.all ? [] : currentSelection.ids, allMatching: currentSelection.all, excludedIds: currentSelection.all ? currentSelection.ids : [], filters: { search, status: filter, type, from, to }, count: selectedCount }); }}",
+      "disabled": "{selectionDisabled || !selectedCount}"
+    },
+    {
+      "file": "src/components/RecordArchives.tsx",
+      "line": 120,
+      "tag": "Button",
+      "label": "Cancel deletion",
+      "handler": "{() => { setPendingDelete(null); setDeleteError(''); }}",
+      "disabled": "{deleting}"
+    },
+    {
+      "file": "src/components/RecordArchives.tsx",
+      "line": 120,
+      "tag": "Button",
+      "label": "(dynamic or icon control)",
+      "handler": "{() => void deleteSelected()}",
+      "disabled": "{deleting}"
+    },
+    {
+      "file": "src/components/RecordArchives.tsx",
+      "line": 122,
       "tag": "Button",
       "label": "Try again",
       "handler": "{() => setRevision(value => value + 1)}",
@@ -948,10 +988,26 @@
     },
     {
       "file": "src/components/RecordArchives.tsx",
-      "line": 57,
+      "line": 124,
+      "tag": "input",
+      "label": "\"Select archived records on this page\"",
+      "handler": "{event => toggleRows(data?.items.map(row => row.id) || [], event.target.checked)}",
+      "disabled": "{selectionDisabled}"
+    },
+    {
+      "file": "src/components/RecordArchives.tsx",
+      "line": 124,
+      "tag": "input",
+      "label": "{`Select archived record ${row.id}`}",
+      "handler": "{event => toggleRows([row.id], event.target.checked)}",
+      "disabled": "{selectionDisabled}"
+    },
+    {
+      "file": "src/components/RecordArchives.tsx",
+      "line": 124,
       "tag": "Button",
       "label": "View payslip",
-      "handler": "{() => { onClose(); onViewPayroll(row.id.slice(\"Payroll:\".length)); }}",
+      "handler": "{() => { onClose(); onViewPayroll(row.id.slice('Payroll:'.length)); }}",
       "disabled": ""
     },
     {
@@ -964,7 +1020,7 @@
     },
     {
       "file": "src/components/ui/Dialog.tsx",
-      "line": 61,
+      "line": 63,
       "tag": "button",
       "label": "\"Close dialog\"",
       "handler": "{onClose}",
