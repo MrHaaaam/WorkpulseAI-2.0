@@ -1,3 +1,4 @@
+import { RecordFilters } from "../components/ui/RecordFilters";
 import { useCachedState } from "../hooks/useCachedState";
 import { employeeRoleLabel } from '../../shared/employee-roles.js';
 import { PASSWORD_RULES, passwordValidationError } from '../../shared/password-policy.js';
@@ -45,8 +46,10 @@ export function AdminView() {
   const [archiveReferenceTime] = useState(() => Date.now());
   const [archiveRange, setArchiveRange] = useState<"30d" | "1y" | "5y" | "all">("all");
   const [employeeSearch, setEmployeeSearch] = useState("");
+  const [accessFilter, setAccessFilter] = useState("");
   const [archiveSearch, setArchiveSearch] = useState("");
-  const [deleteTarget, setDeleteTarget] = useState<(typeof archivedAccounts)[number] | null>(null);
+  const [deleteTargets, setDeleteTargets] = useState<typeof archivedAccounts>([]);
+  const [selectedArchiveIds, setSelectedArchiveIds] = useState<string[]>([]);
   const [deletePassword, setDeletePassword] = useState("");
   const [deleteError, setDeleteError] = useState("");
   const [deleting, setDeleting] = useState(false);
@@ -69,8 +72,8 @@ export function AdminView() {
 
   const filteredEmployees = useMemo(() => {
     const query = employeeSearch.trim().toLowerCase();
-    return query ? localEmployees.filter((employee) => `${employee.name} ${employee.id} ${employeeRoleLabel(employee.role)}`.toLowerCase().includes(query)) : localEmployees;
-  }, [employeeSearch, localEmployees]);
+    return localEmployees.filter(employee => `${employee.name} ${employee.id} ${employeeRoleLabel(employee.role)}`.toLowerCase().includes(query) && (!accessFilter || (employee.banned ? "Blocked" : "Active") === accessFilter));
+  }, [employeeSearch, localEmployees, accessFilter]);
   const filteredArchivedAccounts = useMemo(() => {
     const query = archiveSearch.trim().toLowerCase();
     const matchingAccounts = query ? archivedAccounts.filter((account) => `${account.name} ${account.id} ${employeeRoleLabel(account.record.role)}`.toLowerCase().includes(query)) : archivedAccounts;
@@ -82,7 +85,7 @@ export function AdminView() {
       return Number.isFinite(archivedAt) && archivedAt >= cutoff;
     });
   }, [archiveRange, archiveReferenceTime, archivedAccounts, archiveSearch]);
-  const employeePage = usePagination(filteredEmployees, employeeSearch);
+  const employeePage = usePagination(filteredEmployees, `${employeeSearch}|${accessFilter}`);
   const archivePage = usePagination(filteredArchivedAccounts, `${archiveRange}|${archiveSearch}`);
 
   useEffect(() => {
@@ -241,6 +244,7 @@ export function AdminView() {
       if (!response.ok) throw new Error(restored.error || 'Employee account was not restored.');
       setLocalEmployees(current => [...current.filter(item => item.id !== id), restored]);
       setArchivedAccounts(current => current.filter(item => item.id !== id));
+      setSelectedArchiveIds(current => current.filter(item => item !== id));
       toast({ title: 'Account restored', description: `${account.name} returned to the employee directory.`, variant: 'success' });
     } catch (reason) { toast({ title: 'Account was not restored', description: reason instanceof Error ? reason.message : 'Please try again.', variant: 'error' }); }
     finally { setControlBusy(null); }
@@ -253,28 +257,53 @@ export function AdminView() {
     toast({ title: "Admin controls locked", description: "Protected administrative actions now require password verification again.", variant: "info" });
   }
 
+  const selectedArchives = archivedAccounts.filter(account => selectedArchiveIds.includes(account.id));
+  const archivePageIds = archivePage.pageItems.map(account => account.id);
+  const allArchivePageSelected = archivePageIds.length > 0 && archivePageIds.every(id => selectedArchiveIds.includes(id));
+  const archiveBusy = deleting || controlBusy !== null;
+
+  async function restoreSelectedAccounts() {
+    if (archiveBusy || !selectedArchives.length) return;
+    const targets = [...selectedArchives];
+    if (!await askForConfirmation({ title: `Restore ${targets.length} archived employees?`, description: `These employees will return to the directory: ${targets.map(account => `${account.name} (${account.id})`).join(', ')}.`, confirmLabel: "Restore selected" })) return;
+    setControlBusy('restore-selected');
+    const successes: string[] = [];
+    const failures: string[] = [];
+    for (const account of targets) {
+      try {
+        const response = await apiFetch(`/api/employees/${account.id}/unarchive`, { method: 'POST' });
+        const restored = await response.json().catch(() => ({}));
+        if (!response.ok) { failures.push(`${account.name}: ${restored.error || 'Restore failed'}`); if ([401, 403, 429].includes(response.status)) break; }
+        else { successes.push(account.id); setLocalEmployees(current => [...current.filter(item => item.id !== account.id), restored]); }
+      } catch { failures.push(`${account.name}: Connection interrupted. Refresh before retrying.`); break; }
+    }
+    setArchivedAccounts(current => current.filter(account => !successes.includes(account.id)));
+    setSelectedArchiveIds(current => current.filter(id => !successes.includes(id)));
+    if (successes.length) toast({ title: "Employees restored", description: `${successes.length} employee accounts returned to the directory.`, variant: "success" });
+    if (failures.length) toast({ title: "Some employees were not restored", description: failures.join(' '), variant: "error" });
+    setControlBusy(null);
+  }
+
   async function permanentlyDeleteAccount(event: React.FormEvent) {
     event.preventDefault();
-    if (!deleteTarget || !deletePassword) return;
-    setDeleting(true);
-    setDeleteError("");
-    try {
-      const response = await apiFetch(`/api/employees/${deleteTarget.id}/permanent`, {
-        method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ password: deletePassword }),
-      });
-      const data = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(data.error || "Permanent deletion failed");
-      setArchivedAccounts((current) => current.filter((account) => account.id !== deleteTarget.id));
-      toast({ title: "Employee permanently deleted", description: `${deleteTarget.name} and all linked database records were deleted.`, variant: "success" });
-      setDeleteTarget(null);
-      setDeletePassword("");
-    } catch (reason) {
-      const message = reason instanceof Error ? reason.message : "Permanent deletion failed";
-      setDeleteError(message);
-      toast({ title: "Employee was not deleted", description: message, variant: "error" });
-    } finally {
-      setDeleting(false);
+    if (archiveBusy || !deleteTargets.length || !deletePassword) return;
+    setDeleting(true); setDeleteError("");
+    const successes: string[] = [];
+    const failures: string[] = [];
+    for (const account of deleteTargets) {
+      try {
+        const response = await apiFetch(`/api/employees/${account.id}/permanent`, { method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ password: deletePassword }) });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) { failures.push(`${account.name}: ${data.error || 'Permanent deletion failed'}`); if ([401, 403, 429].includes(response.status)) break; }
+        else successes.push(account.id);
+      } catch { failures.push(`${account.name}: Connection interrupted. Refresh before retrying.`); break; }
     }
+    setArchivedAccounts(current => current.filter(account => !successes.includes(account.id)));
+    setSelectedArchiveIds(current => current.filter(id => !successes.includes(id)));
+    setDeleteTargets(current => current.filter(account => !successes.includes(account.id)));
+    if (successes.length) toast({ title: "Employees permanently deleted", description: `${successes.length} employees and their linked records were deleted.`, variant: "success" });
+    if (failures.length) { setDeleteError(`${successes.length} of ${deleteTargets.length} deleted. ${failures.join(' ')} Remaining employees are still selected.`); toast({ title: "Some employees were not deleted", description: failures.join(' '), variant: "error" }); }
+    setDeletePassword(""); setDeleting(false);
   }
 
   const loadWarning = loadError && <p role="alert" className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">{loadError}</p>;
@@ -297,7 +326,7 @@ export function AdminView() {
             <CardDescription>Manage all employee accounts, including employees assigned as managers / supervisors</CardDescription>
           </CardHeader>
           <CardContent>
-            <div className="relative mb-4 max-w-sm"><Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" /><Input aria-label="Search employee access" value={employeeSearch} onChange={(event) => setEmployeeSearch(event.target.value)} placeholder="Search employee, ID, or role" className="pl-9" /></div>
+            <RecordFilters label="employee access" search={employeeSearch} setSearch={setEmployeeSearch} filter={accessFilter} setFilter={setAccessFilter} options={["Active", "Blocked"]} />
             <div className="space-y-2 sm:hidden">
               {employeePage.pageItems.map((employee) => <div key={employee.id} className="rounded-xl border border-slate-200 p-4"><div className="flex items-start justify-between gap-2"><div className="min-w-0"><p className="break-words font-semibold text-slate-900">{employee.name}</p><p className="text-xs text-slate-500">{employee.id} · {employeeRoleLabel(employee.role)}</p></div><Badge variant={employee.banned ? "danger" : "success"}>{employee.banned ? "Blocked" : "Active"}</Badge></div><Button className="mt-3 w-full" size="sm" variant="outline" disabled={controlBusy !== null || Boolean(loadError)} onClick={() => void toggleBanEmployee(employee.id)}>{employee.banned ? "Restore access" : "Block access"}</Button></div>)}
             </div>
@@ -340,6 +369,7 @@ export function AdminView() {
                 </TableBody>
               </Table>
             </div>
+            {!filteredEmployees.length && <p className="py-8 text-center text-sm text-slate-500">{loadError || "No employees match your filters."}</p>}
             <PaginationControls {...employeePage} onPageChange={employeePage.setPage} />
           </CardContent>
         </Card>
@@ -386,13 +416,13 @@ export function AdminView() {
 
       {archiveOpen && (
         <Card className="border-violet-200">
-          <CardHeader><div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between"><div><CardTitle className="flex items-center gap-2"><Archive className="h-5 w-5 text-[#8642ED]" /> Archived Employees</CardTitle><CardDescription>Restore employees or permanently delete an individual employee and all linked database records.</CardDescription></div><div className="flex flex-col gap-2 sm:flex-row sm:items-center"><div className="flex flex-wrap rounded-xl border border-slate-200 bg-slate-50 p-1">{([['30d','30 days'],['1y','1 year'],['5y','5 years'],['all','All']] as const).map(([value,label]) => <button key={value} type="button" onClick={() => setArchiveRange(value)} className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition ${archiveRange === value ? 'bg-white text-violet-700 shadow-sm' : 'text-slate-500 hover:text-slate-800'}`}>{label}</button>)}</div><Button className="w-full sm:w-auto" size="sm" variant="outline" onClick={() => setArchiveOpen(false)}>Close</Button></div></div></CardHeader>
-          <CardContent className="p-0"><div className="border-b border-slate-100 p-4"><div className="relative max-w-sm"><Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" /><Input aria-label="Search archived employees" value={archiveSearch} onChange={(event) => setArchiveSearch(event.target.value)} placeholder="Search employee, ID, or role" className="pl-9" /></div></div><div className="overflow-x-auto"><Table className="min-w-[720px]"><TableHeader><TableRow><TableHead>Employee</TableHead><TableHead>Archived date</TableHead><TableHead>Age</TableHead><TableHead className="text-right">Actions</TableHead></TableRow></TableHeader><TableBody>
+          <CardHeader><div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between"><div><CardTitle className="flex items-center gap-2"><Archive className="h-5 w-5 text-[#8642ED]" /> Archived Employees</CardTitle><CardDescription>Select archived employees to restore them or permanently delete them and their linked records.</CardDescription></div><div className="flex flex-col gap-2 sm:flex-row sm:items-center"><div className="flex flex-wrap rounded-xl border border-slate-200 bg-slate-50 p-1">{([['30d','30 days'],['1y','1 year'],['5y','5 years'],['all','All']] as const).map(([value,label]) => <button key={value} type="button" onClick={() => setArchiveRange(value)} className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition ${archiveRange === value ? 'bg-white text-violet-700 shadow-sm' : 'text-slate-500 hover:text-slate-800'}`}>{label}</button>)}</div><Button className="w-full sm:w-auto" size="sm" variant="outline" onClick={() => setArchiveOpen(false)}>Close</Button></div></div></CardHeader>
+          <CardContent className="p-0"><div className="border-b border-slate-100 p-4"><div className="relative max-w-sm"><Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" /><Input aria-label="Search archived employees" value={archiveSearch} onChange={(event) => setArchiveSearch(event.target.value)} placeholder="Search employee, ID, or role" className="pl-9" /></div></div><div className="flex flex-wrap items-center gap-2 border-b border-slate-100 bg-violet-50/50 p-4"><span role="status" aria-live="polite" className="mr-2 text-sm font-semibold text-violet-900">{selectedArchives.length} employees selected</span><Button size="sm" variant="outline" disabled={archiveBusy || !archivedAccounts.length} onClick={() => setSelectedArchiveIds(archivedAccounts.map(account => account.id))}>Select all employees ({archivedAccounts.length})</Button><Button size="sm" variant="outline" disabled={archiveBusy || !selectedArchives.length} onClick={() => setSelectedArchiveIds([])}>Clear selection</Button><Button size="sm" variant="outline" disabled={archiveBusy || !selectedArchives.length || Boolean(loadError)} onClick={() => void restoreSelectedAccounts()}><RotateCcw className="h-3.5 w-3.5" />Restore selected ({selectedArchives.length})</Button><Button size="sm" variant="destructive" disabled={archiveBusy || !selectedArchives.length || Boolean(loadError)} onClick={() => { setDeleteTargets(selectedArchives); setDeletePassword(''); setDeleteError(''); }}><Trash2 className="h-3.5 w-3.5" />Delete selected ({selectedArchives.length})</Button><p className="w-full text-xs text-violet-700">Select all employees includes every archived employee across pages and filters.</p></div><div className="overflow-x-auto"><Table className="min-w-[720px]"><TableHeader><TableRow><TableHead className="w-12"><input type="checkbox" aria-label="Select archived employees on this page" disabled={archiveBusy} checked={allArchivePageSelected} ref={input => { if (input) input.indeterminate = !allArchivePageSelected && archivePageIds.some(id => selectedArchiveIds.includes(id)); }} onChange={event => setSelectedArchiveIds(current => event.target.checked ? [...new Set([...current, ...archivePageIds])] : current.filter(id => !archivePageIds.includes(id)))} className="h-4 w-4 accent-violet-600" /></TableHead><TableHead>Employee</TableHead><TableHead>Archived date</TableHead><TableHead>Age</TableHead><TableHead className="text-right">Actions</TableHead></TableRow></TableHeader><TableBody>
             {archivePage.pageItems.map((account) => {
               const archivedAt = account.record.archivedAt ? new Date(account.record.archivedAt) : null;
               const validDate = archivedAt && !Number.isNaN(archivedAt.getTime());
               const ageDays = validDate ? Math.max(0, Math.floor((archiveReferenceTime - archivedAt.getTime()) / 86400000)) : null;
-              return <TableRow key={account.id}><TableCell><div className="font-medium text-slate-900">{account.name}</div><div className="text-xs text-slate-400">{account.id}</div></TableCell><TableCell className="text-slate-600">{validDate ? archivedAt.toLocaleDateString('en-PH', { month: 'short', day: 'numeric', year: 'numeric' }) : 'Date unavailable'}</TableCell><TableCell><Badge variant="neutral">{ageDays == null ? 'Unknown' : ageDays === 0 ? 'Today' : `${ageDays} ${ageDays === 1 ? 'day' : 'days'}`}</Badge></TableCell><TableCell><div className="flex justify-end gap-2"><Button size="sm" variant="outline" disabled={controlBusy !== null || Boolean(loadError)} onClick={() => void restoreAccount(account.id)}><RotateCcw className="h-3.5 w-3.5" /> Restore</Button><Button size="sm" variant="destructive" onClick={() => { setDeleteTarget(account); setDeletePassword(''); setDeleteError(''); }}><Trash2 className="h-3.5 w-3.5" /> Delete permanently</Button></div></TableCell></TableRow>;
+              return <TableRow key={account.id}><TableCell><input type="checkbox" aria-label={`Select archived employee ${account.name}`} disabled={archiveBusy} checked={selectedArchiveIds.includes(account.id)} onChange={event => setSelectedArchiveIds(current => event.target.checked ? [...new Set([...current, account.id])] : current.filter(id => id !== account.id))} className="h-4 w-4 accent-violet-600" /></TableCell><TableCell><div className="font-medium text-slate-900">{account.name}</div><div className="text-xs text-slate-400">{account.id}</div></TableCell><TableCell className="text-slate-600">{validDate ? archivedAt.toLocaleDateString('en-PH', { month: 'short', day: 'numeric', year: 'numeric' }) : 'Date unavailable'}</TableCell><TableCell><Badge variant="neutral">{ageDays == null ? 'Unknown' : ageDays === 0 ? 'Today' : `${ageDays} ${ageDays === 1 ? 'day' : 'days'}`}</Badge></TableCell><TableCell><div className="flex justify-end gap-2"><Button size="sm" variant="outline" disabled={archiveBusy || Boolean(loadError)} onClick={() => void restoreAccount(account.id)}><RotateCcw className="h-3.5 w-3.5" /> Restore</Button><Button size="sm" variant="destructive" disabled={archiveBusy || Boolean(loadError)} onClick={() => { setDeleteTargets([account]); setDeletePassword(''); setDeleteError(''); }}><Trash2 className="h-3.5 w-3.5" /> Delete permanently</Button></div></TableCell></TableRow>;
             })}
           </TableBody></Table></div>{filteredArchivedAccounts.length === 0 && <div className="py-10 text-center text-sm text-slate-400">{archivedAccounts.length ? 'No archived employees match the selected filters.' : 'The archive is empty.'}</div>}<PaginationControls {...archivePage} onPageChange={archivePage.setPage} /></CardContent>
         </Card>
@@ -405,13 +435,13 @@ export function AdminView() {
         <div className="flex justify-end gap-2 px-6 pb-6 pt-3"><Button type="button" variant="outline" onClick={() => closeConfirmation(false)}>Cancel</Button><Button type="button" variant={confirmation?.destructive ? "destructive" : undefined} onClick={() => closeConfirmation(true)}>{confirmation?.confirmLabel || "Confirm"}</Button></div>
       </Dialog>
 
-      <Dialog open={Boolean(deleteTarget)} onClose={() => !deleting && setDeleteTarget(null)} className="max-w-md">
-        <DialogHeader><div><h3 className="flex items-center gap-2 text-base font-bold text-rose-700"><Trash2 className="h-4 w-4" /> Permanently delete employee</h3><p className="mt-1 text-xs leading-5 text-slate-500">This permanently deletes {deleteTarget?.name} and their login, fingerprint, attendance, leave, payroll, and biometric test records from MongoDB. This cannot be undone.</p></div><DialogClose onClose={() => !deleting && setDeleteTarget(null)} /></DialogHeader>
+      <Dialog open={deleteTargets.length > 0} onClose={() => !deleting && setDeleteTargets([])} className="max-w-md">
+        <DialogHeader><div><h3 className="flex items-center gap-2 text-base font-bold text-rose-700"><Trash2 className="h-4 w-4" /> Permanently delete {deleteTargets.length} employee{deleteTargets.length === 1 ? '' : 's'}</h3><p className="mt-1 text-xs leading-5 text-slate-500">This permanently deletes the selected employees and their login, fingerprint, attendance, leave, payroll, cash advance, and biometric test records from MongoDB. This cannot be undone.</p></div><DialogClose onClose={() => !deleting && setDeleteTargets([])} /></DialogHeader>
         <form onSubmit={permanentlyDeleteAccount} className="space-y-4 px-6 pb-6 pt-3">
-          <div className="rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm text-rose-800"><p className="font-semibold">Employee: {deleteTarget?.name}</p><p className="mt-1 text-xs">ID: {deleteTarget?.id}</p></div>
+          <div className="rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm text-rose-800"><ul className="max-h-48 space-y-1 overflow-y-auto">{deleteTargets.map(account => <li key={account.id}>{account.name} ({account.id})</li>)}</ul></div>
           <label className="block space-y-1.5"><span className="text-xs font-semibold text-slate-700">Confirm your administrator password</span><Input type="password" autoFocus value={deletePassword} disabled={deleting} onChange={(event) => { setDeletePassword(event.target.value); setDeleteError(''); }} placeholder="Enter admin password" /></label>
           {deleteError && <p className="rounded-lg bg-rose-50 px-3 py-2 text-xs font-medium text-rose-700">{deleteError}</p>}
-          <div className="flex justify-end gap-2"><Button type="button" variant="outline" disabled={deleting} onClick={() => setDeleteTarget(null)}>Cancel</Button><Button type="submit" variant="destructive" disabled={deleting || !deletePassword}><Trash2 className="h-4 w-4" />{deleting ? 'Deleting…' : 'Delete permanently'}</Button></div>
+          <div className="flex justify-end gap-2"><Button type="button" variant="outline" disabled={deleting} onClick={() => setDeleteTargets([])}>Cancel</Button><Button type="submit" variant="destructive" disabled={deleting || !deletePassword}><Trash2 className="h-4 w-4" />{deleting ? 'Deleting…' : 'Delete permanently'}</Button></div>
         </form>
       </Dialog>
 

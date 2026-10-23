@@ -1,3 +1,6 @@
+import { useArchiveCutoff } from "../hooks/useArchiveCutoff";
+import { RecordArchives } from "../components/RecordArchives";
+import { keepActiveRecord } from "../../shared/record-archives.js";
 import { useCachedState } from "../hooks/useCachedState";
 import { employeeRoleLabel } from '../../shared/employee-roles.js';
 import { Input } from "../components/ui/Input";
@@ -204,7 +207,8 @@ export function LeaveRequestsView({
   const today = (() => { const parts = Object.fromEntries(new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Manila", year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(new Date()).filter((part) => part.type !== "literal").map((part) => [part.type, part.value])); return `${parts.year}-${parts.month}-${parts.day}`; })();
   const undoDates = (undoTarget?.approvedDates ?? []).filter(date => date >= today);
   const keptDates = (undoTarget?.approvedDates ?? []).filter(date => date < today);
-  const activeRequests = localRequests.map(request => ({ ...request, status: leaveDateProgress(request, today).status as LeaveRequest['status'] })).sort((left, right) => Number(right.status === "pending") - Number(left.status === "pending") || new Date(right.createdAt ?? 0).getTime() - new Date(left.createdAt ?? 0).getTime());
+  const cutoff = useArchiveCutoff();
+  const activeRequests = localRequests.map(request => ({ ...request, status: leaveDateProgress(request, today).status as LeaveRequest['status'] })).filter(request => keepActiveRecord("leave", request, cutoff)).sort((left, right) => Number(right.status === "pending") - Number(left.status === "pending") || new Date(right.createdAt ?? 0).getTime() - new Date(left.createdAt ?? 0).getTime());
   const pendingCount = activeRequests.filter(r => r.status === "pending").length;
   const approvedCount = activeRequests.filter(r => r.status === "approved" && r.approvedDates?.some(date => date >= today)).length;
   const totalDaysRequested = activeRequests.reduce((acc, r) => acc + (r.status === "approved" ? r.approvedDates?.filter(date => date >= today).length ?? 0 : 0), 0);
@@ -224,7 +228,7 @@ export function LeaveRequestsView({
   return (
     <div className="leave-page mx-auto w-full max-w-7xl space-y-6">
       {loadError && <p role="alert" className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">{loadError}</p>}
-      <AdminPageHeader title="Leave Requests" description="Review leave dates and reasons. Pending requests appear first." icon={Calendar} />
+      <AdminPageHeader title="Leave Requests" description="Review leave dates and reasons. Pending requests appear first." icon={Calendar} actions={<RecordArchives kind="leave" title="Leave requests" />} />
 
       {/* Modern Stats Bar */}
       <div data-guide="leave-summary" className="grid gap-4 sm:grid-cols-3">

@@ -60,6 +60,8 @@ function harness(file, component, { state = {}, props = {}, section = 'overview'
       if (name.includes('/ui/Toast')) return { useToast: () => ({ toast: value => toasts.push(value) }) };
       if (name.endsWith('/api') || name.endsWith('/api.ts')) return { apiFetch: (...args) => api(...args), clearSession: () => { clears++; }, storeSession() {} };
       if (name.includes('usePortalNavigation')) return { usePortalNavigation: () => [section, () => {}] };
+      if (name.includes('useArchiveCutoff')) return { useArchiveCutoff: () => require('../shared/record-archives.js').archiveCutoff() };
+      if (name.includes('useRecordFilters')) return { useRecordFilters: items => ({ items, search: '', filter: '', options: [], resetKey: '', setSearch() {}, setFilter() {} }) };
       if (name.includes('usePagination')) return { usePagination: items => ({ pageItems: items, page: 1, totalPages: 1 }) };
       if (name.includes('adminPasswordRetry')) return { useAdminPasswordRetry: () => 0 };
       if (name.includes('/lib/pageCache')) return { readPageCache: () => undefined, writePageCache() {}, pageCacheGeneration: () => 0 };
@@ -247,4 +249,97 @@ test('settings cannot save placeholder values while loading or after a failed lo
   assert.ok(h.values.get('loadError'));
   assert.equal(nodes(h.render()).find(node => node.type === 'fieldset').props.disabled, true);
   assert.equal(requests, 1);
+});
+
+
+test('directory has one select-all action that includes employees hidden by filters', () => {
+  const employees = [
+    { id: 'E1', name: 'Alex', role: 'regular', status: 'active' },
+    { id: 'E2', name: 'Sam', role: 'regular', status: 'active' },
+  ];
+  const h = harness('src/views/EmployeeDirectoryView.tsx', 'EmployeeDirectoryView', {
+    state: { employees, archiveSelection: true, search: 'Alex' }, api: async () => reply({}),
+  });
+  assert.equal(nodes(h.render()).filter(node => text(node).startsWith('Select all matching')).length, 0);
+  click(h.render(), 'Select all employees (2)');
+  assert.deepEqual([...h.values.get('selectedEmployeeIds')], ['E1', 'E2']);
+  click(h.render(), 'Archive selected (2)');
+  assert.equal(h.values.get('archiveTargets').length, 2);
+});
+
+test('bulk employee archive removes successes and retains failures for retry', async () => {
+  const employees = ['E1', 'E2', 'E3'].map(id => ({ id, name: id, role: 'regular', status: 'active' }));
+  const calls = [];
+  const h = harness('src/views/EmployeeDirectoryView.tsx', 'EmployeeDirectoryView', {
+    state: { employees, archiveSelection: true, archiveTargets: employees, selectedEmployeeIds: ['E1', 'E2', 'E3'], archivePassword: 'ConfirmedPassword' },
+    api: async url => { calls.push(url); return url.includes('/E2/') ? reply({ error: 'Temporarily unavailable' }, 500) : reply({}); },
+  });
+  const form = nodes(h.render()).find(node => node.type === 'form' && node.props.onSubmit.name === 'archiveEmployee');
+  await form.props.onSubmit(event);
+  assert.equal(calls.length, 3);
+  assert.deepEqual([...h.values.get('employees')].map(item => item.id), ['E2']);
+  assert.deepEqual([...h.values.get('selectedEmployeeIds')], ['E2']);
+  assert.deepEqual([...h.values.get('archiveTargets')].map(item => item.id), ['E2']);
+  assert.match(h.values.get('archiveError'), /2 of 3 archived/);
+  assert.equal(h.values.get('archivePassword'), '');
+});
+
+test('bulk employee archive stops immediately after a password rejection', async () => {
+  const employees = ['E1', 'E2'].map(id => ({ id, name: id, role: 'regular', status: 'active' }));
+  const calls = [];
+  const h = harness('src/views/EmployeeDirectoryView.tsx', 'EmployeeDirectoryView', {
+    state: { employees, archiveTargets: employees, selectedEmployeeIds: ['E1', 'E2'], archivePassword: 'IncorrectPassword' },
+    api: async url => { calls.push(url); return reply({ error: 'Incorrect admin password' }, 401); },
+  });
+  await nodes(h.render()).find(node => node.type === 'form' && node.props.onSubmit.name === 'archiveEmployee').props.onSubmit(event);
+  assert.equal(calls.length, 1);
+  assert.equal(h.values.get('employees').length, 2);
+  assert.equal(h.values.get('selectedEmployeeIds').length, 2);
+  assert.equal(h.values.get('archiving'), false);
+});
+
+
+test('admin archives select all across filters and restore selected employees together', async () => {
+  const accounts = ['E1', 'E2'].map(id => ({ id, name: id, record: { id, role: 'regular' } }));
+  const calls = [];
+  const h = harness('src/views/AdminView.tsx', 'AdminView', {
+    state: { adminUnlocked: true, archiveOpen: true, archivedAccounts: accounts, archiveSearch: 'E1' },
+    api: async url => { calls.push(url); return reply({ id: url.includes('/E1/') ? 'E1' : 'E2', name: 'Restored' }); },
+  });
+  click(h.render(), 'Select all employees (2)');
+  assert.deepEqual([...h.values.get('selectedArchiveIds')], ['E1', 'E2']);
+  click(h.render(), 'Restore selected (2)');
+  h.values.get('confirmation').resolve(true);
+  await flush(); await flush();
+  assert.equal(calls.length, 2);
+  assert.equal(h.values.get('archivedAccounts').length, 0);
+  assert.equal(h.values.get('localEmployees').length, 2);
+  assert.equal(h.values.get('selectedArchiveIds').length, 0);
+});
+
+test('admin bulk permanent deletion retains failed accounts and clears successful selections', async () => {
+  const accounts = ['E1', 'E2'].map(id => ({ id, name: id, record: { id, role: 'regular' } }));
+  const h = harness('src/views/AdminView.tsx', 'AdminView', {
+    state: { adminUnlocked: true, archiveOpen: true, archivedAccounts: accounts, selectedArchiveIds: ['E1', 'E2'], deleteTargets: accounts, deletePassword: 'ConfirmedPassword' },
+    api: async url => url.includes('/E2/') ? reply({ error: 'Deletion failed' }, 500) : reply({}),
+  });
+  await nodes(h.render()).find(node => node.type === 'form' && node.props.onSubmit.name === 'permanentlyDeleteAccount').props.onSubmit(event);
+  assert.deepEqual([...h.values.get('archivedAccounts')].map(item => item.id), ['E2']);
+  assert.deepEqual([...h.values.get('selectedArchiveIds')], ['E2']);
+  assert.deepEqual([...h.values.get('deleteTargets')].map(item => item.id), ['E2']);
+  assert.equal(h.values.get('deletePassword'), '');
+  assert.match(h.values.get('deleteError'), /1 of 2 deleted/);
+});
+
+test('bulk permanent deletion stops on a rejected password before trying another account', async () => {
+  const accounts = ['E1', 'E2'].map(id => ({ id, name: id, record: { id, role: 'regular' } }));
+  const calls = [];
+  const h = harness('src/views/AdminView.tsx', 'AdminView', {
+    state: { adminUnlocked: true, archivedAccounts: accounts, selectedArchiveIds: ['E1', 'E2'], deleteTargets: accounts, deletePassword: 'WrongPassword' },
+    api: async url => { calls.push(url); return reply({ error: 'Incorrect password' }, 403); },
+  });
+  await nodes(h.render()).find(node => node.type === 'form' && node.props.onSubmit.name === 'permanentlyDeleteAccount').props.onSubmit(event);
+  assert.equal(calls.length, 1);
+  assert.equal(h.values.get('archivedAccounts').length, 2);
+  assert.equal(h.values.get('selectedArchiveIds').length, 2);
 });

@@ -17,7 +17,7 @@ import { PassThrough } from 'node:stream';
 const digest = value => crypto.createHash('sha256').update(value).digest('hex');
 const routes = (router, prefix) => router.stack.filter(layer => layer.route).flatMap(layer => Object.keys(layer.route.methods).map(method => ({ method: method.toUpperCase(), path: prefix + layer.route.path })));
 const inventory = [...routes(authRouter, '/api/auth'), ...routes(apiRouter, '/api'), { method: 'GET', path: '/api/health' }];
-const substitute = route => route.path.replace(':employeeId', 'E1').replace(':name', 'employees').replace(':id', 'missing-record');
+const substitute = route => route.path.replace(':kind', 'leave').replace(':employeeId', 'E1').replace(':name', 'employees').replace(':id', 'missing-record');
 const today = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Manila', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
 const payrollPeriodKey = () => `${today().slice(0, 8)}${Number(today().slice(8)) <= 15 ? "01" : "16"}`;
 const offsetDate = days => { const date = new Date(`${today()}T12:00:00Z`); date.setUTCDate(date.getUTCDate() + days); return date.toISOString().slice(0, 10); };
@@ -107,10 +107,22 @@ test('every registered API: HTTP access controls, validation, and feature scenar
       }
     });
     for (const role of ['regular', 'extra', 'manager', 'supervisor']) await scenario(`${role}: every admin API is forbidden`, async () => {
-      for (const route of inventory.filter(route => !route.path.startsWith('/api/auth/') && !route.path.startsWith('/api/employee/me') && route.path !== '/api/health')) {
+      for (const route of inventory.filter(route => !route.path.startsWith('/api/auth/') && !route.path.startsWith('/api/employee/me') && !route.path.startsWith('/api/record-archives/') && route.path !== '/api/health')) {
         const result = await request(route.method, substitute(route), {}, role);
         assert.equal(result.status, 403, `${role} ${route.method} ${route.path}: ${JSON.stringify(result.data)}`);
       }
+    });
+    for (const role of ['regular', 'extra', 'manager', 'supervisor']) await scenario(`${role}: archives remain private and additions remain admin-only`, async () => {
+      db.data.set('leave_requests', [
+        { id: 'OLD-E1', employeeId: 'E1', status: 'approved', startDate: '2020-01-01', endDate: '2020-01-01' },
+        { id: 'OLD-E2', employeeId: 'E2', status: 'approved', startDate: '2020-01-01', endDate: '2020-01-01' },
+      ]);
+      const result = await expect('GET', '/api/record-archives/leave?employeeId=E2', undefined, 200, role);
+      assert.equal(result.totalItems, 1);
+      assert.equal(result.items[0].employeeId, 'E1');
+      await expect('GET', '/api/record-archives/payroll', undefined, 200, role);
+      await expect('GET', '/api/record-archives/cash', undefined, 200, role);
+      await expect('GET', '/api/record-archives/additions', undefined, 403, role);
     });
     await scenario('administrator cannot impersonate the employee portal', async () => {
       for (const route of inventory.filter(route => route.path.startsWith('/api/employee/me'))) assert.equal((await request(route.method, substitute(route), {})).status, 403, route.path);

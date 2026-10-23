@@ -1,3 +1,6 @@
+import { useArchiveCutoff } from "../hooks/useArchiveCutoff";
+import { RecordArchives } from "../components/RecordArchives";
+import { keepActiveRecord } from "../../shared/record-archives.js";
 import { useMemo, useState } from 'react'
 import { CalendarDays, Search } from 'lucide-react'
 import { Card } from '../components/ui/Card'
@@ -26,13 +29,14 @@ export function QuarterlyAllowanceHistory({ payroll, employees }: { payroll: Pay
   const [half, setHalf] = useState('all')
   const entries = useMemo(() => paidAdditionEntries(payroll, employees), [payroll, employees])
   const query = search.trim().toLowerCase()
-  const shown = entries.filter(entry => `${entry.employeeName} ${entry.employeeId} ${entry.allowances.map(item => item.label).join(' ')}`.toLowerCase().includes(query) && (!month || entry.periodStart?.startsWith(month)) && (half === 'all' || entry.periodStart?.endsWith(half)))
+  const cutoff = useArchiveCutoff();
+  const shown = entries.filter(entry => keepActiveRecord("additions", entry, cutoff)).filter(entry => `${entry.employeeName} ${entry.employeeId} ${entry.allowances.map(item => item.label).join(' ')}`.toLowerCase().includes(query) && (!month || entry.periodStart?.startsWith(month)) && (half === 'all' || entry.periodStart?.endsWith(half)))
   const page = usePagination(shown, `${search}|${month}|${half}`, 8)
 
   return <Card className="overflow-hidden" aria-label="Salary additions paid">
     <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 bg-violet-50/60 px-5 py-4">
       <div className="flex items-center gap-3"><span className="rounded-xl bg-violet-100 p-2 text-violet-700"><CalendarDays size={20}/></span><div><h2 className="font-bold text-slate-900">Salary additions paid</h2><p className="text-sm text-slate-500">Extra pay included in completed payroll, including amounts carried from an earlier period.</p></div></div>
-      <div className="flex w-full flex-wrap items-center gap-2 xl:w-auto"><div className="relative min-w-44 flex-1 xl:w-52 xl:flex-none"><Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400"/><Input aria-label="Search paid additions" placeholder="Search employee" value={search} onChange={event => setSearch(event.target.value)} className="w-full pl-9"/></div><Input type="month" aria-label="Filter payroll month" value={month} onChange={event => { setMonth(event.target.value); setHalf('all') }} className="w-40"/><select aria-label="Filter half-month payroll period" value={half} disabled={!month} onChange={event => setHalf(event.target.value)} className="h-10 rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-700 disabled:opacity-50"><option value="all">Both periods</option><option value="-01">1–15</option><option value="-16">16–end</option></select>{month && <button type="button" onClick={() => { setMonth(''); setHalf('all') }} className="text-xs font-semibold text-violet-700 hover:underline">All periods</button>}</div>
+      <div className="flex w-full flex-wrap items-center gap-2 xl:w-auto"><RecordArchives kind="additions" title="Salary additions paid" /><div className="relative min-w-44 flex-1 xl:w-52 xl:flex-none"><Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400"/><Input aria-label="Search paid additions" placeholder="Search employee" value={search} onChange={event => setSearch(event.target.value)} className="w-full pl-9"/></div><Input type="month" aria-label="Filter payroll month" value={month} onChange={event => { setMonth(event.target.value); setHalf('all') }} className="w-40"/><select aria-label="Filter half-month payroll period" value={half} disabled={!month} onChange={event => setHalf(event.target.value)} className="h-10 rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-700 disabled:opacity-50"><option value="all">Both periods</option><option value="-01">1–15</option><option value="-16">16–end</option></select>{month && <button type="button" onClick={() => { setMonth(''); setHalf('all') }} className="text-xs font-semibold text-violet-700 hover:underline">All periods</button>}</div>
     </div>
     <div className="p-4 sm:p-5">
       <div className="hidden grid-cols-[minmax(0,1fr)_minmax(0,1.5fr)_auto_auto] gap-4 border-b border-slate-200 px-3 pb-2 text-xs font-semibold uppercase tracking-wide text-slate-500 md:grid"><span>Employee / payroll period</span><span>Addition paid</span><span>Total</span><span>Marked paid</span></div>

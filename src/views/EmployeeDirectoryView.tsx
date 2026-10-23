@@ -121,7 +121,10 @@ export function EmployeeDirectoryView({ employees: initialEmployees }: Partial<E
   const [sendingVerification, setSendingVerification] = useState(false);
   const [sendingLogin, setSendingLogin] = useState(false);
   const [formError, setFormError] = useState("");
-  const [archiveTarget, setArchiveTarget] = useState<Employee | null>(null);
+  const [archiveTargets, setArchiveTargets] = useState<Employee[]>([]);
+  const [archiveSelection, setArchiveSelection] = useState(false);
+  const [selectedEmployeeIds, setSelectedEmployeeIds] = useState<string[]>([]);
+  const [archiveProgress, setArchiveProgress] = useState(0);
   const [archivePassword, setArchivePassword] = useState("");
   const [archiveError, setArchiveError] = useState("");
   const [archiving, setArchiving] = useState(false);
@@ -177,7 +180,7 @@ export function EmployeeDirectoryView({ employees: initialEmployees }: Partial<E
     const matchesSearch = [employee.name, employee.id, employeeRoleLabel(employee.role), employee.sssNumber, employee.address, ...(employee.identifiers ?? []).flatMap((item) => [item.type, item.value])]
       .some((value) => value?.toLowerCase().includes(query));
     return matchesSearch && (statusFilter === "All" || employee.status === statusFilter) && (roleFilter === "All" || employeeRole(employee.role) === roleFilter);
-  }), [employees, search, statusFilter, roleFilter]);
+  }).sort((left, right) => left.name.trim().localeCompare(right.name.trim(), "en-PH", { sensitivity: "base", numeric: true }) || left.id.localeCompare(right.id, "en-PH", { numeric: true })), [employees, search, statusFilter, roleFilter]);
   const employeePage = usePagination(filtered, `${search}|${statusFilter}|${roleFilter}`);
 
   async function openAdd() {
@@ -424,25 +427,54 @@ export function EmployeeDirectoryView({ employees: initialEmployees }: Partial<E
     }
   }
 
+  const selectedEmployees = employees.filter(employee => selectedEmployeeIds.includes(employee.id));
+  const pageIds = employeePage.pageItems.map(employee => employee.id);
+  const allPageSelected = pageIds.length > 0 && pageIds.every(id => selectedEmployeeIds.includes(id));
+  function toggleEmployee(id: string, checked: boolean) {
+    setSelectedEmployeeIds(current => checked ? [...new Set([...current, id])] : current.filter(item => item !== id));
+  }
+  function closeArchive() { if (!archiving) { setArchiveTargets([]); setArchivePassword(""); setArchiveError(""); } }
   async function archiveEmployee(event: React.FormEvent) {
     event.preventDefault();
-    if (!archiveTarget || !archivePassword) return;
-    setArchiving(true); setArchiveError("");
-    try {
-      const response = await apiFetch(`/api/employees/${archiveTarget.id}/archive`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password: archivePassword }) });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.error || 'Unable to archive employee');
-      setEmployees((current) => current.filter((employee) => employee.id !== archiveTarget.id));
-      toast({ title: "Employee archived", description: `${archiveTarget.name}'s account moved to Admin Controls.`, variant: "success" });
-      setArchiveTarget(null); setArchivePassword("");
-    } catch (reason) { const message = reason instanceof Error ? reason.message : 'Unable to archive employee'; setArchiveError(message); toast({ title: "Archive failed", description: message, variant: "error" }); }
-    finally { setArchiving(false); }
+    if (archiving || !archiveTargets.length || !archivePassword) return;
+    setArchiving(true); setArchiveError(""); setArchiveProgress(0);
+    const archived: string[] = [];
+    const failures: string[] = [];
+    for (const employee of archiveTargets) {
+      try {
+        const response = await apiFetch(`/api/employees/${employee.id}/archive`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password: archivePassword }) });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) {
+          failures.push(`${employee.name}: ${data.error || 'Unable to archive employee'}`);
+          if ([401, 403, 429].includes(response.status)) break;
+        } else {
+          archived.push(employee.id);
+        }
+        setArchiveProgress(current => current + 1);
+      } catch {
+        failures.push(`${employee.name}: Connection interrupted. Refresh the directory before retrying.`);
+        break;
+      }
+    }
+    if (archived.length) {
+      setEmployees(current => current.filter(employee => !archived.includes(employee.id)));
+      setSelectedEmployeeIds(current => current.filter(id => !archived.includes(id)));
+      toast({ title: "Employees archived", description: `${archived.length} employee account${archived.length === 1 ? '' : 's'} moved to Admin Controls.`, variant: "success" });
+    }
+    if (failures.length) {
+      setArchiveTargets(current => current.filter(employee => !archived.includes(employee.id)));
+      setArchiveError(`${archived.length} of ${archiveTargets.length} archived. ${failures.join(' ')} Remaining employees are still selected.`);
+      toast({ title: archived.length ? "Some employees were not archived" : "Archive failed", description: failures.join(' '), variant: "error" });
+    } else {
+      setArchiveTargets([]); setArchiveSelection(false); setSelectedEmployeeIds([]);
+    }
+    setArchivePassword(""); setArchiving(false);
   }
 
   return (
     <div className="space-y-6">
       {loadError && <p role="alert" className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">{loadError}</p>}
-      <AdminPageHeader title="Employee Directory" description="Find employees and manage their account details." icon={Contact} actions={<><Button variant="outline" onClick={() => window.open('/kiosk', '_blank', 'noopener,noreferrer')}><ScanLine className="h-4 w-4" /> Open Kiosk</Button><Button data-guide="employee-add" onClick={openAdd}><Plus className="h-4 w-4" /> Add Employee</Button></>} />
+      <AdminPageHeader title="Employee Directory" description="Find employees and manage their account details." icon={Contact} actions={<><Button variant="outline" onClick={() => { setArchiveSelection(current => !current); setSelectedEmployeeIds([]); }}><Archive className="h-4 w-4" />{archiveSelection ? "Cancel selection" : "Archive employees"}</Button><Button variant="outline" onClick={() => window.open('/kiosk', '_blank', 'noopener,noreferrer')}><ScanLine className="h-4 w-4" /> Open Kiosk</Button><Button data-guide="employee-add" onClick={openAdd}><Plus className="h-4 w-4" /> Add Employee</Button></>} />
 
       <div data-guide="employee-filters" className="grid grid-cols-1 gap-2 sm:grid-cols-[minmax(0,1fr)_auto_auto_auto] sm:items-center lg:grid-cols-[minmax(18rem,28rem)_auto_auto_auto_1fr]">
         <div className="relative min-w-0">
@@ -462,24 +494,34 @@ export function EmployeeDirectoryView({ employees: initialEmployees }: Partial<E
         <p className="text-sm text-slate-600 lg:ml-auto" role="status" aria-live="polite">Showing {filtered.length} of {employees.length} employees</p>
       </div>
 
+      {archiveSelection && <div className="flex flex-wrap items-center gap-3 rounded-xl border border-violet-200 bg-violet-50 p-4">
+        <p role="status" aria-live="polite" className="text-sm font-semibold text-violet-900">{selectedEmployees.length} employees selected</p>
+        <Button type="button" size="sm" variant="outline" onClick={() => setSelectedEmployeeIds(employees.map(employee => employee.id))} disabled={!employees.length}>Select all employees ({employees.length})</Button>
+        <Button type="button" size="sm" variant="outline" onClick={() => setSelectedEmployeeIds([])} disabled={!selectedEmployees.length}>Clear selection</Button>
+        <Button type="button" size="sm" variant="destructive" disabled={!selectedEmployees.length} onClick={() => { setArchiveTargets(selectedEmployees); setArchivePassword(""); setArchiveError(""); }}><Archive className="h-4 w-4" />Archive selected ({selectedEmployees.length})</Button>
+        <p className="w-full text-xs text-violet-700">Selections stay checked across pages and filters. Select all employees includes employees hidden by the current filters.</p>
+      </div>}
+
       {viewMode === "table" ? (
         <Card data-guide="employee-list" className="min-w-0 overflow-hidden"><CardContent className="p-0"><Table className="min-w-[760px]" aria-label="Employee directory">
           <caption className="sr-only">Employee names, roles, government IDs, work status, and available actions.</caption>
-          <TableHeader><TableRow className="bg-slate-50/50"><TableHead>Employee</TableHead><TableHead>Role</TableHead><TableHead>Government ID</TableHead><TableHead>Status</TableHead><TableHead className="text-right">Actions</TableHead></TableRow></TableHeader>
+          <TableHeader><TableRow className="bg-slate-50/50">{archiveSelection && <TableHead className="w-12"><input type="checkbox" aria-label="Select all employees on this page" checked={allPageSelected} ref={input => { if (input) input.indeterminate = !allPageSelected && pageIds.some(id => selectedEmployeeIds.includes(id)); }} onChange={event => setSelectedEmployeeIds(current => event.target.checked ? [...new Set([...current, ...pageIds])] : current.filter(id => !pageIds.includes(id)))} className="h-4 w-4 accent-violet-600" /></TableHead>}<TableHead>Employee</TableHead><TableHead>Role</TableHead><TableHead>Government ID</TableHead><TableHead>Status</TableHead><TableHead className="text-right">Actions</TableHead></TableRow></TableHeader>
           <TableBody>{employeePage.pageItems.map((employee) => <TableRow key={employee.id}>
+            {archiveSelection && <TableCell><input type="checkbox" aria-label={`Select ${employee.name} for archiving`} checked={selectedEmployeeIds.includes(employee.id)} onChange={event => toggleEmployee(employee.id, event.target.checked)} className="h-4 w-4 accent-violet-600" /></TableCell>}
             <TableCell><div className="flex items-center gap-3"><div className="flex h-9 w-9 items-center justify-center rounded-full bg-violet-100 text-xs font-bold text-[#8642ED]">{initials(employee.name)}</div><div><p className="font-medium text-slate-900">{employee.name}</p><p className="text-xs text-slate-400">{employee.id}</p></div></div></TableCell>
             <TableCell className="capitalize text-slate-600">{employeeRoleLabel(employee.role)}</TableCell>
             <TableCell className="text-slate-600">{primaryGovernmentId(employee)}</TableCell>
             <TableCell><StatusBadge status={employee.status} /></TableCell>
-            <TableCell><div className="flex justify-end gap-2"><Button size="sm" variant="outline" aria-label={`Edit details for ${employee.name}`} onClick={() => openEdit(employee)}><Pencil className="h-3.5 w-3.5" /> Edit details</Button><Button size="sm" variant="outline" aria-label={`Archive ${employee.name}`} className="text-rose-600 hover:bg-rose-50" onClick={() => { setArchiveTarget(employee); setArchivePassword(""); setArchiveError(""); }}><Archive className="h-3.5 w-3.5" /> Archive</Button></div></TableCell>
+            <TableCell><div className="flex justify-end gap-2"><Button size="sm" variant="outline" aria-label={`Edit details for ${employee.name}`} onClick={() => openEdit(employee)}><Pencil className="h-3.5 w-3.5" /> Edit details</Button></div></TableCell>
           </TableRow>)}</TableBody>
         </Table>{filtered.length === 0 && <div className="py-12 text-center text-sm text-slate-400">No employees match your search.</div>}<PaginationControls {...employeePage} onPageChange={employeePage.setPage} /></CardContent></Card>
       ) : (
         <div><div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">{employeePage.pageItems.map((employee) => (
           <Card key={employee.id}><CardContent className="p-5 !pt-5">
+            {archiveSelection && <label className="mb-3 flex items-center gap-2 text-sm font-medium text-violet-700"><input type="checkbox" aria-label={`Select ${employee.name} for archiving`} checked={selectedEmployeeIds.includes(employee.id)} onChange={event => toggleEmployee(employee.id, event.target.checked)} className="h-4 w-4 accent-violet-600" />Select for archiving</label>}
             <div className="flex min-w-0 items-start justify-between gap-2"><div className="flex min-w-0 items-center gap-3"><div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-violet-100 font-bold text-[#8642ED]">{initials(employee.name)}</div><div className="min-w-0"><h3 className="truncate font-semibold text-slate-900">{employee.name}</h3><p className="truncate text-xs text-slate-500">{employee.id} · {employeeRoleLabel(employee.role)}</p></div></div><div className="shrink-0"><StatusBadge status={employee.status} /></div></div>
             <div className="mt-5 space-y-2 border-t border-slate-100 pt-4 text-sm"><div className="flex justify-between gap-3"><span className="text-slate-500">Government ID</span><span className="text-right text-slate-700">{primaryGovernmentId(employee)}</span></div><div className="flex justify-between gap-3"><span className="text-slate-500">Address</span><span className="max-w-[65%] truncate text-slate-700">{employee.address || "Not added"}</span></div><div className="flex justify-between"><span className="text-slate-500">Fingerprint</span><BiometricBadge status={employee.biometricStatus} /></div></div>
-            <div className="mt-5 grid grid-cols-2 gap-2"><Button variant="outline" onClick={() => openEdit(employee)}><Pencil className="h-4 w-4" /> Edit</Button><Button variant="outline" className="text-rose-600 hover:bg-rose-50" onClick={() => { setArchiveTarget(employee); setArchivePassword(""); setArchiveError(""); }}><Archive className="h-4 w-4" /> Archive</Button></div>
+            <div className="mt-5 grid grid-cols-2 gap-2"><Button variant="outline" onClick={() => openEdit(employee)}><Pencil className="h-4 w-4" /> Edit</Button></div>
           </CardContent></Card>
         ))}</div><PaginationControls {...employeePage} onPageChange={employeePage.setPage} /></div>
       )}
@@ -564,7 +606,7 @@ export function EmployeeDirectoryView({ employees: initialEmployees }: Partial<E
         </form>
       </Dialog>
       <Dialog open={passwordOpen} onClose={()=>!saving&&!sendingLogin&&setPasswordOpen(false)} className="max-w-sm"><DialogHeader><h3 className="text-base font-bold text-slate-900">{passwordPurpose==='save'?'Confirm changes':'Send login email'}</h3><DialogClose onClose={()=>setPasswordOpen(false)} /></DialogHeader><form onSubmit={event=>{event.preventDefault();if(passwordPurpose==='save')void persistEmployee();else void sendNewLoginEmail()}} className="space-y-4 px-6 pb-6 pt-3"><Field label="Administrator password" required><Input type="password" autoFocus autoComplete="current-password" value={adminPassword} disabled={passwordRetrySeconds>0} onChange={event=>{setAdminPassword(event.target.value);setFormError('')}} placeholder="Enter your password" /></Field>{passwordRetrySeconds>0&&<p className="text-xs text-amber-700">Try again in {passwordRetrySeconds} seconds.</p>}{formError&&<p className="rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-700">{formError}</p>}<div className="flex justify-end gap-2"><Button type="button" variant="outline" onClick={()=>setPasswordOpen(false)}>Cancel</Button><Button type="submit" disabled={!adminPassword||saving||sendingLogin||passwordRetrySeconds>0}>{saving||sendingLogin?'Working...':passwordPurpose==='save'?'Save changes':'Send email'}</Button></div></form></Dialog>
-      <Dialog open={!!archiveTarget} onClose={() => setArchiveTarget(null)} className="max-w-sm"><DialogHeader><div><h3 className="flex items-center gap-2 text-base font-bold text-slate-900"><KeyRound className="h-4 w-4 text-rose-600" /> Archive employee</h3><p className="mt-1 text-xs text-slate-500">{archiveTarget?.name} will become inactive and move to Admin Controls.</p></div><DialogClose onClose={() => setArchiveTarget(null)} /></DialogHeader><form onSubmit={archiveEmployee} className="space-y-3 px-6 pb-6 pt-3"><Field label="Confirm your admin password" required><Input type="password" autoFocus value={archivePassword} onChange={(event) => { setArchivePassword(event.target.value); setArchiveError(""); }} placeholder="Enter your password" /></Field>{archiveError && <p className="text-xs font-medium text-rose-600">{archiveError}</p>}<div className="flex justify-end gap-2"><Button type="button" variant="outline" onClick={() => setArchiveTarget(null)}>Cancel</Button><Button type="submit" variant="destructive" disabled={archiving || !archivePassword}><Archive className="h-4 w-4" />{archiving ? "Archiving..." : "Archive employee"}</Button></div></form></Dialog>
+      <Dialog open={archiveTargets.length > 0} onClose={closeArchive} className="max-w-lg"><DialogHeader><div><h3 className="flex items-center gap-2 text-base font-bold text-slate-900"><KeyRound className="h-4 w-4 text-rose-600" />Archive {archiveTargets.length} employee{archiveTargets.length === 1 ? '' : 's'}</h3><p className="mt-1 text-xs text-slate-500">These employees will become inactive and move to Admin Controls. Their employee portal access will be disabled.</p></div>{!archiving && <DialogClose onClose={closeArchive} />}</DialogHeader><form onSubmit={archiveEmployee} className="space-y-3 px-6 pb-6 pt-3"><ul className="max-h-48 space-y-1 overflow-y-auto rounded-lg border border-slate-200 p-3 text-sm">{archiveTargets.map(employee => <li key={employee.id}>{employee.name} <span className="text-slate-500">({employee.id})</span></li>)}</ul><Field label="Confirm your admin password" required><Input type="password" autoFocus disabled={archiving} value={archivePassword} onChange={event => { setArchivePassword(event.target.value); setArchiveError(""); }} placeholder="Enter your password" /></Field>{archiveError && <p role="alert" className="text-xs font-medium text-rose-600">{archiveError}</p>}{archiving && <p role="status" aria-live="polite" className="text-sm text-slate-600">Processed {archiveProgress} of {archiveTargets.length} employees...</p>}<div className="flex justify-end gap-2"><Button type="button" variant="outline" disabled={archiving} onClick={closeArchive}>Cancel</Button><Button type="submit" variant="destructive" disabled={archiving || !archivePassword}><Archive className="h-4 w-4" />{archiving ? "Archiving..." : `Archive ${archiveTargets.length} employee${archiveTargets.length === 1 ? '' : 's'}`}</Button></div></form></Dialog>
     </div>
   );
 }

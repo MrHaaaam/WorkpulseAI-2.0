@@ -1,6 +1,6 @@
 {
-  "generatedAt": "2026-10-17T01:45:02.084Z",
-  "routeCount": 95,
+  "generatedAt": "2026-10-23T00:34:53.504Z",
+  "routeCount": 96,
   "scope": "Actual Express HTTP handlers; controlled in-memory records and mocked email. Physical scanner matching is external.",
   "routes": [
     {
@@ -165,6 +165,102 @@
           "scenario": "all public authentication endpoints and protected session actions",
           "role": "admin",
           "status": 204
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/api/record-archives/:kind",
+      "observations": [
+        {
+          "scenario": "every protected API rejects anonymous requests",
+          "role": "anonymous",
+          "status": 401
+        },
+        {
+          "scenario": "regular: archives remain private and additions remain admin-only",
+          "role": "regular",
+          "status": 200
+        },
+        {
+          "scenario": "regular: archives remain private and additions remain admin-only",
+          "role": "regular",
+          "status": 200
+        },
+        {
+          "scenario": "regular: archives remain private and additions remain admin-only",
+          "role": "regular",
+          "status": 200
+        },
+        {
+          "scenario": "regular: archives remain private and additions remain admin-only",
+          "role": "regular",
+          "status": 403
+        },
+        {
+          "scenario": "extra: archives remain private and additions remain admin-only",
+          "role": "extra",
+          "status": 200
+        },
+        {
+          "scenario": "extra: archives remain private and additions remain admin-only",
+          "role": "extra",
+          "status": 200
+        },
+        {
+          "scenario": "extra: archives remain private and additions remain admin-only",
+          "role": "extra",
+          "status": 200
+        },
+        {
+          "scenario": "extra: archives remain private and additions remain admin-only",
+          "role": "extra",
+          "status": 403
+        },
+        {
+          "scenario": "manager: archives remain private and additions remain admin-only",
+          "role": "manager",
+          "status": 200
+        },
+        {
+          "scenario": "manager: archives remain private and additions remain admin-only",
+          "role": "manager",
+          "status": 200
+        },
+        {
+          "scenario": "manager: archives remain private and additions remain admin-only",
+          "role": "manager",
+          "status": 200
+        },
+        {
+          "scenario": "manager: archives remain private and additions remain admin-only",
+          "role": "manager",
+          "status": 403
+        },
+        {
+          "scenario": "supervisor: archives remain private and additions remain admin-only",
+          "role": "supervisor",
+          "status": 200
+        },
+        {
+          "scenario": "supervisor: archives remain private and additions remain admin-only",
+          "role": "supervisor",
+          "status": 200
+        },
+        {
+          "scenario": "supervisor: archives remain private and additions remain admin-only",
+          "role": "supervisor",
+          "status": 200
+        },
+        {
+          "scenario": "supervisor: archives remain private and additions remain admin-only",
+          "role": "supervisor",
+          "status": 403
+        },
+        {
+          "scenario": "all read endpoints return valid responses",
+          "role": "admin",
+          "status": 200
         }
       ]
     },

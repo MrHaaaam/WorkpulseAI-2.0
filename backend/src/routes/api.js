@@ -1,3 +1,4 @@
+import { registerRecordArchives } from "./record-archives.js";
 import { employeeRole, employeeRoleLabel, managementHourlyRate } from '../../../shared/employee-roles.js';
 import { validPhone } from '../../../shared/input-format.js';
 import { registerEmployeeUpdates } from './employee-updates.js';
@@ -229,6 +230,8 @@ router.use((req, res, next) => {
   next();
 });
 
+registerRecordArchives(router, () => mongoose.connection.db);
+
 router.get('/employee/me', requireRole('regular', 'extra', 'manager', 'supervisor'), async (req, res) => {
   try {
     const db = mongoose.connection.db;
@@ -252,12 +255,12 @@ router.get('/employee/me', requireRole('regular', 'extra', 'manager', 'superviso
     if (!activePayroll || ['processing', 'rejected'].includes(activePayroll.status)) {
       await preparePayrollRecord(db, employee, activePeriod, settings);
     }
-    const payroll = await db.collection('payroll_requests').find({ employeeId }).sort({ periodStart: -1, createdAt: -1, _id: -1 }).limit(12).toArray();
+    const payroll = await db.collection('payroll_requests').find({ employeeId }).sort({ periodStart: -1, createdAt: -1, _id: -1 }).toArray();
     const today = kioskTimestamp().date;
     const onLeaveToday = leaveRequests.some((leave) => leave.status === 'approved' && (Array.isArray(leave.approvedDates) && leave.approvedDates.length ? leave.approvedDates.includes(today) : leave.startDate <= today && leave.endDate >= today));
     const attendanceFlag = attendanceRiskForEmployee(attendance, employeeId, leaveRequests, today);
     const cashAdvance = await cashAdvanceSummary(db, employeeId);
-    const cashAdvanceRequests = await db.collection('cash_advance_requests').find({ employeeId }).sort({ requestedAt: -1 }).limit(25).toArray();
+    const cashAdvanceRequests = await db.collection('cash_advance_requests').find({ employeeId }).sort({ requestedAt: -1 }).toArray();
     res.json({
       profile: { id: employee.id, name: employee.name, email: employee.email, phone: employee.phone, address: employee.address, role: employeeRole(employee.role), status: employee.status === 'inactive' ? 'inactive' : onLeaveToday ? 'on-leave' : 'active', biometricStatus: biometricTemplate ? 'enrolled' : 'none', hourlyRate: configuredHourlyRate(employee, settings), grossSalary: employee.grossSalary, createdAt: employee.createdAt },
       attendance: attendance.map(({ _id, ...record }) => ({ ...record, status: attendanceArrivalStatus(record, settings) })),

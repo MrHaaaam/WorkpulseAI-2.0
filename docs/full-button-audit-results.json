@@ -1,0 +1,1367 @@
+{
+  "generatedAt": "2026-10-22T07:11:08.330Z",
+  "scope": "Real headless Edge; built React app with controlled API fixtures. No live accounts or hardware.",
+  "results": [
+    {
+      "feature": "Administrator overview renders",
+      "passed": true
+    },
+    {
+      "feature": "Administrator Attendance",
+      "passed": true
+    },
+    {
+      "feature": "Administrator Calendar",
+      "passed": true
+    },
+    {
+      "feature": "Administrator Employee Directory",
+      "passed": true
+    },
+    {
+      "feature": "Administrator Leave Requests",
+      "passed": true
+    },
+    {
+      "feature": "Administrator Payroll",
+      "passed": true
+    },
+    {
+      "feature": "Administrator Insights",
+      "passed": true
+    },
+    {
+      "feature": "Administrator System Settings",
+      "passed": true
+    },
+    {
+      "feature": "Administrator Admin Controls",
+      "passed": true
+    },
+    {
+      "feature": "Administrator controls unlock",
+      "passed": true
+    },
+    {
+      "feature": "Admin Ban confirmation and Cancel",
+      "passed": true
+    },
+    {
+      "feature": "Admin Turn on confirmation and Cancel",
+      "passed": true
+    },
+    {
+      "feature": "Admin Restrict confirmation and Cancel",
+      "passed": true
+    },
+    {
+      "feature": "Admin Choose & save confirmation and Cancel",
+      "passed": true
+    },
+    {
+      "feature": "Admin archive filters and close",
+      "passed": true
+    },
+    {
+      "feature": "Admin restore confirmation and cancel",
+      "passed": true
+    },
+    {
+      "feature": "Admin permanent deletion dialog and cancel",
+      "passed": true
+    },
+    {
+      "feature": "Admin force clock-out refresh and close",
+      "passed": true
+    },
+    {
+      "feature": "Admin credential update confirmation and cancel",
+      "passed": true
+    },
+    {
+      "feature": "Admin Employees workbook download handler",
+      "passed": true
+    },
+    {
+      "feature": "Admin Attendance workbook download handler",
+      "passed": true
+    },
+    {
+      "feature": "Admin Leave workbook download handler",
+      "passed": true
+    },
+    {
+      "feature": "Admin Payroll workbook download handler",
+      "passed": true
+    },
+    {
+      "feature": "Admin lock confirmation",
+      "passed": true
+    },
+    {
+      "feature": "Admin settings save dialog, password toggle and cancel",
+      "passed": true
+    },
+    {
+      "feature": "Admin directory table/cards and add employee cancellation",
+      "passed": true
+    },
+    {
+      "feature": "Admin payroll bonus amount and scope survive rerender",
+      "passed": true
+    },
+    {
+      "feature": "Admin directory alphabetical order, search, role and status filters",
+      "passed": true
+    },
+    {
+      "feature": "Admin directory archive checkboxes, select all, clear and cancel",
+      "passed": true
+    },
+    {
+      "feature": "Admin directory edit form and cancel",
+      "passed": true
+    },
+    {
+      "feature": "Admin directory bulk archive submits selected IDs with one password confirmation",
+      "passed": true
+    },
+    {
+      "feature": "Admin calendar previous/next month, Today, day selection and employee search",
+      "passed": true
+    },
+    {
+      "feature": "Admin attendance search, every status filter and date navigation",
+      "passed": true
+    },
+    {
+      "feature": "Admin attendance all range tabs and custom dates",
+      "passed": true
+    },
+    {
+      "feature": "Admin attendance Record attendance dialog and close",
+      "passed": true
+    },
+    {
+      "feature": "Admin attendance Idle day dialog and close",
+      "passed": true
+    },
+    {
+      "feature": "Admin leave search and every status pill",
+      "passed": true
+    },
+    {
+      "feature": "Admin leave archive search/status/date filters, pagination and refresh",
+      "passed": true
+    },
+    {
+      "feature": "Admin payroll search, status pills and period arrows",
+      "passed": true
+    },
+    {
+      "feature": "Admin salary additions archive search/filter/pagination",
+      "passed": true
+    },
+    {
+      "feature": "Admin cash advance archive search/filter/pagination",
+      "passed": true
+    },
+    {
+      "feature": "Admin cash advance search and status dropdown",
+      "passed": true
+    },
+    {
+      "feature": "Admin insights refresh, forecast days and all model panels",
+      "passed": true
+    },
+    {
+      "feature": "Admin archived employee selection and bulk restore/delete cancellation",
+      "passed": true
+    },
+    {
+      "feature": "Employee overview renders",
+      "passed": true
+    },
+    {
+      "feature": "Employee My Calendar",
+      "passed": true
+    },
+    {
+      "feature": "Employee My Attendance",
+      "passed": true
+    },
+    {
+      "feature": "Employee Leave Requests",
+      "passed": true
+    },
+    {
+      "feature": "Employee My Payroll",
+      "passed": true
+    },
+    {
+      "feature": "Employee My Profile",
+      "passed": true
+    },
+    {
+      "feature": "Employee refresh success toast",
+      "passed": true
+    },
+    {
+      "feature": "Employee contact editor opens and cancels",
+      "passed": true
+    },
+    {
+      "feature": "Employee payroll summary opens and closes",
+      "passed": true
+    },
+    {
+      "feature": "Employee notification filters refresh and close",
+      "passed": true
+    },
+    {
+      "feature": "Mobile employee sidebar opens and navigates",
+      "passed": true
+    },
+    {
+      "feature": "Employee profile contact save submits and confirms",
+      "passed": true
+    },
+    {
+      "feature": "Employee calendar previous/next month and Today",
+      "passed": true
+    },
+    {
+      "feature": "Employee leave date picker ranges, month arrows, selection, clear and submit",
+      "passed": true
+    },
+    {
+      "feature": "Employee leave archive search/filter/date/pagination",
+      "passed": true
+    },
+    {
+      "feature": "Employee payroll archive search/filter/date/pagination",
+      "passed": true
+    },
+    {
+      "feature": "Employee cash advance archive search/filter/date/pagination",
+      "passed": true
+    },
+    {
+      "feature": "Employee cash advance amount validation and send request",
+      "passed": true
+    },
+    {
+      "feature": "Employee history searches and clear buttons",
+      "passed": true
+    },
+    {
+      "feature": "Login password visibility and CAPTCHA refresh",
+      "passed": true
+    },
+    {
+      "feature": "Login empty form validation prevents authentication request",
+      "passed": true
+    },
+    {
+      "feature": "Login recovery cancellation",
+      "passed": true
+    },
+    {
+      "feature": "Login screen and CAPTCHA render",
+      "passed": true
+    },
+    {
+      "feature": "Employee password recovery through all three steps",
+      "passed": true
+    },
+    {
+      "feature": "Password and OTP login opens the administrator workspace",
+      "passed": true
+    },
+    {
+      "feature": "First-login password replacement opens the employee portal",
+      "passed": true
+    },
+    {
+      "feature": "Kiosk page, live attendance and safe scanner-disconnected state",
+      "passed": true
+    },
+    {
+      "feature": "Kiosk return-to-admin link",
+      "passed": true
+    }
+  ],
+  "exceptions": [],
+  "unexpectedApi": [],
+  "requests": [
+    {
+      "method": "GET",
+      "path": "/api/auth/session",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/ai-insights",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/account-security",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/notifications",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/overview",
+      "query": "?performanceDate=2026-10-22&auditDate=2026-10-22"
+    },
+    {
+      "method": "GET",
+      "path": "/api/employees",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/attendance",
+      "query": "?from=2026-10-22&to=2026-10-22"
+    },
+    {
+      "method": "GET",
+      "path": "/api/attendance/idle-days",
+      "query": "?from=2026-10-22&to=2026-11-20"
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/account-security",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/notifications",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/calendar",
+      "query": "?month=2026-10&employeeId="
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/account-security",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/notifications",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/employees",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/account-security",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/notifications",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/leave-requests",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/account-security",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/notifications",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/cash-advance-requests",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/cash-advances",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/payroll/employees",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/payroll-requests",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/account-security",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/notifications",
+      "query": ""
+    },
+    {
+      "method": "POST",
+      "path": "/api/payroll-requests/prepare-bulk",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/payroll-requests",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/account-security",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/notifications",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/ai-insights",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/settings",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/account-security",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/notifications",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/archived-employees",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/system-controls",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/employees",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/account-security",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/notifications",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/account-security",
+      "query": ""
+    },
+    {
+      "method": "POST",
+      "path": "/api/auth/verify-password",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/force-clock-out",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/force-clock-out",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/report/employees",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/report/attendance",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/report/leave_requests",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/report/payroll_requests",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/settings",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/account-security",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/notifications",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/employees",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/account-security",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/notifications",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/employees-next-id",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/cash-advance-requests",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/cash-advances",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/payroll-requests",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/payroll/employees",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/account-security",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/notifications",
+      "query": ""
+    },
+    {
+      "method": "POST",
+      "path": "/api/payroll-requests/prepare-bulk",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/payroll-requests",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/employees",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/account-security",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/notifications",
+      "query": ""
+    },
+    {
+      "method": "POST",
+      "path": "/api/employees/E1/archive",
+      "query": ""
+    },
+    {
+      "method": "POST",
+      "path": "/api/employees/E2/archive",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/account-security",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/notifications",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/calendar",
+      "query": "?month=2026-10&employeeId="
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/calendar",
+      "query": "?month=2026-09&employeeId="
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/calendar",
+      "query": "?month=2026-10&employeeId="
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/calendar",
+      "query": "?month=2026-10&employeeId=E1"
+    },
+    {
+      "method": "GET",
+      "path": "/api/attendance",
+      "query": "?from=2026-10-22&to=2026-10-22"
+    },
+    {
+      "method": "GET",
+      "path": "/api/attendance/idle-days",
+      "query": "?from=2026-10-22&to=2026-11-20"
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/account-security",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/notifications",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/attendance",
+      "query": "?from=2026-10-21&to=2026-10-21"
+    },
+    {
+      "method": "GET",
+      "path": "/api/attendance",
+      "query": "?from=2026-10-22&to=2026-10-22"
+    },
+    {
+      "method": "GET",
+      "path": "/api/attendance",
+      "query": "?from=2026-10-16&to=2026-10-31"
+    },
+    {
+      "method": "GET",
+      "path": "/api/attendance",
+      "query": "?from=2026-10-01&to=2026-10-15"
+    },
+    {
+      "method": "GET",
+      "path": "/api/attendance",
+      "query": "?from=2026-10-22&to=2026-10-22"
+    },
+    {
+      "method": "GET",
+      "path": "/api/attendance/manual",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/attendance/idle-day",
+      "query": "?date=2026-10-22"
+    },
+    {
+      "method": "GET",
+      "path": "/api/leave-requests",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/account-security",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/notifications",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/record-archives/leave",
+      "query": "?search=&status=&type=&from=&to=&page=1"
+    },
+    {
+      "method": "GET",
+      "path": "/api/record-archives/leave",
+      "query": "?search=&status=&type=&from=&to=&page=2"
+    },
+    {
+      "method": "GET",
+      "path": "/api/record-archives/leave",
+      "query": "?search=&status=&type=&from=&to=&page=1"
+    },
+    {
+      "method": "GET",
+      "path": "/api/record-archives/leave",
+      "query": "?search=zz-no-match&status=&type=&from=&to=&page=1"
+    },
+    {
+      "method": "GET",
+      "path": "/api/record-archives/leave",
+      "query": "?search=&status=&type=&from=&to=&page=1"
+    },
+    {
+      "method": "GET",
+      "path": "/api/record-archives/leave",
+      "query": "?search=&status=paid&type=&from=&to=&page=1"
+    },
+    {
+      "method": "GET",
+      "path": "/api/record-archives/leave",
+      "query": "?search=&status=&type=&from=&to=&page=1"
+    },
+    {
+      "method": "GET",
+      "path": "/api/record-archives/leave",
+      "query": "?search=&status=&type=&from=2020-01-20&to=&page=1"
+    },
+    {
+      "method": "GET",
+      "path": "/api/record-archives/leave",
+      "query": "?search=&status=&type=&from=&to=&page=1"
+    },
+    {
+      "method": "GET",
+      "path": "/api/record-archives/leave",
+      "query": "?search=&status=&type=&from=&to=&page=1"
+    },
+    {
+      "method": "GET",
+      "path": "/api/cash-advance-requests",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/cash-advances",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/payroll/employees",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/payroll-requests",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/account-security",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/notifications",
+      "query": ""
+    },
+    {
+      "method": "POST",
+      "path": "/api/payroll-requests/prepare-bulk",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/payroll-requests",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/record-archives/additions",
+      "query": "?search=&status=&type=&from=&to=&page=1"
+    },
+    {
+      "method": "GET",
+      "path": "/api/record-archives/additions",
+      "query": "?search=&status=&type=&from=&to=&page=2"
+    },
+    {
+      "method": "GET",
+      "path": "/api/record-archives/additions",
+      "query": "?search=&status=&type=&from=&to=&page=1"
+    },
+    {
+      "method": "GET",
+      "path": "/api/record-archives/additions",
+      "query": "?search=zz-no-match&status=&type=&from=&to=&page=1"
+    },
+    {
+      "method": "GET",
+      "path": "/api/record-archives/additions",
+      "query": "?search=&status=&type=&from=&to=&page=1"
+    },
+    {
+      "method": "GET",
+      "path": "/api/record-archives/additions",
+      "query": "?search=&status=paid&type=&from=&to=&page=1"
+    },
+    {
+      "method": "GET",
+      "path": "/api/record-archives/additions",
+      "query": "?search=&status=&type=&from=&to=&page=1"
+    },
+    {
+      "method": "GET",
+      "path": "/api/record-archives/additions",
+      "query": "?search=&status=&type=&from=2020-01-20&to=&page=1"
+    },
+    {
+      "method": "GET",
+      "path": "/api/record-archives/additions",
+      "query": "?search=&status=&type=&from=&to=&page=1"
+    },
+    {
+      "method": "GET",
+      "path": "/api/cash-advance-requests",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/cash-advances",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/record-archives/cash",
+      "query": "?search=&status=&type=&from=&to=&page=1"
+    },
+    {
+      "method": "GET",
+      "path": "/api/record-archives/cash",
+      "query": "?search=&status=&type=&from=&to=&page=2"
+    },
+    {
+      "method": "GET",
+      "path": "/api/record-archives/cash",
+      "query": "?search=&status=&type=&from=&to=&page=1"
+    },
+    {
+      "method": "GET",
+      "path": "/api/record-archives/cash",
+      "query": "?search=zz-no-match&status=&type=&from=&to=&page=1"
+    },
+    {
+      "method": "GET",
+      "path": "/api/record-archives/cash",
+      "query": "?search=&status=&type=&from=&to=&page=1"
+    },
+    {
+      "method": "GET",
+      "path": "/api/record-archives/cash",
+      "query": "?search=&status=paid&type=&from=&to=&page=1"
+    },
+    {
+      "method": "GET",
+      "path": "/api/record-archives/cash",
+      "query": "?search=&status=&type=&from=&to=&page=1"
+    },
+    {
+      "method": "GET",
+      "path": "/api/record-archives/cash",
+      "query": "?search=&status=&type=&from=2020-01-20&to=&page=1"
+    },
+    {
+      "method": "GET",
+      "path": "/api/record-archives/cash",
+      "query": "?search=&status=&type=&from=&to=&page=1"
+    },
+    {
+      "method": "GET",
+      "path": "/api/record-archives/cash",
+      "query": "?search=&status=&type=&from=&to=&page=1"
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/account-security",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/notifications",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/ai-insights",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/ai-insights",
+      "query": "?refresh=1"
+    },
+    {
+      "method": "GET",
+      "path": "/api/biometric-evaluation-trials/pending",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/employees",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/archived-employees",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/system-controls",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/account-security",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/notifications",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/account-security",
+      "query": ""
+    },
+    {
+      "method": "POST",
+      "path": "/api/auth/verify-password",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/auth/session",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/employees",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/employee/me",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/employee/me/notifications",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/employee/me/calendar",
+      "query": "?month=2026-10"
+    },
+    {
+      "method": "GET",
+      "path": "/api/employee/me",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/employee/me/notifications",
+      "query": ""
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/employee/me/contact",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/employee/me",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/employee/me/calendar",
+      "query": "?month=2026-10"
+    },
+    {
+      "method": "GET",
+      "path": "/api/employee/me/calendar",
+      "query": "?month=2026-09"
+    },
+    {
+      "method": "GET",
+      "path": "/api/employee/me/calendar",
+      "query": "?month=2026-10"
+    },
+    {
+      "method": "POST",
+      "path": "/api/employee/me/leave-requests",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/employee/me",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/record-archives/leave",
+      "query": "?search=&status=&type=&from=&to=&page=1"
+    },
+    {
+      "method": "GET",
+      "path": "/api/record-archives/leave",
+      "query": "?search=&status=&type=&from=&to=&page=2"
+    },
+    {
+      "method": "GET",
+      "path": "/api/record-archives/leave",
+      "query": "?search=&status=&type=&from=&to=&page=1"
+    },
+    {
+      "method": "GET",
+      "path": "/api/record-archives/leave",
+      "query": "?search=zz-no-match&status=&type=&from=&to=&page=1"
+    },
+    {
+      "method": "GET",
+      "path": "/api/record-archives/leave",
+      "query": "?search=&status=&type=&from=&to=&page=1"
+    },
+    {
+      "method": "GET",
+      "path": "/api/record-archives/leave",
+      "query": "?search=&status=paid&type=&from=&to=&page=1"
+    },
+    {
+      "method": "GET",
+      "path": "/api/record-archives/leave",
+      "query": "?search=&status=&type=&from=&to=&page=1"
+    },
+    {
+      "method": "GET",
+      "path": "/api/record-archives/leave",
+      "query": "?search=&status=&type=&from=2020-01-20&to=&page=1"
+    },
+    {
+      "method": "GET",
+      "path": "/api/record-archives/leave",
+      "query": "?search=&status=&type=&from=&to=&page=1"
+    },
+    {
+      "method": "GET",
+      "path": "/api/employee/me",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/record-archives/payroll",
+      "query": "?search=&status=&type=&from=&to=&page=1"
+    },
+    {
+      "method": "GET",
+      "path": "/api/record-archives/payroll",
+      "query": "?search=&status=&type=&from=&to=&page=2"
+    },
+    {
+      "method": "GET",
+      "path": "/api/record-archives/payroll",
+      "query": "?search=&status=&type=&from=&to=&page=1"
+    },
+    {
+      "method": "GET",
+      "path": "/api/record-archives/payroll",
+      "query": "?search=zz-no-match&status=&type=&from=&to=&page=1"
+    },
+    {
+      "method": "GET",
+      "path": "/api/record-archives/payroll",
+      "query": "?search=&status=&type=&from=&to=&page=1"
+    },
+    {
+      "method": "GET",
+      "path": "/api/record-archives/payroll",
+      "query": "?search=&status=paid&type=&from=&to=&page=1"
+    },
+    {
+      "method": "GET",
+      "path": "/api/record-archives/payroll",
+      "query": "?search=&status=&type=&from=&to=&page=1"
+    },
+    {
+      "method": "GET",
+      "path": "/api/record-archives/payroll",
+      "query": "?search=&status=&type=&from=2020-01-20&to=&page=1"
+    },
+    {
+      "method": "GET",
+      "path": "/api/record-archives/payroll",
+      "query": "?search=&status=&type=&from=&to=&page=1"
+    },
+    {
+      "method": "GET",
+      "path": "/api/employee/me",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/record-archives/cash",
+      "query": "?search=&status=&type=&from=&to=&page=1"
+    },
+    {
+      "method": "GET",
+      "path": "/api/record-archives/cash",
+      "query": "?search=&status=&type=&from=&to=&page=2"
+    },
+    {
+      "method": "GET",
+      "path": "/api/record-archives/cash",
+      "query": "?search=&status=&type=&from=&to=&page=1"
+    },
+    {
+      "method": "GET",
+      "path": "/api/record-archives/cash",
+      "query": "?search=zz-no-match&status=&type=&from=&to=&page=1"
+    },
+    {
+      "method": "GET",
+      "path": "/api/record-archives/cash",
+      "query": "?search=&status=&type=&from=&to=&page=1"
+    },
+    {
+      "method": "GET",
+      "path": "/api/record-archives/cash",
+      "query": "?search=&status=paid&type=&from=&to=&page=1"
+    },
+    {
+      "method": "GET",
+      "path": "/api/record-archives/cash",
+      "query": "?search=&status=&type=&from=&to=&page=1"
+    },
+    {
+      "method": "GET",
+      "path": "/api/record-archives/cash",
+      "query": "?search=&status=&type=&from=2020-01-20&to=&page=1"
+    },
+    {
+      "method": "GET",
+      "path": "/api/record-archives/cash",
+      "query": "?search=&status=&type=&from=&to=&page=1"
+    },
+    {
+      "method": "GET",
+      "path": "/api/employee/me",
+      "query": ""
+    },
+    {
+      "method": "POST",
+      "path": "/api/employee/me/cash-advance-requests",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/employee/me",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/auth/session",
+      "query": ""
+    },
+    {
+      "method": "POST",
+      "path": "/api/auth/logout",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/auth/captcha",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/auth/captcha",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/auth/captcha",
+      "query": ""
+    },
+    {
+      "method": "POST",
+      "path": "/api/auth/forgot-password/request",
+      "query": ""
+    },
+    {
+      "method": "POST",
+      "path": "/api/auth/forgot-password/verify",
+      "query": ""
+    },
+    {
+      "method": "POST",
+      "path": "/api/auth/forgot-password/reset",
+      "query": ""
+    },
+    {
+      "method": "POST",
+      "path": "/api/auth/login",
+      "query": ""
+    },
+    {
+      "method": "POST",
+      "path": "/api/auth/verify-otp",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/employees",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/auth/session",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/employees",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/ai-insights",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/account-security",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/notifications",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/overview",
+      "query": "?performanceDate=2026-10-22&auditDate=2026-10-22"
+    },
+    {
+      "method": "GET",
+      "path": "/api/auth/session",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/employees",
+      "query": ""
+    },
+    {
+      "method": "POST",
+      "path": "/api/auth/change-initial-password",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/employee/me",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/employee/me/notifications",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/auth/session",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/attendance/kiosk/recent",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/employees",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/auth/session",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/employees",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/employees",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/account-security",
+      "query": ""
+    },
+    {
+      "method": "GET",
+      "path": "/api/admin/notifications",
+      "query": ""
+    }
+  ],
+  "limitations": [
+    "Fingerprint capture, physical match quality, and reader reconnection require the connected DigitalPersona device and HID service.",
+    "Native printer output, email delivery and filesystem backup destinations are covered by controlled handler tests, not physical output."
+  ]
+}

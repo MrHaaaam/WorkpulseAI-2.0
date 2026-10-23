@@ -7,6 +7,8 @@
     "test": "node --experimental-strip-types --test backend/src/*.test.js shared/*.test.js scripts/*.test.cjs scripts/page-cache.test.mjs",
     "test:api": "node --test backend/src/all-api-routes.test.js",
     "test:browser": "node scripts/browser-feature-smoke.mjs",
+    "test:buttons": "npm run build && npm run test:api && node scripts/button-audit-browser.mjs",
+    "test:controls": "node scripts/control-inventory.mjs",
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "eslint .",

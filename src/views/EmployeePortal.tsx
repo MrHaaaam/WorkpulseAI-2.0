@@ -1,3 +1,8 @@
+import { useArchiveCutoff } from "../hooks/useArchiveCutoff";
+import { RecordArchives } from "../components/RecordArchives";
+import { keepActiveRecord } from "../../shared/record-archives.js";
+import { RecordFilters } from "../components/ui/RecordFilters";
+import { useRecordFilters } from "../hooks/useRecordFilters";
 import { employeeRoleLabel } from '../../shared/employee-roles.js';
 import { type AttendanceSource } from '../components/AttendanceSourceLabels';
 import { AttendanceCorrectionHistory, type AttendanceCorrection, type CorrectionSession } from '../components/AttendanceCorrectionHistory';
@@ -62,6 +67,7 @@ const sectionCopy: Record<Section, { eyebrow: string; title: string; description
 }
 
 export function EmployeePortal() {
+  const cutoff = useArchiveCutoff();
   const { toast } = useToast()
   const [section, setSection] = usePortalNavigation(portalSections, 'overview')
   const [workspace, setWorkspace] = useState<Workspace | null>(null)
@@ -217,6 +223,8 @@ export function EmployeePortal() {
     { key: 'profile' as const, label: 'My Profile', icon: UserRound },
   ]
   const page = sectionCopy[section]
+  const activeLeaveHistory = workspace.leaveRequests.filter(item => keepActiveRecord("leave", item, cutoff));
+  const activePayrollHistory = workspace.payroll.filter(item => keepActiveRecord("payroll", item, cutoff));
   const selectedAttendance = workspace.attendance.filter((record) => record.date === attendanceDate)
 
   return <div className="portal-shell flex min-h-screen w-full bg-slate-100/70 text-slate-900">
@@ -272,11 +280,11 @@ export function EmployeePortal() {
 
         {section === 'calendar' && <EmployeeCalendar refreshKey={lastUpdated?.getTime() ?? 0} />}
 
-        {section === 'payroll' && <div className="space-y-5"><Panel title="Payroll history" subtitle="Open any pay period to view or print your personal payslip"><DataTable headers={['Pay period', 'Current pay', 'Carried balance', 'Total payout', 'Status', 'Summary']} rows={[...workspace.payroll].sort((a, b) => String(b.periodStart || '').localeCompare(String(a.periodStart || ''))).map((item) => [formatDate(item.periodStart), money(item.currentAmount), money(item.carryOverAmount), <strong key={`${item.id}-amount`} className="text-slate-900">{money(item.amount)}</strong>, <Status key={`${item.id}-status`} value={item.status} payroll />, <button key={`${item.id}-view`} type="button" onClick={() => setSelectedPayrollId(item.id)} className="inline-flex h-9 items-center gap-2 whitespace-nowrap rounded-lg border border-violet-200 bg-violet-50 px-3 text-xs font-semibold text-violet-700 hover:bg-violet-100 focus:outline-none focus:ring-4 focus:ring-violet-200"><Eye className="h-4 w-4" />View summary</button>])} empty="No payroll records yet." /></Panel><EmployeeCashAdvancePanel maxAmount={workspace.cashAdvanceMax} payroll={workspace.payroll} summary={workspace.cashAdvance} requests={workspace.cashAdvanceRequests || []} onChanged={loadWorkspace}/></div>}
+        {section === 'payroll' && <div className="space-y-5"><Panel title="Payroll history" subtitle="Open any pay period to view or print your personal payslip"><div className="mb-4 flex justify-end"><RecordArchives kind="payroll" title="Payroll history" employee onViewPayroll={setSelectedPayrollId} /></div><DataTable label="payroll history" metadata={[...activePayrollHistory].sort((a, b) => String(b.periodStart || '').localeCompare(String(a.periodStart || ''))).map(item => ({ text: `${formatDate(item.periodStart)} ${item.periodStart} ${money(item.currentAmount)} ${money(item.carryOverAmount)} ${money(item.amount)} ${item.status}`, category: item.status === 'processing' ? 'Ready to pay' : item.status === 'rejected' ? 'Payment on hold' : item.status.replaceAll('_', ' ') }))} headers={['Pay period', 'Current pay', 'Carried balance', 'Total payout', 'Status', 'Summary']} rows={[...activePayrollHistory].sort((a, b) => String(b.periodStart || '').localeCompare(String(a.periodStart || ''))).map((item) => [formatDate(item.periodStart), money(item.currentAmount), money(item.carryOverAmount), <strong key={`${item.id}-amount`} className="text-slate-900">{money(item.amount)}</strong>, <Status key={`${item.id}-status`} value={item.status} payroll />, <button key={`${item.id}-view`} type="button" onClick={() => setSelectedPayrollId(item.id)} className="inline-flex h-9 items-center gap-2 whitespace-nowrap rounded-lg border border-violet-200 bg-violet-50 px-3 text-xs font-semibold text-violet-700 hover:bg-violet-100 focus:outline-none focus:ring-4 focus:ring-violet-200"><Eye className="h-4 w-4" />View summary</button>])} empty="No payroll records yet." /></Panel><EmployeeCashAdvancePanel maxAmount={workspace.cashAdvanceMax} payroll={workspace.payroll} summary={workspace.cashAdvance} requests={workspace.cashAdvanceRequests || []} onChanged={loadWorkspace}/></div>}
 
         {section === 'leave' && <div className="grid gap-5 xl:grid-cols-[.82fr_1.18fr]">
           <Panel title="Request leave" subtitle="Your administrator will review the dates you select"><form onSubmit={submitLeave} className="mt-5 space-y-4"><Field label="Leave type"><select value={leaveDraft.leaveType} onChange={(event) => setLeaveDraft((current) => ({ ...current, leaveType: event.target.value }))} className="input"><option>Annual Leave</option><option>Sick Leave</option><option>Personal Leave</option><option>Maternity Leave</option></select></Field><LeaveDatePicker maxDates={MAX_LEAVE_REQUEST_DAYS} selected={leaveDraft.requestedDates} workSchedule={workspace.workSchedule} onChange={(requestedDates)=>setLeaveDraft(current=>({...current,requestedDates}))}/><Field label="Reason"><Textarea required minLength={5} maxLength={500} rows={4} value={leaveDraft.reason} onChange={(event) => setLeaveDraft((current) => ({ ...current, reason: event.target.value }))} className="input h-auto py-3" placeholder="Briefly explain your request" /></Field><button disabled={submitting||leaveDraft.requestedDates.length===0||leaveDraft.requestedDates.length>MAX_LEAVE_REQUEST_DAYS} className="flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-[#8642ED] text-sm font-semibold text-white shadow-lg shadow-violet-600/15 hover:bg-violet-700 disabled:opacity-60"><Send className="h-4 w-4" />{submitting ? 'Submitting...' : `Submit ${leaveDraft.requestedDates.length} ${leaveDraft.requestedDates.length===1?'date':'dates'}`}</button></form></Panel>
-          <Panel title="Request history" subtitle="Past unapproved dates are Passed; remaining dates stay Pending"><DataTable headers={['Leave type', 'Dates', 'Days', 'Status']} rows={workspace.leaveRequests.map((item) => { const progress = leaveDateProgress(item, manilaToday()); return [item.leaveType, <LeaveDateLabels key={`${item.id}-dates`} leave={item} />, String(item.totalDays), <div key={item.id} className="flex flex-wrap items-center gap-2"><Status value={progress.status} />{progress.pendingDates.length > 0 && progress.passedDates.length > 0 && <span className="text-xs text-slate-500">{progress.pendingDates.length} pending · {progress.passedDates.length} passed</span>}{progress.status==='pending'&&<button type="button" onClick={()=>setCancelLeaveTarget(item)} className="rounded-lg border border-rose-200 px-2 py-1 text-xs font-semibold text-rose-700 hover:bg-rose-50 focus:outline-none focus:ring-2 focus:ring-rose-300">Cancel</button>}</div>]; })} empty="No leave requests yet." /></Panel>
+          <Panel title="Request history" subtitle="Past unapproved dates are Passed; remaining dates stay Pending"><div className="mb-4 flex justify-end"><RecordArchives kind="leave" title="Request history" employee /></div><DataTable label="leave requests" metadata={activeLeaveHistory.map(item => ({ text: `${item.leaveType} ${requestedLeaveDatesFor(item).map(formatDate).join(' ')} ${requestedLeaveDatesFor(item).join(' ')} ${item.totalDays} ${leaveDateProgress(item, manilaToday()).status}`, category: leaveDateProgress(item, manilaToday()).status }))} headers={['Leave type', 'Dates', 'Days', 'Status']} rows={activeLeaveHistory.map((item) => { const progress = leaveDateProgress(item, manilaToday()); return [item.leaveType, <LeaveDateLabels key={`${item.id}-dates`} leave={item} />, String(item.totalDays), <div key={item.id} className="flex flex-wrap items-center gap-2"><Status value={progress.status} />{progress.pendingDates.length > 0 && progress.passedDates.length > 0 && <span className="text-xs text-slate-500">{progress.pendingDates.length} pending · {progress.passedDates.length} passed</span>}{progress.status==='pending'&&<button type="button" onClick={()=>setCancelLeaveTarget(item)} className="rounded-lg border border-rose-200 px-2 py-1 text-xs font-semibold text-rose-700 hover:bg-rose-50 focus:outline-none focus:ring-2 focus:ring-rose-300">Cancel</button>}</div>]; })} empty="No leave requests yet." /></Panel>
         </div>}
 
         {section === 'profile' && <div className="grid gap-5 xl:grid-cols-[1.15fr_.85fr]">
@@ -344,10 +352,10 @@ function LeaveDateLabels({ leave }: { leave: Leave }) {
 }
 
 function AttendanceRows({ records, showDate = true }: { records: Attendance[]; showDate?: boolean }) {
-  if (!records.length) return <EmptyState icon={Clock3} text="No attendance record was found for this date." />
-  return <div className="overflow-x-auto"><table className="w-full min-w-[480px] text-left text-sm">
+  const filters = useRecordFilters(records, record => `${record.date} ${formatDate(record.date)} ${record.status} ${attendanceSessions(record).map(session => `${formatTime(session.checkIn)} ${session.checkOut ? formatTime(session.checkOut) : "Open"}`).join(" ")}`, record => record.status)
+  return <div><RecordFilters label="attendance records" {...filters} /><div className="overflow-x-auto"><table className="w-full min-w-[480px] text-left text-sm">
     <thead className="border-b border-slate-100 bg-slate-50/70 text-xs font-medium uppercase tracking-wide text-slate-500"><tr><th className="px-4 py-3">{showDate ? 'Date' : 'Attendance'}</th><th className="px-4 py-3">Sessions</th><th className="px-4 py-3">Status</th></tr></thead>
-    <tbody>{records.map(record => {
+    <tbody>{filters.items.map(record => {
       const sessions = attendanceSessions(record)
       const edited = Boolean(record.correctionHistory?.length) || sessions.some(session => Boolean(session.correctedAt))
       const manual = sessions.some(session => session.captureMethod === 'admin-manual' || session.manualClockOut || session.forcedClockOut || session.correctedAt)
@@ -357,7 +365,7 @@ function AttendanceRows({ records, showDate = true }: { records: Attendance[]; s
         <td className="px-4 py-5 align-middle"><Status value={record.status} /></td>
       </tr>{edited && <tr className="border-b border-slate-100 last:border-0"><td colSpan={3} className="px-4 pb-5 pt-1"><AttendanceCorrectionHistory history={record.correctionHistory} sessions={sessions} expanded={!showDate} /></td></tr>}</Fragment>
     })}</tbody>
-  </table></div>
+  </table></div>{!filters.items.length && <EmptyState icon={Clock3} text={records.length ? "No attendance records match your filters." : "No attendance record was found for this date."} />}</div>
 }
 
 function Panel({ title, subtitle, children }: { title: string; subtitle: string; children: React.ReactNode }) {
@@ -380,8 +388,9 @@ function Status({ value, payroll = false }: { value: string; payroll?: boolean }
   return <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold capitalize ${value === 'passed' ? 'bg-slate-100 text-slate-700 ring-1 ring-slate-200' : good ? 'bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200' : bad ? 'bg-rose-50 text-rose-700 ring-1 ring-rose-200' : 'bg-amber-50 text-amber-700 ring-1 ring-amber-200'}`}>{label}</span>
 }
 
-function DataTable({ headers, rows, empty }: { headers: string[]; rows: React.ReactNode[][]; empty: string }) {
-  return <div className="overflow-x-auto"><table className="employee-record-table w-full min-w-[620px] text-left text-sm"><thead><tr className="border-b border-slate-200 bg-slate-50/70">{headers.map((header) => <th key={header} scope="col" className="px-4 py-3 text-[11px] font-bold uppercase tracking-wider text-slate-400">{header}</th>)}</tr></thead><tbody>{rows.map((row, index) => <tr key={index} className="border-b border-slate-100 transition last:border-0 hover:bg-slate-50/70">{row.map((cell, cellIndex) => <td key={cellIndex} data-label={headers[cellIndex]} className="px-4 py-4 text-slate-600">{cell}</td>)}</tr>)}</tbody></table>{!rows.length && <EmptyState icon={WalletCards} text={empty} />}</div>
+function DataTable({ label, headers, rows, metadata, empty }: { label: string; headers: string[]; rows: React.ReactNode[][]; metadata: { text: string; category: string }[]; empty: string }) {
+  const filters = useRecordFilters(rows.map((cells, index) => ({ cells, index, ...metadata[index] })), row => row.text, row => row.category)
+  return <div><RecordFilters label={label} {...filters} /><div className="overflow-x-auto"><table className="employee-record-table w-full min-w-[620px] text-left text-sm"><thead><tr className="border-b border-slate-200 bg-slate-50/70">{headers.map(header => <th key={header} scope="col" className="px-4 py-3 text-[11px] font-bold uppercase tracking-wider text-slate-400">{header}</th>)}</tr></thead><tbody>{filters.items.map(row => <tr key={row.index} className="border-b border-slate-100 transition last:border-0 hover:bg-slate-50/70">{row.cells.map((cell, index) => <td key={index} data-label={headers[index]} className="px-4 py-4 text-slate-600">{cell}</td>)}</tr>)}</tbody></table></div>{!filters.items.length && <EmptyState icon={WalletCards} text={rows.length ? "No records match your filters." : empty} />}</div>
 }
 
 function EmptyState({ icon: Icon, text }: { icon: typeof Clock3; text: string }) {

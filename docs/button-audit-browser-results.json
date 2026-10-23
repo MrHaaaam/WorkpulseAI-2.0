@@ -1,0 +1,176 @@
+{
+  "generatedAt": "2026-10-22T07:05:10.458Z",
+  "scope": "Real headless Edge; built React app with controlled API fixtures. No live accounts or hardware.",
+  "results": [
+    {
+      "feature": "Administrator overview renders",
+      "passed": true
+    },
+    {
+      "feature": "Administrator Attendance",
+      "passed": true
+    },
+    {
+      "feature": "Administrator Calendar",
+      "passed": true
+    },
+    {
+      "feature": "Administrator Employee Directory",
+      "passed": true
+    },
+    {
+      "feature": "Administrator Leave Requests",
+      "passed": true
+    },
+    {
+      "feature": "Administrator Payroll",
+      "passed": true
+    },
+    {
+      "feature": "Administrator Insights",
+      "passed": true
+    },
+    {
+      "feature": "Administrator System Settings",
+      "passed": true
+    },
+    {
+      "feature": "Administrator Admin Controls",
+      "passed": true
+    },
+    {
+      "feature": "Administrator controls unlock",
+      "passed": true
+    },
+    {
+      "feature": "Admin Ban confirmation and Cancel",
+      "passed": true
+    },
+    {
+      "feature": "Admin Turn on confirmation and Cancel",
+      "passed": true
+    },
+    {
+      "feature": "Admin Restrict confirmation and Cancel",
+      "passed": true
+    },
+    {
+      "feature": "Admin Choose & save confirmation and Cancel",
+      "passed": true
+    },
+    {
+      "feature": "Admin archive filters and close",
+      "passed": true
+    },
+    {
+      "feature": "Admin restore confirmation and cancel",
+      "passed": true
+    },
+    {
+      "feature": "Admin permanent deletion dialog and cancel",
+      "passed": true
+    },
+    {
+      "feature": "Admin force clock-out refresh and close",
+      "passed": true
+    },
+    {
+      "feature": "Admin credential update confirmation and cancel",
+      "passed": true
+    },
+    {
+      "feature": "Admin Employees workbook download handler",
+      "passed": true
+    },
+    {
+      "feature": "Admin Attendance workbook download handler",
+      "passed": true
+    },
+    {
+      "feature": "Admin Leave workbook download handler",
+      "passed": true
+    },
+    {
+      "feature": "Admin Payroll workbook download handler",
+      "passed": true
+    },
+    {
+      "feature": "Admin lock confirmation",
+      "passed": true
+    },
+    {
+      "feature": "Admin settings save dialog, password toggle and cancel",
+      "passed": true
+    },
+    {
+      "feature": "Admin directory table/cards and add employee cancellation",
+      "passed": true
+    },
+    {
+      "feature": "Admin payroll bonus amount and scope survive rerender",
+      "passed": true
+    },
+    {
+      "feature": "Employee overview renders",
+      "passed": true
+    },
+    {
+      "feature": "Employee My Calendar",
+      "passed": true
+    },
+    {
+      "feature": "Employee My Attendance",
+      "passed": true
+    },
+    {
+      "feature": "Employee Leave Requests",
+      "passed": true
+    },
+    {
+      "feature": "Employee My Payroll",
+      "passed": true
+    },
+    {
+      "feature": "Employee My Profile",
+      "passed": true
+    },
+    {
+      "feature": "Employee refresh success toast",
+      "passed": true
+    },
+    {
+      "feature": "Employee contact editor opens and cancels",
+      "passed": true
+    },
+    {
+      "feature": "Employee payroll summary opens and closes",
+      "passed": true
+    },
+    {
+      "feature": "Employee notification filters refresh and close",
+      "passed": true
+    },
+    {
+      "feature": "Mobile employee sidebar opens and navigates",
+      "passed": true
+    },
+    {
+      "feature": "Login screen and CAPTCHA render",
+      "passed": true
+    },
+    {
+      "feature": "Employee password recovery through all three steps",
+      "passed": true
+    },
+    {
+      "feature": "Password and OTP login opens the administrator workspace",
+      "passed": true
+    },
+    {
+      "feature": "First-login password replacement opens the employee portal",
+      "passed": true
+    }
+  ],
+  "exceptions": [],
+  "unexpectedApi": []
+}

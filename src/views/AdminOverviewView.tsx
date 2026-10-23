@@ -1,3 +1,5 @@
+import { RecordFilters } from "../components/ui/RecordFilters";
+import { useRecordFilters } from "../hooks/useRecordFilters";
 import { employeeRole } from '../../shared/employee-roles.js';
 import { Input } from "../components/ui/Input";
 import { AdminPageHeader } from "../components/AdminPageHeader";
@@ -132,7 +134,8 @@ export function AdminOverviewView({
   auditDate,
   onAuditDateChange,
 }: AdminOverviewProps) {
-  const auditPage = usePagination(auditTrail, auditDate);
+  const auditFilters = useRecordFilters(auditTrail, item => `${item.user} ${item.role} ${item.action} ${item.detail || ""} ${item.date} ${item.time} ${item.status}`, item => item.status);
+  const auditPage = usePagination(auditFilters.items, `${auditDate}|${auditFilters.resetKey}`);
   const insightsAttention = useInsightsAttention();
   const chartData = attendanceTrends?.[viewMode] || [];
   const chartHasData = chartData.some((item) => item.present > 0 || item.absent > 0);
@@ -490,6 +493,7 @@ export function AdminOverviewView({
           </div>
         </CardHeader>
         <CardContent>
+          <RecordFilters label="audit events" {...auditFilters} />
           <div className={`overflow-x-auto ${auditTrail.length >= 15 ? 'max-h-[42rem] overflow-y-auto' : ''}`}>
             <table className="w-full text-left text-sm text-slate-600">
               <caption className="sr-only">System audit events showing the screen, access level, action, timestamp, and outcome.</caption>
@@ -530,7 +534,7 @@ export function AdminOverviewView({
                     </td>
                   </tr>
                 ))}
-                {auditTrail.length === 0 && <tr><td colSpan={5} className={`px-4 py-10 text-center text-sm ${auditError ? 'text-rose-600' : 'text-slate-400'}`}>{auditLoading ? 'Loading audit events…' : auditError || 'No activity recorded for this date.'}</td></tr>}
+                {auditFilters.items.length === 0 && <tr><td colSpan={5} className={`px-4 py-10 text-center text-sm ${auditError ? 'text-rose-600' : 'text-slate-400'}`}>{auditLoading ? 'Loading audit events…' : auditError || (auditTrail.length ? 'No activity matches your filters.' : 'No activity recorded for this date.')}</td></tr>}
               </tbody>
             </table>
             <PaginationControls {...auditPage} onPageChange={auditPage.setPage} />
@@ -569,7 +573,8 @@ export function OverviewView({
 }: OverviewViewProps) {
   const [viewMode, setViewMode] = useState<ViewMode>("weekly");
   const chartData = attendanceTrends?.[viewMode] || [];
-  const activityPage = usePagination(recentActivities);
+  const activityFilters = useRecordFilters(recentActivities, item => `${item.user} ${item.role} ${item.action} ${item.date} ${item.time} ${item.status}`, item => item.status);
+  const activityPage = usePagination(activityFilters.items, activityFilters.resetKey);
 
   const managerMetrics = [
     { label: "Total Active Staff", value: metrics.totalActiveStaff.toString(), change: "+2", trend: "up", icon: Users, ...cardColorStyles.purple },
@@ -746,6 +751,7 @@ export function OverviewView({
             </div>
           </CardHeader>
           <CardContent>
+            <RecordFilters label="recent activities" {...activityFilters} />
             <div className="overflow-x-auto">
               <table className="w-full text-left text-sm text-slate-600">
                 <thead className="border-b border-slate-200 bg-slate-50/50 text-xs uppercase text-slate-500">
@@ -758,6 +764,7 @@ export function OverviewView({
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
+                  {!activityFilters.items.length && <tr><td colSpan={5} className="px-4 py-10 text-center text-slate-500">No activities match your filters.</td></tr>}
                   {activityPage.pageItems.map((activity) => (
                     <tr key={activity.id} className="hover:bg-slate-50/50">
                       <td className="whitespace-nowrap px-4 py-3 font-medium text-slate-900">{activity.user}</td>
