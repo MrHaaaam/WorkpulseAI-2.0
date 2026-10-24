@@ -28,3 +28,16 @@ dist-ssr
 # Local recovery previews and current-data safety backups
 backend/recovery-preview*.json
 backend/pre-recovery-*.json
+
+# Local tooling and deployment exclusions
+.codex/
+.agents/
+docs/
+edited-chapters/
+.venv/
+__pycache__/
+.env.*
+!.env.example
+*.pem
+*.key
+
