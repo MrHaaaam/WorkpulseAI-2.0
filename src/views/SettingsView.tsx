@@ -1,0 +1,275 @@
+import { readPageCache, writePageCache, pageCacheGeneration } from "../lib/pageCache";
+import { BoundedNumberInput } from "../components/ui/BoundedNumberInput";
+import { HOURLY_RATE_MAX, settingsNumbersValidationError } from "../../shared/field-limits.js";
+import { workHourOrderError } from "../../shared/work-hours.js";
+import { AdminPageHeader } from "../components/AdminPageHeader";
+import { useEffect, useRef, useState } from "react";
+import { Settings, CalendarDays, ChevronLeft, ChevronRight, Clock, Eye, EyeOff, KeyRound, Save, WalletCards } from "lucide-react";
+
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../components/ui/Card";
+import { Input, Label } from "../components/ui/Input";
+import { Button } from "../components/ui/Button";
+import { useToast } from "../components/ui/Toast";
+import { apiFetch } from "../lib/api";
+import { useAdminPasswordRetry } from "../lib/adminPasswordRetry";
+import { Dialog, DialogClose, DialogHeader } from "../components/ui/Dialog";
+
+type Settings = {
+  shift: { enabled: boolean; startTime: string; workStopTime: string; autoClockOutTime: string; workDays: number; workWeekdays: number[]; scheduleOverrides: { date: string; working: boolean; kind?: "holiday" | "rest-day" | "workday" }[] };
+  payroll: { hourlyRates: { regular: number | ""; extra: number | ""; manager: number | "" }; cashAdvanceMax: number | "" };
+};
+
+function isoDate(date: Date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function todayInManila() {
+  const parts = Object.fromEntries(new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Manila", year: "numeric", month: "2-digit", day: "2-digit",
+  }).formatToParts(new Date()).filter((part) => part.type !== "literal").map((part) => [part.type, part.value]));
+  return `${parts.year}-${parts.month}-${parts.day}`;
+}
+
+function monthDates(month: Date) {
+  const first = new Date(month.getFullYear(), month.getMonth(), 1, 12);
+  const count = new Date(month.getFullYear(), month.getMonth() + 1, 0).getDate();
+  return {
+    leading: first.getDay(),
+    dates: Array.from({ length: count }, (_, index) => { const date = new Date(first); date.setDate(index + 1); return { value: isoDate(date), day: date.toLocaleDateString("en-PH", { weekday: "short" }), number: index + 1 }; }),
+  };
+}
+
+const defaults: Settings = {
+  shift: { enabled: true, startTime: "06:00", workStopTime: "18:00", autoClockOutTime: "21:00", workDays: 7, workWeekdays: [0, 1, 2, 3, 4, 5, 6], scheduleOverrides: [] },
+  payroll: { hourlyRates: { regular: 50, extra: 40, manager: 50 }, cashAdvanceMax: 1000 },
+};
+
+export function SettingsView() {
+  const { toast } = useToast();
+  const [settings, setLoadedSettings] = useState<Settings>(() => readPageCache<Settings>("settings") ?? defaults);
+  const editRevision = useRef(0);
+  const setSettings: typeof setLoadedSettings = (value) => { editRevision.current++; setLoadedSettings(value); };
+  const [saving, setSaving] = useState(false);
+  const [loadingSettings, setLoadingSettings] = useState(true);
+  const [loadError, setLoadError] = useState("");
+  const passwordRetrySeconds = useAdminPasswordRetry();
+  const [scheduleMonth, setScheduleMonth] = useState(() => { const now = new Date(); return new Date(now.getFullYear(), now.getMonth(), 1); });
+  const [scheduleMode, setScheduleMode] = useState<"holiday" | "rest-day" | "workday">("holiday");
+  const [passwordDialogOpen, setPasswordDialogOpen] = useState(false);
+  const [adminPassword, setAdminPassword] = useState("");
+  const [showAdminPassword, setShowAdminPassword] = useState(false);
+  const visibleScheduleDates = monthDates(scheduleMonth);
+  const today = todayInManila();
+  const specialScheduleActive = settings.shift.scheduleOverrides.some((entry) => entry.date >= today);
+
+  useEffect(() => {
+    const generation = pageCacheGeneration();
+    let active = true;
+    const revision = editRevision.current;
+    apiFetch("/api/settings")
+      .then((response) => response.ok ? response.json() : Promise.reject())
+      .then((data) => { if (!active || editRevision.current !== revision) return; const loaded: Settings = {
+        shift: { ...defaults.shift, ...(data.shift ?? {}) },
+        payroll: { hourlyRates: { regular: data.payroll?.hourlyRates?.regular ?? defaults.payroll.hourlyRates.regular, extra: data.payroll?.hourlyRates?.extra ?? defaults.payroll.hourlyRates.extra, manager: data.payroll?.hourlyRates?.manager ?? data.payroll?.hourlyRates?.supervisor ?? defaults.payroll.hourlyRates.manager }, cashAdvanceMax: data.payroll?.cashAdvanceMax ?? defaults.payroll.cashAdvanceMax },
+      }; writePageCache("settings", loaded, generation); setLoadedSettings(loaded); })
+      .catch(() => { if (active) setLoadError("Company settings could not load. Reopen this page before saving changes."); })
+      .finally(() => { if (active) setLoadingSettings(false); });
+    return () => { active = false; };
+  }, []);
+
+  const setShift = (value: Partial<Settings["shift"]>) => {
+    setSettings((current) => ({ ...current, shift: { ...current.shift, ...value } }));
+  };
+
+  const save = async () => {
+    if (loadingSettings || loadError) { toast({ title: "Settings unavailable", description: loadError || "Wait for the company settings to finish loading.", variant: "error" }); return; }
+    if (!adminPassword || passwordRetrySeconds > 0) return;
+    if (Object.values(settings.payroll.hourlyRates).some(rate => rate === "")) {
+      toast({ title: "Complete the number fields", description: "Enter the hourly-rate values before saving.", variant: "error" });
+      return;
+    }
+    if (settings.payroll.cashAdvanceMax === "" || Number(settings.payroll.cashAdvanceMax) < 1 || Number(settings.payroll.cashAdvanceMax) > 1000000) {
+      toast({ title: "Check cash advance limit", description: "Enter an amount from ₱1 to ₱1,000,000.", variant: "error" });
+      return;
+    }
+    const numberError = settingsNumbersValidationError(settings);
+    if (numberError) { toast({ title: "Check the number fields", description: numberError, variant: "error" }); return; }
+    const timeError = workHourOrderError(settings.shift.startTime, settings.shift.workStopTime, settings.shift.autoClockOutTime);
+    if (timeError) { toast({ title: "Check the work times", description: timeError, variant: "error" }); return; }
+    const generation = pageCacheGeneration();
+    setSaving(true);
+    try {
+      const response = await apiFetch("/api/settings", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...settings, adminPassword }),
+      });
+      const saved = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(saved.error || "The server could not save your settings.");
+      const loaded: Settings = {
+        shift: { ...defaults.shift, ...(saved.shift ?? {}) },
+        payroll: { hourlyRates: { ...defaults.payroll.hourlyRates, ...(saved.payroll?.hourlyRates ?? {}) }, cashAdvanceMax: saved.payroll?.cashAdvanceMax ?? defaults.payroll.cashAdvanceMax },
+      };
+      editRevision.current++;
+      writePageCache("settings", loaded, generation);
+      setLoadedSettings(loaded);
+      setAdminPassword("");
+      setPasswordDialogOpen(false);
+      toast({ title: "Settings saved", description: saved.clearedIdleDays?.length ? `${saved.clearedIdleDays.length} idle ${saved.clearedIdleDays.length === 1 ? 'day was' : 'days were'} removed because the dates are now holidays or rest days.` : "The company rules are now up to date.", variant: "success" });
+    } catch (reason) {
+      toast({ title: "Settings not saved", description: reason instanceof Error ? reason.message : "Please try again.", variant: "error" });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="space-y-6">
+      {loadError && <p role="alert" className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">{loadError}</p>}
+      <AdminPageHeader title="System Settings" description="Set attendance schedules and hourly pay rates. Save when finished." icon={Settings} />
+      {loadingSettings && <p role="status" className="text-sm text-slate-500">Loading company settings...</p>}
+      <fieldset disabled={loadingSettings || saving || Boolean(loadError)} aria-label="Company settings" className="min-w-0 space-y-6">
+
+      <div className="grid grid-cols-1 items-start gap-6 xl:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)]">
+        <div className="min-w-0 space-y-6">
+        <Card className="min-w-0 overflow-hidden">
+          <CardHeader className="border-b border-slate-100 bg-slate-50/70">
+            <div className="flex items-start justify-between gap-4">
+              <div className="flex gap-3">
+                <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-violet-100">
+                  <Clock className="h-5 w-5 text-[#8642ED]" />
+                </div>
+                <div>
+                  <CardTitle>Work Hour Control</CardTitle>
+                  <CardDescription>Set regular work hours and the latest overtime clock-out time.</CardDescription>
+                </div>
+              </div>
+            </div>
+          </CardHeader>
+          <CardContent className="space-y-5 pt-5">
+            <p className="text-sm text-slate-500">Work-hour rules apply automatically.</p>
+            <div className="grid gap-4 sm:grid-cols-3">
+              <div className="space-y-2">
+                <Label>Work starts at</Label>
+                <Input type="time" value={settings.shift.startTime} onChange={(event) => setShift({ startTime: event.target.value })} />
+                <p className="text-xs text-slate-500">The usual start of work.</p>
+              </div>
+              <div className="space-y-2">
+                <Label>Work stops at</Label>
+                <Input type="time" value={settings.shift.workStopTime} onChange={(event) => setShift({ workStopTime: event.target.value })} />
+                <p className="text-xs text-slate-500">Hours after this are overtime.</p>
+              </div>
+              <div className="space-y-2">
+                <Label>Overtime stops at</Label>
+                <Input type="time" value={settings.shift.autoClockOutTime} onChange={(event) => setShift({ autoClockOutTime: event.target.value })} />
+                <p className="text-xs text-slate-500">Open shifts clock out automatically here.</p>
+              </div>
+            </div>
+            <p className="text-xs text-violet-700">Overtime uses the same hourly rate. The overtime stop is the latest paid time for an open shift.</p>
+
+            <div className="hidden">
+              <Label>Normal work days each week</Label>
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+                {[5, 6, 7].map((days) => (
+                  <button key={days} type="button" disabled={specialScheduleActive} onClick={() => setShift({ workDays: days, workWeekdays: Array.from({ length: days }, (_, index) => index + 1).map((day) => day === 7 ? 0 : day) })} className={`rounded-xl border px-3 py-3 text-sm font-semibold transition disabled:cursor-not-allowed disabled:border-slate-200 disabled:bg-slate-100 disabled:text-slate-400 ${!specialScheduleActive && settings.shift.workDays === days ? "border-violet-400 bg-violet-50 text-violet-700" : "border-slate-200 bg-white text-slate-600 hover:border-violet-200"}`}>
+                    {days} days
+                  </button>
+                ))}
+              </div>
+              {specialScheduleActive && <p className="text-xs text-slate-500">Normal schedule choices are paused while special dates exist.</p>}
+              {!specialScheduleActive && <div className="space-y-2 pt-1"><p className="text-xs font-semibold text-slate-700">Select exactly {settings.shift.workDays} regular workdays</p><div className="grid grid-cols-4 gap-2 sm:grid-cols-7">{[[1,"Mon"],[2,"Tue"],[3,"Wed"],[4,"Thu"],[5,"Fri"],[6,"Sat"],[0,"Sun"]].map(([day,label]) => {
+                const selected = settings.shift.workWeekdays.includes(day as number);
+                return <button key={day} type="button" aria-pressed={selected} onClick={() => setShift({ workWeekdays: selected ? settings.shift.workWeekdays.filter((value) => value !== day) : settings.shift.workWeekdays.length < settings.shift.workDays ? [...settings.shift.workWeekdays, day as number] : settings.shift.workWeekdays })} className={`rounded-lg border px-2 py-2 text-xs font-bold transition ${selected ? "border-violet-400 bg-violet-100 text-violet-800" : "border-slate-200 bg-white text-slate-500 hover:border-violet-300"}`}>{label}</button>;
+              })}</div><p className={`text-xs ${settings.shift.workWeekdays.length === settings.shift.workDays ? "text-emerald-600" : "font-medium text-amber-600"}`}>{settings.shift.workWeekdays.length} of {settings.shift.workDays} days selected{settings.shift.workWeekdays.length === settings.shift.workDays ? "." : " — select the remaining days before saving."}</p></div>}
+            </div>
+
+
+          </CardContent>
+        </Card>
+        <Card className="min-w-0 overflow-hidden">
+          <CardHeader className="border-b border-violet-100 bg-violet-50/50">
+            <div className="flex items-center gap-3">
+              <span className="rounded-xl bg-violet-100 p-2 text-violet-700"><WalletCards className="h-5 w-5" /></span>
+              <div><CardTitle>Cash advance limit</CardTitle><CardDescription>Set the most an employee can receive in one 15-day payroll period.</CardDescription></div>
+            </div>
+          </CardHeader>
+          <CardContent className="space-y-3 pt-5">
+            <div className="max-w-sm space-y-2">
+              <Label htmlFor="cash-advance-max">Maximum per employee per payroll period (₱)</Label>
+              <BoundedNumberInput id="cash-advance-max" min="1" max={1000000} value={settings.payroll.cashAdvanceMax} onChange={event => setSettings(current => ({ ...current, payroll: { ...current.payroll, cashAdvanceMax: event.target.value === "" ? "" : Number(event.target.value) } }))} />
+            </div>
+            <p className="text-sm text-slate-500">Employees may request again next period even with debt. Repayment stays at up to ₱200 total per paid payroll.</p>
+          </CardContent>
+        </Card>
+        </div>
+        <Card className="min-w-0 overflow-hidden">
+          <CardHeader className="border-b border-slate-100 bg-slate-50/70">
+            <div className="flex gap-3">
+              <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-amber-50">
+                <WalletCards className="h-5 w-5 text-amber-600" />
+              </div>
+              <div>
+                <CardTitle>Hourly Pay Rates</CardTitle>
+                <CardDescription>Set the company rate used to calculate attendance-based payroll.</CardDescription>
+              </div>
+            </div>
+          </CardHeader>
+          <CardContent className="space-y-5 pt-5">
+            <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+              Allowed: PHP 1-10,000 per hour, up to 2 decimal places. New rates update future and unpaid payroll calculations. Paid payroll remains unchanged.
+            </div>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div className="space-y-2"><Label htmlFor="regular-hourly-rate">Regular employee rate</Label><div className="relative"><span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-slate-500">₱</span><BoundedNumberInput id="regular-hourly-rate" className="pl-8 pr-16" min="1" max={HOURLY_RATE_MAX} title="1 to 10,000; up to 2 decimal places" value={settings.payroll.hourlyRates.regular} onChange={(event) => setSettings((current) => ({ ...current, payroll: { ...current.payroll, hourlyRates: { ...current.payroll.hourlyRates, regular: event.target.value === "" ? "" : Number(event.target.value) } } }))} /><span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-xs text-slate-400">/ hour</span></div></div>
+              <div className="space-y-2"><Label htmlFor="extra-hourly-rate">Extra employee rate</Label><div className="relative"><span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-slate-500">₱</span><BoundedNumberInput id="extra-hourly-rate" className="pl-8 pr-16" min="1" max={HOURLY_RATE_MAX} title="1 to 10,000; up to 2 decimal places" value={settings.payroll.hourlyRates.extra} onChange={(event) => setSettings((current) => ({ ...current, payroll: { ...current.payroll, hourlyRates: { ...current.payroll.hourlyRates, extra: event.target.value === "" ? "" : Number(event.target.value) } } }))} /><span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-xs text-slate-400">/ hour</span></div></div>
+              <div className="space-y-2"><Label htmlFor="manager-hourly-rate">Manager / Supervisor rate</Label><div className="relative"><span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-slate-500">₱</span><BoundedNumberInput id="manager-hourly-rate" className="pl-8 pr-16" min="1" max={HOURLY_RATE_MAX} title="1 to 10,000; up to 2 decimal places" value={settings.payroll.hourlyRates.manager} onChange={(event) => setSettings((current) => ({ ...current, payroll: { ...current.payroll, hourlyRates: { ...current.payroll.hourlyRates, manager: event.target.value === "" ? "" : Number(event.target.value) } } }))} /><span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-xs text-slate-400">/ hour</span></div></div>
+            </div>
+            <div className="grid gap-3 sm:grid-cols-2" role="status" aria-live="polite">
+              <div className="rounded-xl border border-violet-100 bg-violet-50 p-3"><p className="text-xs font-semibold text-violet-700">Regular employee example</p><p className="mt-1 text-sm text-violet-950">8 completed hours × ₱{Number(settings.payroll.hourlyRates.regular || 0).toFixed(2)} = <strong>₱{(8 * Number(settings.payroll.hourlyRates.regular || 0)).toFixed(2)}</strong></p></div>
+              <div className="rounded-xl border border-violet-100 bg-violet-50 p-3"><p className="text-xs font-semibold text-violet-700">Extra employee example</p><p className="mt-1 text-sm text-violet-950">8 completed hours × ₱{Number(settings.payroll.hourlyRates.extra || 0).toFixed(2)} = <strong>₱{(8 * Number(settings.payroll.hourlyRates.extra || 0)).toFixed(2)}</strong></p></div>
+              <div className="rounded-xl border border-violet-100 bg-violet-50 p-3"><p className="text-xs font-semibold text-violet-700">Manager / Supervisor example</p><p className="mt-1 text-sm text-violet-950">8 completed hours × ₱{Number(settings.payroll.hourlyRates.manager || 0).toFixed(2)} = <strong>₱{(8 * Number(settings.payroll.hourlyRates.manager || 0)).toFixed(2)}</strong></p></div>
+            </div>
+            <p className="text-xs leading-5 text-slate-500">Payroll is calculated as completed attendance hours × the employee type’s hourly rate, plus approved additions and carried balances.</p>
+          </CardContent>
+        </Card>
+      </div>
+
+      <Card className="w-full min-w-0 overflow-hidden">
+        <CardHeader className="border-b border-violet-100 bg-violet-50/50">
+          <div className="flex items-start gap-3">
+            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-violet-100">
+              <CalendarDays className="h-5 w-5 text-[#8642ED]" />
+            </div>
+            <div className="min-w-0 space-y-2">
+              <CardTitle className="leading-snug">Holiday and Rest-Day Calendar</CardTitle>
+              <CardDescription>Choose a type, then select dates. Holidays and rest days block new time-ins and do not create absences. Saving one over an idle day removes that idle day; approved leave dates are adjusted. Existing worked hours remain recorded.</CardDescription>
+            </div>
+          </div>
+        </CardHeader>
+        <CardContent className="space-y-4 pt-4 sm:pt-6">
+              <div className="flex w-full flex-wrap rounded-xl sm:w-fit border border-violet-200 bg-white p-1">{([['holiday','Holiday'],['rest-day','Rest Day'],['workday','Workday']] as const).map(([value,label])=><button key={value} type="button" onClick={()=>setScheduleMode(value)} className={`min-w-0 flex-1 rounded-lg px-2 py-2 text-xs font-bold transition sm:flex-none sm:px-4 ${scheduleMode===value?'bg-violet-600 text-white shadow-sm':'text-slate-500 hover:bg-violet-50'}`}>{label}</button>)}</div>
+              <div className="flex items-center justify-between rounded-xl bg-white px-3 py-2 shadow-sm"><button type="button" aria-label="Previous month" onClick={()=>setScheduleMonth(current=>new Date(current.getFullYear(),current.getMonth()-1,1))} className="rounded-lg p-2 text-slate-500 hover:bg-violet-50"><ChevronLeft size={18}/></button><p className="text-sm font-bold text-slate-800">{scheduleMonth.toLocaleDateString('en-PH',{month:'long',year:'numeric'})}</p><button type="button" aria-label="Next month" onClick={()=>setScheduleMonth(current=>new Date(current.getFullYear(),current.getMonth()+1,1))} className="rounded-lg p-2 text-slate-500 hover:bg-violet-50"><ChevronRight size={18}/></button></div>
+              <div className="grid min-w-0 grid-cols-7 gap-1 text-center sm:gap-2 lg:gap-3">{['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].map(day=><span key={day} className="py-2 text-[10px] font-bold sm:text-xs text-slate-500">{day}</span>)}{Array.from({length:visibleScheduleDates.leading},(_,index)=><span key={`blank-${index}`}/>)}{visibleScheduleDates.dates.map(item=>{const isPast=item.value<today;const override=settings.shift.scheduleOverrides.find(entry=>entry.date===item.value);const normalWorking=settings.shift.workWeekdays.includes(new Date(`${item.value}T12:00:00`).getDay());const kind=override?.kind??(override?.working===false?'rest-day':override?.working===true?'workday':normalWorking?'workday':'rest-day');const styles=kind==='holiday'?'border-rose-300 bg-rose-50 text-rose-700':kind==='rest-day'?'border-slate-300 bg-slate-100 text-slate-600':'border-emerald-200 bg-emerald-50 text-emerald-700';return <button key={item.value} type="button" disabled={isPast} aria-disabled={isPast} aria-label={`${item.value}: ${kind}${isPast?', past date locked':''}`} title={isPast?`${item.day}, ${item.value}: past dates cannot be changed`:`${item.day}, ${item.value}: ${kind.replace('-',' ')}`} onClick={()=>{const same=override?.kind===scheduleMode;const remaining=settings.shift.scheduleOverrides.filter(entry=>entry.date!==item.value);setShift({scheduleOverrides:(same?remaining:[...remaining,{date:item.value,working:scheduleMode==='workday',kind:scheduleMode}]).sort((a,b)=>a.date.localeCompare(b.date))})}} className={`min-h-14 min-w-0 rounded-lg border p-1 text-center transition sm:min-h-20 sm:rounded-xl sm:p-2 lg:min-h-24 ${isPast?'cursor-not-allowed grayscale opacity-45':'hover:-translate-y-0.5 hover:shadow-sm'} ${styles}`}><span className="block text-xs font-bold sm:text-base">{item.number}</span><span className="mt-1 hidden text-xs font-semibold capitalize sm:block">{isPast?'Locked':kind.replace('-',' ')}</span></button>})}</div>
+              <div className="flex flex-wrap items-center justify-between gap-2"><div className="flex flex-wrap gap-3 text-[10px] font-semibold"><span className="text-emerald-700">● Workday</span><span className="text-rose-700">● Holiday</span><span className="text-slate-600">● Rest day</span><span className="text-slate-400">● Past date locked</span></div>{settings.shift.scheduleOverrides.some(entry=>entry.date>=today)&&<Button type="button" size="sm" variant="ghost" onClick={()=>setShift({scheduleOverrides:settings.shift.scheduleOverrides.filter(entry=>entry.date<today)})}>Clear Editable Dates</Button>}</div>
+        </CardContent>
+      </Card>
+
+      <div className="flex flex-col-reverse gap-3 rounded-2xl border border-slate-200 bg-white p-4 sm:flex-row sm:items-center sm:justify-between">
+        <p className="text-xs text-slate-500">Changes only take effect after you select Save Settings.</p>
+        <div className="flex gap-3">
+          <Button onClick={() => setPasswordDialogOpen(true)} disabled={saving || loadingSettings || Boolean(loadError)}><Save className="h-4 w-4" />Save Settings</Button>
+        </div>
+      </div>
+      </fieldset>
+      <Dialog open={passwordDialogOpen} onClose={() => !saving && setPasswordDialogOpen(false)}>
+        <DialogHeader><div><div className="mb-3 grid h-10 w-10 place-items-center rounded-xl bg-violet-100 text-violet-700"><KeyRound className="h-5 w-5" /></div><h3 className="text-lg font-bold text-slate-950">Confirm settings changes</h3><p className="mt-1 text-sm text-slate-500">Enter your administrator password before applying company rules and hourly rates.</p></div><DialogClose onClose={() => !saving && setPasswordDialogOpen(false)} /></DialogHeader>
+        <form onSubmit={(event) => { event.preventDefault(); void save(); }} className="space-y-4 px-6 pb-6 pt-3">
+          <div className="space-y-2"><Label htmlFor="settings-admin-password">Administrator password</Label><div className="relative"><Input id="settings-admin-password" autoFocus autoComplete="current-password" type={showAdminPassword ? "text" : "password"} required disabled={passwordRetrySeconds > 0} value={adminPassword} onChange={(event) => setAdminPassword(event.target.value)} className="pr-12" placeholder="Enter your password" /><button type="button" onClick={() => setShowAdminPassword((shown) => !shown)} aria-label={showAdminPassword ? "Hide password" : "Show password"} className="absolute right-2 top-1/2 grid h-8 w-8 -translate-y-1/2 place-items-center rounded-lg text-slate-500 hover:bg-slate-100">{showAdminPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}</button></div></div>
+          <div className="flex justify-end gap-2"><Button type="button" variant="outline" disabled={saving} onClick={() => setPasswordDialogOpen(false)}>Cancel</Button><Button type="submit" disabled={saving || !adminPassword || passwordRetrySeconds > 0}><Save className="h-4 w-4" />{saving ? "Saving..." : "Confirm and save"}</Button></div>
+        </form>
+      </Dialog>
+    </div>
+  );
+}

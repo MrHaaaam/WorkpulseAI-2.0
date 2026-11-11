@@ -1,0 +1,47 @@
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+node_modules
+.npm-cache/
+dist
+dist-ssr
+*.local
+
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+.env
+
+# Local recovery previews and current-data safety backups
+backend/recovery-preview*.json
+backend/pre-recovery-*.json
+
+# Local tooling and deployment exclusions
+.codex/
+.agents/
+docs/
+edited-chapters/
+.venv/
+__pycache__/
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Isolated submission output (contains its own Git repository when publishing)
+.submission/
+WorkpulseAI-Submission.zip
+
