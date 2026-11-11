@@ -334,7 +334,7 @@ test('every registered API: HTTP access controls, validation, and feature scenar
   } finally {
     await new Promise(resolve => setTimeout(resolve, 10));
     const report = inventory.map(route => ({ ...route, observations: observations.get(`${route.method} ${route.path}`) }));
-    await writeFile(new URL('../../docs/api-route-test-results.json', import.meta.url), JSON.stringify({ generatedAt: new Date().toISOString(), routeCount: inventory.length, scope: 'Actual Express HTTP handlers; controlled in-memory records and mocked email. Physical scanner matching is external.', routes: report }, null, 2) + '\n');
+    await writeFile(new URL('../../.api-route-test-results.local', import.meta.url), JSON.stringify({ generatedAt: new Date().toISOString(), routeCount: inventory.length, scope: 'Actual Express HTTP handlers; controlled in-memory records and mocked email. Physical scanner matching is external.', routes: report }, null, 2) + '\n');
     await writeFile(new URL('../../.api-browser-fixtures.local', import.meta.url), JSON.stringify(browserFixtures));
     await new Promise(resolve => server.close(resolve));
     mongoose.connection.db = originalDb; mongoose.startSession = originalStartSession; globalThis.fetch = originalFetch; childProcess.spawn = originalSpawn; syncBuiltinESMExports();
